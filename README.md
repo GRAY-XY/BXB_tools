@@ -71,6 +71,7 @@ npm install
 
 ```bash
 npx playwright install chromium
+npx install modelcontextprotocol
 ```
 
 启动 MCP：
