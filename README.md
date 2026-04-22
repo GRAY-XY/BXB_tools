@@ -103,28 +103,3 @@ node scripts/call-tool.js session_status
 node scripts/call-tool.js list_terms
 node scripts/call-tool.js list_courses
 ```
-
-## Publishing Safety
-
-这个仓库默认保留了本地运行时目录，但它们不应该进入公开仓库或发布包。
-
-发布前先运行：
-
-```bash
-npm run scan:publish
-```
-
-它会阻止这些本地文件被误带出去：
-
-- 保存的学生会话
-- 下载的真实附件
-- Playwright 调试输出
-- 本地截图和测试文件
-- 逆向分析时留下的第三方 bundle
-
-## Important Notes
-
-- `upload_submission_file` 和 `submit_task_result` 会产生真实副作用。
-- 通过 AI 协作执行时，上传前应要求用户确认。
-- 会话默认保存在 `.banxuebang/session.json`，不要提交这个文件。
-- 发布前不要携带任何真实学生数据、附件、截图或 token。
