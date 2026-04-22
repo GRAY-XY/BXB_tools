@@ -1,0 +1,29 @@
+{
+  "name": "banxuebang-achievement-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "MCP server for controlling Banxuebang student achievement page",
+  "files": [
+    "src",
+    "scripts",
+    "README.md"
+  ],
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "check": "node --check src/index.js && node --check src/banxuebang-client.js && node --check src/session-store.js && node --check scripts/call-tool.js && node --check scripts/publish-scan.js",
+    "tool": "node scripts/call-tool.js",
+    "scan:publish": "node scripts/publish-scan.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.18.0",
+    "mammoth": "^1.12.0",
+    "pdf-parse": "^2.4.5",
+    "playwright": "^1.54.0",
+    "zod": "^3.24.1"
+  }
+}
