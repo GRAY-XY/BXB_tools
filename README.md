@@ -83,7 +83,7 @@ npm start
 
 ```bash
 node scripts/call-tool.js session_status
-node scripts/call-tool.js set_current_subject subject_name=国际公民素养
+node scripts/call-tool.js set_current_subject subject_name= COURSE_NAME
 ```
 
 ## Usage
