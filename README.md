@@ -2,6 +2,10 @@
 
 这是一个面向 `https://student.banxuebang.com/achievement_list` 的 MCP 服务。
 
+## Prerequisites
+
+- Node.js >= 22
+
 设计目标不是“纯 DOM 自动化”，而是混合模式：
 
 - 登录和首登确认通过浏览器完成
@@ -58,6 +62,8 @@ package.json
 ## Install
 
 ```bash
+git clone <repository-url>
+cd BXB_tools
 npm install
 ```
 
@@ -79,6 +85,10 @@ npm start
 node scripts/call-tool.js session_status
 node scripts/call-tool.js set_current_subject subject_name=国际公民素养
 ```
+
+## Usage
+
+**首次使用前必须先登录**，登录后才能使用 `session_status`、`list_terms`、`list_courses` 等工具。
 
 ## Login Flow
 
@@ -103,3 +113,28 @@ node scripts/call-tool.js session_status
 node scripts/call-tool.js list_terms
 node scripts/call-tool.js list_courses
 ```
+
+## Publishing Safety
+
+这个仓库默认保留了本地运行时目录，但它们不应该进入公开仓库或发布包。
+
+发布前先运行：
+
+```bash
+npm run scan:publish
+```
+
+它会阻止这些本地文件被误带出去：
+
+- 保存的学生会话
+- 下载的真实附件
+- Playwright 调试输出
+- 本地截图和测试文件
+- 逆向分析时留下的第三方 bundle
+
+## Important Notes
+
+- `upload_submission_file` 和 `submit_task_result` 会产生真实副作用。
+- 通过 AI 协作执行时，上传前应要求用户确认。
+- 会话默认保存在 `.banxuebang/session.json`，不要提交这个文件。
+- 发布前不要携带任何真实学生数据、附件、截图或 token。
