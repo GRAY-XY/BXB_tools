@@ -71,8 +71,10 @@ npm install
 
 ```bash
 npx playwright install chromium
-npx install modelcontextprotocol
 ```
+
+如果你的 MCP 客户端或本机环境提示缺少 `modelcontextprotocol`，请按该客户端的要求额外安装它。
+部分 macOS 环境下，可能需要这一步后才能正常启动本服务。
 
 启动 MCP：
 
