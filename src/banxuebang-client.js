@@ -1349,9 +1349,21 @@ export class BanxuebangClient {
       text = parseTextBuffer(buffer, extension);
     } else if (extension === ".pdf") {
       const pdfParseModule = await import("pdf-parse");
-      const pdfParse = pdfParseModule.default || pdfParseModule;
-      const parsed = await pdfParse(buffer);
-      text = parsed.text || "";
+      const PDFParse = pdfParseModule.PDFParse || pdfParseModule.default?.PDFParse;
+
+      if (typeof PDFParse !== "function") {
+        throw new Error("pdf-parse did not expose a PDFParse constructor");
+      }
+
+      const parser = new PDFParse({ data: buffer });
+
+      try {
+        const parsed = await parser.getText();
+        text = parsed.text || "";
+      } finally {
+        await parser.destroy();
+      }
+
       reader = "pdf-parse";
     } else if (extension === ".docx") {
       const mammothModule = await import("mammoth");
