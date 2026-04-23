@@ -19,8 +19,10 @@ src/
   index.js                 MCP server entry
   banxuebang-client.js     Banxuebang session + API client
   session-store.js         local session persistence
+  tool-definitions.js      shared tool registry for MCP + direct CLI
 scripts/
-  call-tool.js             local CLI for calling MCP tools
+  call-tool.js             local CLI for calling MCP tools over stdio
+  direct-tool.js           local CLI that bypasses MCP and calls the client directly
   publish-scan.js          pre-publish safety scan
 README.md
 package.json
@@ -82,11 +84,25 @@ npx playwright install chromium
 npm start
 ```
 
-本地调试某个工具：
+通过 MCP over stdio 调试某个工具：
 
 ```bash
 node scripts/call-tool.js session_status
 node scripts/call-tool.js set_current_subject subject_name= COURSE_NAME
+```
+
+如果当前 AI 或终端已经直接在仓库目录里运行，不想额外经过 MCP，也可以直接调用本地 CLI：
+
+```bash
+node scripts/direct-tool.js session_status
+node scripts/direct-tool.js set_current_subject subject_name= COURSE_NAME
+```
+
+等价的 npm script：
+
+```bash
+npm run tool:mcp -- session_status
+npm run tool:direct -- session_status
 ```
 
 ## Usage
@@ -101,12 +117,14 @@ node scripts/call-tool.js set_current_subject subject_name= COURSE_NAME
 
 ```bash
 node scripts/call-tool.js login_in_browser
+node scripts/direct-tool.js login_in_browser
 ```
 
 2. 浏览器填表自动登录
 
 ```bash
 node scripts/call-tool.js login_with_credentials '{"username":"your-account","password":"your-password","headless":false}'
+node scripts/direct-tool.js login_with_credentials '{"username":"your-account","password":"your-password","headless":false}'
 ```
 
 登录成功后，建议立刻执行：
@@ -115,5 +133,8 @@ node scripts/call-tool.js login_with_credentials '{"username":"your-account","pa
 node scripts/call-tool.js session_status
 node scripts/call-tool.js list_terms
 node scripts/call-tool.js list_courses
+node scripts/direct-tool.js session_status
+node scripts/direct-tool.js list_terms
+node scripts/direct-tool.js list_courses
 ```
 
