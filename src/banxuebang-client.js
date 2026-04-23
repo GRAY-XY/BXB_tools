@@ -977,6 +977,30 @@ export class BanxuebangClient {
     };
   }
 
+  async applyContextOverrides({
+    termId,
+    termName,
+    subjectId,
+    subjectName,
+    classId = null,
+  } = {}) {
+    let context = null;
+
+    if (termId !== undefined && termId !== null) {
+      context = await this.setCurrentTerm(termId);
+    } else if (termName) {
+      context = await this.setCurrentTermByName(termName);
+    }
+
+    if (subjectId !== undefined && subjectId !== null) {
+      context = await this.setCurrentSubject(subjectId, classId);
+    } else if (subjectName) {
+      context = await this.setCurrentSubjectByName(subjectName, classId);
+    }
+
+    return context;
+  }
+
   async listHomework({ listType = "all", page = 1, size = 10 } = {}) {
     const session = await this.requireSession();
     await this.refreshContext(session);
@@ -1055,7 +1079,32 @@ export class BanxuebangClient {
   }
 
   async listTasks(options = {}) {
-    return this.listHomework(options);
+    const {
+      termId,
+      termName,
+      subjectId,
+      subjectName,
+      classId,
+      ...homeworkOptions
+    } = options;
+
+    if (
+      termId !== undefined ||
+      termName ||
+      subjectId !== undefined ||
+      subjectName ||
+      classId !== undefined
+    ) {
+      await this.applyContextOverrides({
+        termId,
+        termName,
+        subjectId,
+        subjectName,
+        classId,
+      });
+    }
+
+    return this.listHomework(homeworkOptions);
   }
 
   async getAchievementOverview({ transferClassId = null } = {}) {
@@ -1169,7 +1218,7 @@ export class BanxuebangClient {
     };
   }
 
-  async getTaskDetail(taskId) {
+  async getTaskDetail(taskId, { includeOtherSubmissions = false } = {}) {
     const session = await this.requireSession();
     await this.refreshContext(session);
 
@@ -1188,7 +1237,7 @@ export class BanxuebangClient {
     );
     const task = ensureObject(detailResponse.data);
 
-    const [mySubmissionResponse, submittedResponse, lastScoreResponse] = await Promise.all([
+    const requestList = [
       this.request(
         session,
         "GET",
@@ -1197,14 +1246,16 @@ export class BanxuebangClient {
           params: { studentId: userInfo.id },
         },
       ).catch(() => ({ data: [] })),
-      this.request(
-        session,
-        "GET",
-        `/gateway/bxb/activityWork/homework/${taskId}/submitted/list`,
-        {
-          params: { classId: curSubject.classId },
-        },
-      ).catch(() => ({ data: [] })),
+      includeOtherSubmissions
+        ? this.request(
+            session,
+            "GET",
+            `/gateway/bxb/activityWork/homework/${taskId}/submitted/list`,
+            {
+              params: { classId: curSubject.classId },
+            },
+          ).catch(() => ({ data: [] }))
+        : Promise.resolve({ data: [] }),
       this.request(
         session,
         "GET",
@@ -1213,7 +1264,9 @@ export class BanxuebangClient {
           params: { classId: curSubject.classId },
         },
       ).catch(() => ({ data: null })),
-    ]);
+    ];
+
+    const [mySubmissionResponse, submittedResponse, lastScoreResponse] = await Promise.all(requestList);
 
     const mySubmissionList = toArray(mySubmissionResponse.data);
     const submittedList = toArray(submittedResponse.data);
@@ -1235,10 +1288,12 @@ export class BanxuebangClient {
       contentText: stripHtml(task.activityContent || task.activityTask?.content || ""),
       answerText: stripHtml(task.activityTask?.answer || ""),
       attachments: [...taskAttachments, ...referenceAttachments],
+      includeOtherSubmissions,
       mySubmissionList,
       mySubmissionAttachments,
-      submittedList,
-      peerSubmissionAttachments,
+      submittedList: includeOtherSubmissions ? submittedList : [],
+      peerSubmissionAttachments: includeOtherSubmissions ? peerSubmissionAttachments : [],
+      otherSubmissionCount: submittedList.length,
       lastScore,
     };
   }

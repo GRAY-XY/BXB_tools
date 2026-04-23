@@ -2,6 +2,7 @@ node_modules/
 .banxuebang/
 .playwright-cli/
 artifacts/
+mcp.local.json
 npm-debug.log*
 .env
 .env.*

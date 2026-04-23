@@ -7,15 +7,20 @@
   "files": [
     "src",
     "scripts",
-    "README.md"
+    "ui",
+    "README.md",
+    "PROMPTS.md",
+    "COPOLICY.md"
   ],
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "check": "node --check src/index.js && node --check src/banxuebang-client.js && node --check src/session-store.js && node --check src/tool-definitions.js && node --check scripts/call-tool.js && node --check scripts/direct-tool.js && node --check scripts/publish-scan.js",
+    "check": "node --check src/index.js && node --check src/banxuebang-client.js && node --check src/session-store.js && node --check src/tool-definitions.js && node --check scripts/call-tool.js && node --check scripts/direct-tool.js && node --check scripts/publish-scan.js && node --check scripts/setup-agent.js && node --check scripts/ui-server.js",
     "tool": "node scripts/call-tool.js",
     "tool:direct": "node scripts/direct-tool.js",
     "tool:mcp": "node scripts/call-tool.js",
+    "setup:agent": "node scripts/setup-agent.js",
+    "ui": "node scripts/ui-server.js",
     "scan:publish": "node scripts/publish-scan.js"
   },
   "engines": {

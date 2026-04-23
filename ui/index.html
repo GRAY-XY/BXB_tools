@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Banxuebang Tool UI</title>
+    <style>
+      :root {
+        --bg: #f7f4ee;
+        --panel: #fffaf0;
+        --ink: #1d2a35;
+        --muted: #65717b;
+        --line: #d9cfbe;
+        --accent: #1f6f5f;
+        --accent-2: #d9853b;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at top left, rgba(217, 133, 59, 0.18), transparent 28%),
+          linear-gradient(135deg, #f5efe5 0%, #f8f6f1 55%, #edf3f1 100%);
+      }
+
+      main {
+        max-width: 1120px;
+        margin: 0 auto;
+        padding: 32px 20px 40px;
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 34px;
+      }
+
+      p {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: 320px minmax(0, 1fr);
+        gap: 18px;
+        margin-top: 24px;
+      }
+
+      .panel {
+        background: rgba(255, 250, 240, 0.92);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 18px;
+        box-shadow: 0 12px 30px rgba(29, 42, 53, 0.08);
+      }
+
+      .panel h2 {
+        margin: 0 0 12px;
+        font-size: 18px;
+      }
+
+      .quick-buttons,
+      .tool-list {
+        display: grid;
+        gap: 10px;
+      }
+
+      button,
+      select {
+        appearance: none;
+        border: 1px solid var(--line);
+        background: white;
+        border-radius: 12px;
+        padding: 11px 13px;
+        font: inherit;
+      }
+
+      button {
+        cursor: pointer;
+      }
+
+      button.primary {
+        background: var(--accent);
+        color: white;
+        border-color: var(--accent);
+      }
+
+      button.subtle {
+        background: #fff;
+      }
+
+      textarea {
+        width: 100%;
+        min-height: 220px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 14px;
+        resize: vertical;
+        font: 13px/1.5 "Cascadia Code", "Consolas", monospace;
+        background: #fff;
+        color: var(--ink);
+      }
+
+      .row {
+        display: grid;
+        gap: 12px;
+      }
+
+      .toolbar {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-top: 12px;
+        align-items: center;
+      }
+
+      .danger-note {
+        margin-top: 12px;
+        padding: 12px 14px;
+        border-radius: 12px;
+        background: rgba(217, 133, 59, 0.12);
+        color: #7c4a18;
+      }
+
+      .output {
+        min-height: 360px;
+        white-space: pre-wrap;
+        overflow: auto;
+      }
+
+      .meta {
+        margin-top: 10px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      @media (max-width: 860px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Banxuebang Tool UI</h1>
+      <p>本地调试界面。默认适合读取和切换上下文；上传与提交类工具需要额外确认。</p>
+
+      <div class="grid">
+        <section class="panel">
+          <h2>Quick Actions</h2>
+          <div class="quick-buttons">
+            <button class="subtle" data-tool="session_status">session_status</button>
+            <button class="subtle" data-tool="list_terms">list_terms</button>
+            <button class="subtle" data-tool="list_courses">list_courses</button>
+            <button class="subtle" data-tool="get_current_subject_gpa">get_current_subject_gpa</button>
+          </div>
+
+          <h2 style="margin-top: 18px;">Tools</h2>
+          <div class="tool-list">
+            <select id="toolSelect"></select>
+          </div>
+
+          <div class="meta" id="toolMeta"></div>
+
+          <div class="danger-note">
+            上传和提交工具默认会被拦截。只有在你已经得到用户明确确认后，才勾选确认框执行。
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>Arguments</h2>
+          <div class="row">
+            <textarea id="argsInput">{}</textarea>
+          </div>
+
+          <div class="toolbar">
+            <label><input id="confirmDangerous" type="checkbox" /> 我已经得到用户对上传/提交操作的明确确认</label>
+            <button class="primary" id="runButton">Run Tool</button>
+            <button class="subtle" id="formatButton">Format JSON</button>
+          </div>
+
+          <h2 style="margin-top: 20px;">Output</h2>
+          <textarea id="output" class="output" readonly></textarea>
+        </section>
+      </div>
+    </main>
+
+    <script>
+      const toolSelect = document.getElementById("toolSelect");
+      const toolMeta = document.getElementById("toolMeta");
+      const argsInput = document.getElementById("argsInput");
+      const output = document.getElementById("output");
+      const runButton = document.getElementById("runButton");
+      const formatButton = document.getElementById("formatButton");
+      const confirmDangerous = document.getElementById("confirmDangerous");
+
+      let tools = [];
+
+      async function loadTools() {
+        const response = await fetch("/api/tools");
+        tools = await response.json();
+        toolSelect.innerHTML = "";
+        for (const tool of tools) {
+          const option = document.createElement("option");
+          option.value = tool.name;
+          option.textContent = tool.name;
+          toolSelect.appendChild(option);
+        }
+        updateMeta();
+      }
+
+      function updateMeta() {
+        const tool = tools.find((item) => item.name === toolSelect.value);
+        if (!tool) {
+          toolMeta.textContent = "";
+          return;
+        }
+
+        toolMeta.textContent = `${tool.description}${tool.dangerous ? " | Dangerous: requires confirmation" : ""}`;
+      }
+
+      async function runTool(toolName) {
+        let parsedArgs = {};
+        try {
+          parsedArgs = JSON.parse(argsInput.value || "{}");
+        } catch (error) {
+          output.value = `Invalid JSON: ${error.message}`;
+          return;
+        }
+
+        output.value = "Running...";
+
+        const response = await fetch("/api/tool", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            tool_name: toolName,
+            arguments: parsedArgs,
+            confirm: confirmDangerous.checked,
+          }),
+        });
+
+        const text = await response.text();
+        output.value = text;
+      }
+
+      document.querySelectorAll("[data-tool]").forEach((button) => {
+        button.addEventListener("click", () => {
+          toolSelect.value = button.dataset.tool;
+          argsInput.value = "{}";
+          updateMeta();
+          runTool(button.dataset.tool);
+        });
+      });
+
+      toolSelect.addEventListener("change", updateMeta);
+
+      runButton.addEventListener("click", () => runTool(toolSelect.value));
+
+      formatButton.addEventListener("click", () => {
+        try {
+          const parsed = JSON.parse(argsInput.value || "{}");
+          argsInput.value = JSON.stringify(parsed, null, 2);
+        } catch (error) {
+          output.value = `Invalid JSON: ${error.message}`;
+        }
+      });
+
+      loadTools().catch((error) => {
+        output.value = String(error);
+      });
+    </script>
+  </body>
+</html>

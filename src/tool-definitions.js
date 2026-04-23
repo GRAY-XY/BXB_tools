@@ -177,6 +177,17 @@ export function createToolDefinitions(client) {
       description:
         "List tasks for the current subject. This is an alias of list_homework for AI clients that prefer task wording.",
       inputSchema: {
+        term_id: z.union([z.string(), z.number()]).optional().describe("Optional term id override."),
+        term_name: z.string().optional().describe("Optional term name override."),
+        subject_id: z
+          .union([z.string(), z.number()])
+          .optional()
+          .describe("Optional subject id override."),
+        subject_name: z.string().optional().describe("Optional subject name override."),
+        class_id: z
+          .union([z.string(), z.number()])
+          .optional()
+          .describe("Optional class id override when multiple classes share a subject."),
         list_type: z
           .enum(["all", "latest", "pending"])
           .optional()
@@ -184,8 +195,22 @@ export function createToolDefinitions(client) {
         page: z.number().int().positive().optional().describe("Page number. Default 1."),
         size: z.number().int().positive().optional().describe("Page size. Default 10."),
       },
-      execute: async ({ list_type: listType, page, size }) =>
+      execute: async ({
+        term_id: termId,
+        term_name: termName,
+        subject_id: subjectId,
+        subject_name: subjectName,
+        class_id: classId,
+        list_type: listType,
+        page,
+        size,
+      }) =>
         client.listTasks({
+          termId,
+          termName,
+          subjectId,
+          subjectName,
+          classId,
           listType: listType ?? "all",
           page: page ?? 1,
           size: size ?? 10,
@@ -216,8 +241,13 @@ export function createToolDefinitions(client) {
         "Open a Banxuebang task by id and return its detail, attachments, and current submission state.",
       inputSchema: {
         task_id: z.union([z.string(), z.number()]).describe("Activity/task id."),
+        include_other_submissions: z
+          .boolean()
+          .optional()
+          .describe("Whether to include the submission status list of other students. Default false."),
       },
-      execute: async ({ task_id: taskId }) => client.getTaskDetail(taskId),
+      execute: async ({ task_id: taskId, include_other_submissions: includeOtherSubmissions }) =>
+        client.getTaskDetail(taskId, { includeOtherSubmissions: includeOtherSubmissions ?? false }),
     },
     {
       name: "read_task_content",
