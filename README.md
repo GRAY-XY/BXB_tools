@@ -25,6 +25,7 @@ scripts/
   direct-tool.js           local CLI that bypasses MCP and calls the client directly
   publish-scan.js          pre-publish safety scan
 README.md
+PROMPTS.md
 package.json
 ```
 
@@ -108,6 +109,8 @@ npm run tool:direct -- session_status
 ## Usage
 
 **首次使用前必须先登录**，登录后才能使用 `session_status`、`list_terms`、`list_courses` 等工具。
+
+如果你需要给上层模型一套更稳定的调用提示词，可直接参考 [PROMPTS.md](./PROMPTS.md)。
 
 ## Login Flow
 
