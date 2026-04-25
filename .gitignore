@@ -9,3 +9,5 @@ npm-debug.log*
 coverage/
 dist/
 .DS_Store
+__pycache__/
+*.py[cod]
