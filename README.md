@@ -26,6 +26,7 @@ scripts/
   publish-scan.js          pre-publish safety scan
 README.md
 PROMPTS.md
+UI/
 package.json
 ```
 
@@ -111,6 +112,7 @@ npm run tool:direct -- session_status
 **首次使用前必须先登录**，登录后才能使用 `session_status`、`list_terms`、`list_courses` 等工具。
 
 如果你需要给上层模型一套更稳定的调用提示词，可直接参考 [PROMPTS.md](./PROMPTS.md)。
+如果你想查看从 `client` 分支拆出的独立 UI 壳层，可直接参考 [UI/README.md](./UI/README.md)。
 
 ## Login Flow
 
