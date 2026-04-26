@@ -65,37 +65,65 @@ def macos_icns():
 
 
 def draw_home(draw, color):
-    draw.rounded_rectangle((28, 52, 100, 112), radius=18, outline=color, width=7)
-    draw.line((38, 58, 64, 34, 90, 58), fill=color, width=7, joint="curve")
+    fill = "#eef4ff"
+    accent = "#3d6df2"
+    shadow = "#dbe7ff"
+    draw.rounded_rectangle((18, 18, 110, 110), radius=34, fill=shadow)
+    draw.rounded_rectangle((16, 14, 112, 110), radius=34, fill=fill)
+    draw.polygon([(64, 34), (96, 62), (88, 70), (64, 48), (40, 70), (32, 62)], fill=accent)
+    draw.rounded_rectangle((42, 60, 86, 94), radius=12, fill=color)
+    draw.rounded_rectangle((58, 70, 70, 94), radius=6, fill=fill)
 
 
 def draw_schedule(draw, color):
-    draw.rounded_rectangle((22, 28, 106, 108), radius=20, outline=color, width=7)
-    draw.line((22, 50, 106, 50), fill=color, width=7)
-    draw.line((48, 28, 48, 108), fill=color, width=7)
-    draw.line((80, 28, 80, 108), fill=color, width=7)
-    draw.line((22, 78, 106, 78), fill=color, width=7)
+    fill = "#eff7f2"
+    accent = "#32a067"
+    shadow = "#d8ecde"
+    draw.rounded_rectangle((18, 18, 110, 110), radius=34, fill=shadow)
+    draw.rounded_rectangle((16, 14, 112, 110), radius=34, fill=fill)
+    draw.rounded_rectangle((34, 34, 94, 90), radius=16, fill="#ffffff")
+    draw.rounded_rectangle((34, 34, 94, 50), radius=14, fill=accent)
+    draw.rounded_rectangle((46, 24, 54, 40), radius=4, fill=color)
+    draw.rounded_rectangle((74, 24, 82, 40), radius=4, fill=color)
+    for x in (46, 62, 78):
+        for y in (60, 76):
+            draw.rounded_rectangle((x, y, x + 8, y + 8), radius=3, fill=color)
 
 
 def draw_homework(draw, color):
-    draw.rounded_rectangle((28, 18, 100, 114), radius=20, outline=color, width=7)
-    draw.line((44, 46, 84, 46), fill=color, width=7)
-    draw.line((44, 66, 84, 66), fill=color, width=7)
-    draw.line((44, 86, 70, 86), fill=color, width=7)
-    draw.line((34, 46, 34, 46), fill=color, width=9)
-    draw.line((34, 66, 34, 66), fill=color, width=9)
+    fill = "#fff4e8"
+    accent = "#f08a24"
+    shadow = "#ffe6cc"
+    draw.rounded_rectangle((18, 18, 110, 110), radius=34, fill=shadow)
+    draw.rounded_rectangle((16, 14, 112, 110), radius=34, fill=fill)
+    draw.rounded_rectangle((38, 28, 90, 96), radius=18, fill="#ffffff")
+    draw.rounded_rectangle((50, 22, 78, 38), radius=8, fill=accent)
+    for y in (50, 66, 82):
+        draw.rounded_rectangle((50, y, 78, y + 6), radius=3, fill=color)
+    draw.line((40, 50, 44, 54, 52, 44), fill=accent, width=5, joint="curve")
+    draw.line((40, 66, 44, 70, 52, 60), fill=accent, width=5, joint="curve")
 
 
 def draw_notice(draw, color):
-    draw.rounded_rectangle((18, 34, 110, 98), radius=20, outline=color, width=7)
-    draw.line((24, 42, 64, 74, 104, 42), fill=color, width=7, joint="curve")
+    fill = "#f3efff"
+    accent = "#7a5af8"
+    shadow = "#e5dcff"
+    draw.rounded_rectangle((18, 18, 110, 110), radius=34, fill=shadow)
+    draw.rounded_rectangle((16, 14, 112, 110), radius=34, fill=fill)
+    draw.rounded_rectangle((30, 38, 98, 86), radius=16, fill="#ffffff")
+    draw.polygon([(34, 42), (64, 66), (94, 42), (94, 48), (64, 72), (34, 48)], fill=accent)
+    draw.line((34, 42, 64, 68, 94, 42), fill=accent, width=5, joint="curve")
+    draw.rounded_rectangle((76, 26, 94, 44), radius=9, fill=color)
+    draw.ellipse((82, 32, 88, 38), fill="#ffffff")
 
 
 def nav_icon(name, painter):
     size = 128
-    image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(image)
-    painter(draw, "#5b6572")
+    scale = 4
+    canvas = Image.new("RGBA", (size * scale, size * scale), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(canvas)
+    painter(draw, "#223042")
+    image = canvas.resize((size, size), Image.Resampling.LANCZOS)
     image.save(os.path.join(ASSETS_DIR, f"nav_{name}.png"), icc_profile=None)
 
 
