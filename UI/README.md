@@ -7,6 +7,8 @@
 - `banxuebang_homework/`
   从 `client` 分支的 `banxuebang-homework/banxuebang_gui.py` 拆出来的 Tkinter 界面，
   但不再复用那套独立 Python API 实现，而是通过接口层调用 `main` 分支现有工具。
+- `../desktop-client/`
+  完整保留的独立桌面客户端项目，包含它自己的打包、启动器和发布文档。
 
 设计目标：
 

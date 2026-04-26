@@ -27,6 +27,7 @@ scripts/
 README.md
 PROMPTS.md
 UI/
+desktop-client/           standalone desktop client project
 package.json
 ```
 
@@ -113,6 +114,25 @@ npm run tool:direct -- session_status
 
 如果你需要给上层模型一套更稳定的调用提示词，可直接参考 [PROMPTS.md](./PROMPTS.md)。
 如果你想查看从 `client` 分支拆出的独立 UI 壳层，可直接参考 [UI/README.md](./UI/README.md)。
+如果你想查看完整的独立桌面客户端项目，可直接参考 [desktop-client/README.md](./desktop-client/README.md)。
+
+## Standalone Desktop Client
+
+This repository now also includes a full standalone desktop client project under:
+
+```text
+desktop-client/
+```
+
+That project includes:
+
+- Tkinter desktop GUI
+- standalone CLI
+- macOS packaging scripts
+- Windows packaging scripts
+- GitHub Releases oriented documentation
+
+For desktop end users, the recommended distribution path is GitHub Releases instead of running from source.
 
 ## Login Flow
 
@@ -142,4 +162,3 @@ node scripts/direct-tool.js session_status
 node scripts/direct-tool.js list_terms
 node scripts/direct-tool.js list_courses
 ```
-
