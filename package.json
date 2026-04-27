@@ -1,8 +1,9 @@
 {
   "name": "banxuebang-achievement-mcp",
-  "version": "0.1.0",
+  "version": "1.0.1",
   "private": true,
   "type": "module",
+  "main": "desktop-shell/main.cjs",
   "description": "MCP server for controlling Banxuebang student achievement page",
   "files": [
     "src",
@@ -12,6 +13,8 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
+    "desktop": "electron .",
+    "desktop:dev": "electron .",
     "check": "node --check src/index.js && node --check src/banxuebang-client.js && node --check src/session-store.js && node --check src/tool-definitions.js && node --check scripts/call-tool.js && node --check scripts/direct-tool.js && node --check scripts/publish-scan.js",
     "tool": "node scripts/call-tool.js",
     "tool:direct": "node scripts/direct-tool.js",
@@ -27,5 +30,8 @@
     "pdf-parse": "^2.4.5",
     "playwright": "^1.54.0",
     "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "electron": "^37.2.6"
   }
 }

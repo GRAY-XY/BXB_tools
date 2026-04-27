@@ -635,11 +635,23 @@ export class BanxuebangClient {
       if (agreeTerms) {
         const checkbox = page.locator('input[type="checkbox"]').first();
         if ((await checkbox.count()) > 0 && !(await checkbox.isChecked())) {
-          await checkbox.check({ force: true });
+          const checkboxInner = page.locator(".el-checkbox__inner").first();
+          if ((await checkboxInner.count()) > 0) {
+            await checkboxInner.click({ force: true });
+          } else {
+            await checkbox.evaluate((node) => {
+              node.checked = true;
+              node.dispatchEvent(new Event("input", { bubbles: true }));
+              node.dispatchEvent(new Event("change", { bubbles: true }));
+            });
+          }
         }
       }
 
-      const loginButton = page.getByRole("button", { name: /登录/ }).first();
+      const loginButton = page
+        .locator('button, [role="button"], .el-button, .ant-btn')
+        .filter({ hasText: /登\s*录/ })
+        .first();
       await loginButton.click();
 
       try {
@@ -1215,6 +1227,144 @@ export class BanxuebangClient {
       selectedTransferClass: overview.selectedTransferClass,
       achievementCount: overview.achievementList.length,
       scoreLevelCount: overview.scoreLevelList.length,
+    };
+  }
+
+  async getSchedule() {
+    const session = await this.requireSession();
+    await this.refreshContext(session);
+
+    const { userInfo, curClass, currTermId } = session.context;
+    if (!userInfo?.id || !currTermId) {
+      throw new Error("Current session does not have enough context to query schedule.");
+    }
+
+    const response = safeBusinessResult(
+      await this.request(
+        session,
+        "GET",
+        `/gateway/arrange-course/courseTable/student/${userInfo.id}/getSchemeTable/teach`,
+        {
+          params: {
+            campusId: curClass?.campusId || "",
+            termId: currTermId,
+          },
+        },
+      ),
+      "courseTable",
+    );
+
+    const data = ensureObject(response.data);
+    const schedule = {};
+    const timeSlots = {};
+
+    for (const period of ["forenoonLessonTimeSets", "afternoonLessonTimeSets"]) {
+      for (const slot of toArray(data[period])) {
+        timeSlots[slot.lesson] = `${slot.startTime}-${slot.endTime}`;
+      }
+    }
+
+    for (const dayData of toArray(data.weekDays)) {
+      const day = Number(dayData.day) + 1;
+      const daySlots = {};
+
+      for (const period of ["forenoonLessonTimeSets", "afternoonLessonTimeSets"]) {
+        for (const slot of toArray(dayData[period])) {
+          const lesson = slot.lesson;
+          const courses = toArray(slot.teachList).map((item) => ({
+            name: item.courseName || "",
+            teacher: String(item.teacherName || "").trim(),
+            room: item.classRoomName || "",
+            color: item.courseColor || "#66809d",
+          }));
+
+          daySlots[lesson] = {
+            time: `${slot.startTime}-${slot.endTime}`,
+            courses,
+          };
+        }
+      }
+
+      schedule[day] = daySlots;
+    }
+
+    for (let day = 1; day <= 5; day += 1) {
+      if (!schedule[day]) {
+        schedule[day] = {};
+      }
+      for (let lesson = 0; lesson < 9; lesson += 1) {
+        if (!schedule[day][lesson]) {
+          schedule[day][lesson] = {
+            time: timeSlots[lesson] || "",
+            courses: [],
+          };
+        }
+      }
+    }
+
+    return {
+      context: this.summarizeSession(session),
+      schedule,
+      timeSlots,
+    };
+  }
+
+  async getNotices({ page = 1, size = 20 } = {}) {
+    const session = await this.requireSession();
+    await this.refreshContext(session);
+
+    const { userInfo } = session.context;
+    if (!userInfo?.id) {
+      throw new Error("Current session does not have enough context to query notices.");
+    }
+
+    const response = safeBusinessResult(
+      await this.request(
+        session,
+        "GET",
+        `/gateway/bxb/student/${userInfo.id}/page-query-notice`,
+        {
+          params: { page, size },
+        },
+      ),
+      "page-query-notice",
+    );
+
+    const data = ensureObject(response.data);
+    return {
+      context: this.summarizeSession(session),
+      notices: toArray(data.aaData).map((item) => ({
+        id: normalizeId(item.id),
+        title: item.activityName || "",
+        content: item.activityContent || "",
+        sender: item.createName || "",
+        time: item.createTime || "",
+        read: Boolean(item.readStatus),
+      })),
+    };
+  }
+
+  async getUndoMessageCount() {
+    const session = await this.requireSession();
+    await this.refreshContext(session);
+
+    const { userInfo } = session.context;
+    if (!userInfo?.id) {
+      throw new Error("Current session does not have enough context to query message count.");
+    }
+
+    const response = safeBusinessResult(
+      await this.request(
+        session,
+        "GET",
+        `/gateway/bxb/student/${userInfo.id}/msg/count-undo`,
+      ),
+      "count-undo",
+    );
+
+    return {
+      context: this.summarizeSession(session),
+      count: response.data ?? null,
     };
   }
 

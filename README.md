@@ -31,6 +31,17 @@ desktop-client/           standalone desktop client project
 package.json
 ```
 
+## Desktop Shell Packaging
+
+The new `desktop-shell/` macOS app can be built into a `.pkg` installer:
+
+```bash
+chmod +x ./desktop-shell/packaging/macos/build_macos_pkg.sh
+./desktop-shell/packaging/macos/build_macos_pkg.sh
+```
+
+Packaging notes live in [desktop-shell/packaging/README.md](desktop-shell/packaging/README.md).
+
 本地运行产生的会话、附件、截图和调试输出统一放在这些目录，并且默认被忽略：
 
 - `.banxuebang/`

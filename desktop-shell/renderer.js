@@ -1,0 +1,1155 @@
+const state = {
+  dashboard: null,
+  activeView: "overview",
+  selectedCourseId: "all",
+  selectedTaskId: null,
+  homeworkSort: "latest",
+  selectedTaskDetail: null,
+  selectedSubmitFiles: [],
+  theme: "light",
+  bridgeReady: false,
+  settings: {
+    homeworkReminderEnabled: true,
+    homeworkAbsoluteTime: "20:00",
+    homeworkReminderDays: [1, 2, 3, 4, 5],
+    homeworkReminderContent: "medium",
+    classReminderEnabled: false,
+    classReminderLeadTime: "10",
+    motionEnabled: true,
+    frostEnabled: true,
+  },
+  authMemory: {
+    rememberPassword: false,
+    username: "",
+    password: "",
+  },
+};
+
+if (navigator.userAgent.includes("Mac OS X")) {
+  document.body.classList.add("darwin");
+}
+
+function createMockDashboard() {
+  return {
+    session: {
+      ready: true,
+      user: { name: "周田园", loginName: "igpig@example.com" },
+      currentClass: { name: "高二6班" },
+      currentTermId: "2025-2026下学期",
+      currentSubject: { id: "stats", name: "AP统计学" },
+    },
+    terms: [{ id: "term-1", name: "2025-2026下学期", status: true }],
+    courses: [
+      { id: "citizen", name: "国际公民素养", unSubmitCount: 2 },
+      { id: "stats", name: "AP统计学", unSubmitCount: 1 },
+      { id: "env", name: "AP环境科学", unSubmitCount: 0 },
+      { id: "ai", name: "人工智能发展", unSubmitCount: 1 },
+    ],
+    homework: [
+      {
+        id: "t1",
+        courseId: "stats",
+        courseName: "AP统计学",
+        activityName: "Chapter 9 worksheet",
+        scoreTypeName: "作业",
+        endTime: "2026-04-27 23:59:00",
+        scoreLevel: "E+",
+        na: 1,
+      },
+      {
+        id: "t2",
+        courseId: "ai",
+        courseName: "人工智能发展",
+        activityName: "Research summary",
+        scoreTypeName: "项目",
+        endTime: "2026-04-28 19:00:00",
+      },
+    ],
+    pendingHomework: [
+      {
+        id: "t1",
+        courseId: "stats",
+        courseName: "AP统计学",
+        activityName: "Chapter 9 worksheet",
+        scoreTypeName: "作业",
+        endTime: "2026-04-27 23:59:00",
+        scoreLevel: "E+",
+        na: 1,
+      },
+    ],
+    schedule: {
+      1: {
+        0: { time: "08:00-08:40", courses: [{ name: "AP环境科学", teacher: "李娟", room: "505" }] },
+        1: { time: "08:50-09:30", courses: [{ name: "AP环境科学", teacher: "李娟", room: "505" }] },
+        2: { time: "10:05-10:45", courses: [{ name: "AP统计学", teacher: "张其", room: "505" }] },
+      },
+      2: {
+        5: { time: "14:30-15:10", courses: [{ name: "人工智能发展", teacher: "佟佳宁", room: "509" }] },
+      },
+    },
+    timeSlots: {
+      0: "08:00-08:40",
+      1: "08:50-09:30",
+      2: "10:05-10:45",
+      3: "10:55-11:35",
+      4: "11:40-12:10",
+      5: "14:30-15:10",
+      6: "15:20-16:00",
+      7: "16:15-16:55",
+      8: "17:05-17:45",
+    },
+    notices: [{ id: "n1", title: "Term Paper due", sender: "Saurav", time: "2026-01-09 11:19", content: "Remember to submit the term paper.", read: false }],
+    unreadCount: { noticeNotReceipt: 1 },
+    gpa: {
+      averageLevel: "A+",
+      achievementCount: 9,
+      scoreLevelCount: 13,
+      selectedTransferClass: { className: "AP G11 AP3 国际公民素养" },
+    },
+  };
+}
+
+function createPyWebViewBridge() {
+  if (!(window.pywebview && window.pywebview.api)) {
+    return null;
+  }
+  return {
+    loadDashboard: () => window.pywebview.api.load_dashboard(),
+    login: () => window.pywebview.api.login(),
+    loginWithCredentials: (username, password) => window.pywebview.api.login_with_credentials(username, password),
+    logout: () => window.pywebview.api.logout(),
+    setSubject: (subjectName) => window.pywebview.api.set_subject(subjectName),
+    openTask: (taskId) => window.pywebview.api.open_task(taskId),
+    submitTask: (payload) => window.pywebview.api.submit_task(payload),
+    pickFiles: () => window.pywebview.api.pick_files(),
+    openExternal: (url) => window.pywebview.api.open_external(url),
+    window: {
+      minimize: async () => {},
+      toggleMaximize: async () => {},
+      close: async () => {},
+      onStateChange: () => () => {},
+    },
+  };
+}
+
+function isPreviewMode() {
+  return location.protocol === "http:" || location.protocol === "https:";
+}
+
+const loggedOutDashboard = {
+  session: { ready: false, sessionFile: "~/.banxuebang/session.json" },
+  terms: [],
+  courses: [],
+  homework: [],
+  pendingHomework: [],
+  schedule: {},
+  timeSlots: {},
+  notices: [],
+  unreadCount: null,
+  gpa: null,
+};
+
+const mockBridge = {
+  loadDashboard: async () => ({ ok: true, data: createMockDashboard() }),
+  login: async () => ({ ok: true, data: createMockDashboard() }),
+  loginWithCredentials: async () => ({ ok: true, data: createMockDashboard() }),
+  logout: async () => ({ ok: true, data: loggedOutDashboard }),
+  setSubject: async () => ({ ok: true, data: createMockDashboard() }),
+  openTask: async (taskId) => ({
+    ok: true,
+    data: {
+      taskId,
+      taskSummary: createMockDashboard().homework.find((task) => task.id === taskId),
+      contentText: "这里会显示作业内容、老师说明和提交要求。",
+      attachments: [],
+      mySubmissionAttachments: [],
+      mySubmissionList: [],
+    },
+  }),
+  submitTask: async () => ({ ok: true, data: {} }),
+  pickFiles: async () => ({ canceled: false, filePaths: ["/mock/Homework.pdf"] }),
+  openExternal: async () => {},
+  window: {
+    minimize: async () => {},
+    toggleMaximize: async () => {},
+    close: async () => {},
+    onStateChange: () => () => {},
+  },
+};
+
+let bridge = window.bxbApp || createPyWebViewBridge() || (isPreviewMode() ? mockBridge : null);
+
+const els = {
+  appShell: document.querySelector("#app-shell"),
+  sidebarStatus: document.querySelector("#sidebar-status"),
+  authBtn: document.querySelector("#auth-btn"),
+  refreshBtn: document.querySelector("#refresh-btn"),
+  loginStage: document.querySelector("#login-stage"),
+  workspace: document.querySelector("#workspace"),
+  loginUsername: document.querySelector("#login-username"),
+  loginPassword: document.querySelector("#login-password"),
+  rememberPassword: document.querySelector("#remember-password"),
+  loginSubmitBtn: document.querySelector("#login-submit-btn"),
+  pageTitle: document.querySelector("#page-title"),
+  pageSubtitle: document.querySelector("#page-subtitle"),
+  navItems: [...document.querySelectorAll(".nav-item")],
+  views: [...document.querySelectorAll(".content-view")],
+  studentName: document.querySelector("#student-name"),
+  studentClass: document.querySelector("#student-class"),
+  termPill: document.querySelector("#term-pill"),
+  heroNote: document.querySelector("#hero-note"),
+  pendingCount: document.querySelector("#pending-count"),
+  riskCount: document.querySelector("#risk-count"),
+  homeworkSummaryNotes: document.querySelector("#homework-summary-notes"),
+  todayTimeline: document.querySelector("#today-timeline"),
+  weeklySchedule: document.querySelector("#weekly-schedule"),
+  homeworkSubjects: document.querySelector("#homework-subjects"),
+  homeworkTaskList: document.querySelector("#homework-task-list"),
+  homeworkSort: document.querySelector("#homework-sort"),
+  detailTitle: document.querySelector("#detail-title"),
+  detailMeta: document.querySelector("#detail-meta"),
+  detailBody: document.querySelector("#detail-body"),
+  detailAttachments: document.querySelector("#detail-attachments"),
+  submitRemark: document.querySelector("#submit-remark"),
+  pickFilesBtn: document.querySelector("#pick-files-btn"),
+  pickedFiles: document.querySelector("#picked-files"),
+  submitTaskBtn: document.querySelector("#submit-task-btn"),
+  themeChips: [...document.querySelectorAll(".theme-chip")],
+  homeworkReminderEnabled: document.querySelector("#setting-homework-reminder-enabled"),
+  homeworkAbsoluteTime: document.querySelector("#setting-homework-absolute-time"),
+  homeworkReminderDays: document.querySelector("#setting-homework-days"),
+  homeworkReminderContent: document.querySelector("#setting-homework-reminder-content"),
+  classReminderEnabled: document.querySelector("#setting-class-reminder-enabled"),
+  classReminderLeadTime: document.querySelector("#setting-class-reminder-time"),
+  motionEnabled: document.querySelector("#setting-motion-enabled"),
+  frostEnabled: document.querySelector("#setting-frost-enabled"),
+  minimizeBtn: document.querySelector("#minimize-btn"),
+  maximizeBtn: document.querySelector("#maximize-btn"),
+  closeBtn: document.querySelector("#close-btn"),
+};
+
+const viewMeta = {
+  overview: {
+    title: "主页",
+    subtitle: "优先显示姓名、班级、未提交作业和今天课程。",
+  },
+  schedule: {
+    title: "课表",
+    subtitle: "只保留周一到周五的一周课表，快速查看整周安排。",
+  },
+  homework: {
+    title: "作业",
+    subtitle: "左侧按科目筛选，右侧查看内容、附件并直接提交。",
+  },
+  settings: {
+    title: "设置",
+    subtitle: "管理提醒开关、提醒内容和白天 / 黑夜外观。",
+  },
+};
+
+function loadTheme() {
+  const saved = localStorage.getItem("bxb-theme");
+  state.theme = saved === "dark" ? "dark" : "light";
+  document.documentElement.dataset.theme = state.theme;
+  for (const chip of els.themeChips) {
+    chip.classList.toggle("is-active", chip.dataset.theme === state.theme);
+  }
+}
+
+function loadSavedCredentials() {
+  const raw = localStorage.getItem("bxb-auth-memory");
+  if (raw) {
+    try {
+      state.authMemory = {
+        ...state.authMemory,
+        ...JSON.parse(raw),
+      };
+    } catch {}
+  }
+
+  els.rememberPassword.checked = Boolean(state.authMemory.rememberPassword);
+  els.loginUsername.value = state.authMemory.username || "";
+  els.loginPassword.value = state.authMemory.rememberPassword ? state.authMemory.password || "" : "";
+}
+
+function saveCredentials() {
+  localStorage.setItem("bxb-auth-memory", JSON.stringify(state.authMemory));
+}
+
+function setTheme(theme) {
+  state.theme = theme === "dark" ? "dark" : "light";
+  localStorage.setItem("bxb-theme", state.theme);
+  document.documentElement.dataset.theme = state.theme;
+  for (const chip of els.themeChips) {
+    chip.classList.toggle("is-active", chip.dataset.theme === state.theme);
+  }
+}
+
+function loadSettings() {
+  const raw = localStorage.getItem("bxb-settings");
+  if (raw) {
+    try {
+      state.settings = {
+        ...state.settings,
+        ...JSON.parse(raw),
+      };
+    } catch {}
+  }
+  syncSettingsToInputs();
+}
+
+function syncSettingsToInputs() {
+  els.homeworkReminderEnabled.checked = Boolean(state.settings.homeworkReminderEnabled);
+  els.homeworkAbsoluteTime.value = state.settings.homeworkAbsoluteTime;
+  els.homeworkReminderContent.value = state.settings.homeworkReminderContent;
+  els.classReminderEnabled.checked = Boolean(state.settings.classReminderEnabled);
+  els.classReminderLeadTime.value = state.settings.classReminderLeadTime;
+  els.motionEnabled.checked = Boolean(state.settings.motionEnabled);
+  els.frostEnabled.checked = Boolean(state.settings.frostEnabled);
+  for (const input of els.homeworkReminderDays.querySelectorAll('input[type="checkbox"]')) {
+    input.checked = state.settings.homeworkReminderDays.includes(Number(input.value));
+  }
+  document.body.classList.toggle("reduced-motion", !state.settings.motionEnabled);
+  document.body.classList.toggle("frost-off", !state.settings.frostEnabled);
+}
+
+function saveSettings() {
+  localStorage.setItem("bxb-settings", JSON.stringify(state.settings));
+  syncSettingsToInputs();
+}
+
+function formatDateTime(value) {
+  if (!value) {
+    return "未提供";
+  }
+  const date = new Date(String(value).replaceAll("-", "/"));
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function normalizeTermName(summary, dashboard) {
+  return summary?.availableTerms?.find((term) => term.status)?.name || dashboard.terms?.find((term) => term.status)?.name || summary?.currentTermId || "学期未加载";
+}
+
+function normalizeGradeLabel(value) {
+  const text = String(value || "");
+  const gMatch = text.match(/G\s*([0-9]{1,2})/i);
+  if (gMatch?.[1]) {
+    const gradeNum = Number(gMatch[1]);
+    if (gradeNum === 10) return "高一";
+    if (gradeNum === 11) return "高二";
+    if (gradeNum === 12) return "高三";
+  }
+
+  const cnMatch = text.match(/高([一二三])|高([0-9])/);
+  if (cnMatch?.[1]) {
+    return `高${cnMatch[1]}`;
+  }
+  if (cnMatch?.[2]) {
+    const map = { 1: "一", 2: "二", 3: "三" };
+    return `高${map[Number(cnMatch[2])] || cnMatch[2]}`;
+  }
+
+  return "";
+}
+
+function extractClassLabel(summary, dashboard) {
+  const candidates = [
+    dashboard.gpa?.selectedTransferClass?.className,
+    dashboard.gpa?.selectedTransferClass?.srcClassName,
+    summary.currentClass?.name,
+  ].filter(Boolean);
+
+  for (const value of candidates) {
+    const grade = normalizeGradeLabel(value);
+    if (grade) {
+      return grade;
+    }
+  }
+
+  return "未分配年级";
+}
+
+function buildCourseMap(dashboard) {
+  return new Map((dashboard.courses || []).map((course) => [String(course.id), course]));
+}
+
+function enrichTask(task, dashboard) {
+  const courseMap = buildCourseMap(dashboard);
+  const course = courseMap.get(String(task.courseId || ""));
+  return {
+    ...task,
+    courseName: task.courseName || course?.name || "未分类科目",
+  };
+}
+
+function getTodayKey() {
+  const day = new Date().getDay();
+  if (day === 0 || day === 6) {
+    return 1;
+  }
+  return day;
+}
+
+function parseTimeRange(timeRange) {
+  if (!timeRange || !timeRange.includes("-")) {
+    return null;
+  }
+  const [start, end] = timeRange.split("-");
+  const toMinutes = (value) => {
+    const [hours, minutes] = value.split(":").map(Number);
+    return hours * 60 + minutes;
+  };
+  return { start: toMinutes(start), end: toMinutes(end) };
+}
+
+function getCurrentLessonIndex(timeSlots) {
+  const now = new Date();
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  const entries = Object.entries(timeSlots || {}).map(([slot, value]) => [Number(slot), parseTimeRange(value)]);
+  return entries.find(([_, range]) => range && currentMinutes >= range.start && currentMinutes <= range.end)?.[0] ?? null;
+}
+
+function getNextLessonIndex(timeSlots) {
+  const now = new Date();
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  const entries = Object.entries(timeSlots || {}).map(([slot, value]) => [Number(slot), parseTimeRange(value)]);
+  return entries.find(([_, range]) => range && currentMinutes < range.start)?.[0] ?? null;
+}
+
+function getTodaySchedule(dashboard) {
+  const todayKey = getTodayKey();
+  const timeSlots = dashboard.timeSlots || {};
+  const todaySchedule = dashboard.schedule?.[todayKey] || {};
+  return Object.keys(timeSlots)
+    .map((slotKey) => {
+      const slot = Number(slotKey);
+      const entry = todaySchedule[slot] || { time: timeSlots[slot], courses: [] };
+      return {
+        slot,
+        time: entry.time || timeSlots[slot],
+        courses: entry.courses || [],
+      };
+    });
+}
+
+function buildTaskPreview(task) {
+  const parts = [
+    task.scoreLevel ? `等级 ${task.scoreLevel}` : "",
+    task.scoreTypeName || "",
+    task.releaseTime ? `发布 ${formatDateTime(task.releaseTime)}` : "",
+    task.endTime ? `截止 ${formatDateTime(task.endTime)}` : "",
+    task.createName || task.creatorName || "",
+    task.activityContent ? String(task.activityContent).replace(/\s+/g, " ").slice(0, 72) : "",
+    task.description ? String(task.description).replace(/\s+/g, " ").slice(0, 72) : "",
+  ].filter(Boolean);
+  return parts.join(" · ");
+}
+
+function parseTaskTime(task) {
+  const raw = task?.endTime || task?.releaseTime || "";
+  const parsed = new Date(String(raw).replaceAll("-", "/")).getTime();
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function getGradeRank(value) {
+  const grade = String(value || "").trim().toUpperCase();
+  const ranks = {
+    "E+": 0,
+    E: 1,
+    "D+": 2,
+    D: 3,
+    "C-": 4,
+    C: 5,
+    "C+": 6,
+    "B-": 7,
+    B: 8,
+    "B+": 9,
+    "A-": 10,
+    A: 11,
+    "A+": 12,
+  };
+  return grade in ranks ? ranks[grade] : 999;
+}
+
+function isActionableTask(task) {
+  return Number(task.isParticipate ?? 1) === 0;
+}
+
+function sortTasks(tasks, sortMode = "latest") {
+  const items = [...tasks];
+  if (sortMode === "lowest-grade") {
+    return items.sort((a, b) => {
+      const gradeDiff = getGradeRank(a.scoreLevel) - getGradeRank(b.scoreLevel);
+      if (gradeDiff !== 0) {
+        return gradeDiff;
+      }
+      const aTime = parseTaskTime(a) ?? Number.MAX_SAFE_INTEGER;
+      const bTime = parseTaskTime(b) ?? Number.MAX_SAFE_INTEGER;
+      return aTime - bTime;
+    });
+  }
+
+  return items.sort((a, b) => {
+    const aTime = parseTaskTime(a) ?? 0;
+    const bTime = parseTaskTime(b) ?? 0;
+    return bTime - aTime;
+  });
+}
+
+function buildDetailContent(detail) {
+  const summary = detail.taskSummary || {};
+  const task = detail.task || {};
+  const contentBlocks = [
+    detail.contentText,
+    detail.answerText,
+    task.activityContent,
+  ].filter((value) => String(value || "").trim());
+
+  if (contentBlocks.length > 0) {
+    return contentBlocks.join("\n\n");
+  }
+
+  const fallbackLines = [
+    summary.activityName || task.activityName ? `作业：${summary.activityName || task.activityName}` : "",
+    summary.courseName || task.courseName ? `科目：${summary.courseName || task.courseName}` : "",
+    task.statusName ? `状态：${task.statusName}` : "",
+    task.creatorName ? `发布老师：${task.creatorName}` : "",
+    task.releaseTime ? `发布时间：${formatDateTime(task.releaseTime)}` : "",
+    task.endTime ? `截止时间：${formatDateTime(task.endTime)}` : "",
+    detail.lastScore?.createTime ? `最近记录：${formatDateTime(detail.lastScore.createTime)}` : "",
+    detail.mySubmissionList?.length ? `我的提交记录：${detail.mySubmissionList.length} 条` : "",
+    detail.otherSubmissionCount ? `其他同学提交：${detail.otherSubmissionCount} 条` : "",
+  ].filter(Boolean);
+
+  return fallbackLines.join("\n");
+}
+
+function getHomeworkStats(dashboard) {
+  const homework = (dashboard.homework || []).map((task) => enrichTask(task, dashboard));
+  const unsubmitted = homework.filter(isActionableTask);
+  const riskTasks = homework.filter((task) => String(task.scoreLevel || "").includes("E"));
+  const upcoming = [...unsubmitted]
+    .filter((task) => task.endTime && !task.isEnd)
+    .sort((a, b) => (parseTaskTime(a) ?? Number.MAX_SAFE_INTEGER) - (parseTaskTime(b) ?? Number.MAX_SAFE_INTEGER));
+  const nearest = upcoming[0] || null;
+  const prioritized = [...unsubmitted].sort((a, b) => {
+    const aOverdue = Boolean(a.isEnd);
+    const bOverdue = Boolean(b.isEnd);
+    if (aOverdue !== bOverdue) {
+      return aOverdue ? -1 : 1;
+    }
+    const gradeDiff = getGradeRank(a.scoreLevel) - getGradeRank(b.scoreLevel);
+    if (gradeDiff !== 0) {
+      return gradeDiff;
+    }
+    const aTime = parseTaskTime(a) ?? Number.MAX_SAFE_INTEGER;
+    const bTime = parseTaskTime(b) ?? Number.MAX_SAFE_INTEGER;
+    return aTime - bTime;
+  });
+
+  return {
+    pendingCount: unsubmitted.length,
+    riskCount: riskTasks.length,
+    nearest,
+    unsubmitted,
+    prioritized,
+  };
+}
+
+function getFilteredTasks(dashboard) {
+  const tasks = (dashboard.homework || []).map((task) => enrichTask(task, dashboard));
+  const filtered =
+    state.selectedCourseId === "all"
+      ? tasks
+      : tasks.filter((task) => String(task.courseId || "") === String(state.selectedCourseId));
+  return sortTasks(filtered, state.homeworkSort);
+}
+
+function setBusy(isBusy, label = "处理中...") {
+  els.refreshBtn.disabled = isBusy;
+  els.authBtn.disabled = isBusy;
+  els.loginSubmitBtn.disabled = isBusy;
+  els.submitTaskBtn.disabled = isBusy;
+  if (isBusy) {
+    els.refreshBtn.textContent = label;
+  } else {
+    els.refreshBtn.textContent = "刷新";
+    els.submitTaskBtn.textContent = "提交作业";
+  }
+}
+
+function setBridgeReady(ready) {
+  state.bridgeReady = Boolean(ready);
+  els.refreshBtn.disabled = !ready;
+  els.authBtn.disabled = !ready;
+  els.loginSubmitBtn.disabled = !ready;
+}
+
+async function waitForBridge(maxAttempts = 60, intervalMs = 250) {
+  if (bridge) {
+    setBridgeReady(true);
+    return bridge;
+  }
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const candidate = window.bxbApp || createPyWebViewBridge();
+    if (candidate) {
+      bridge = candidate;
+      setBridgeReady(true);
+      return bridge;
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+
+  setBridgeReady(false);
+  throw new Error("桌面桥接未准备好，请重新启动应用。");
+}
+
+function setView(view) {
+  state.activeView = view;
+  for (const item of els.navItems) {
+    item.classList.toggle("is-active", item.dataset.view === view);
+  }
+  for (const section of els.views) {
+    section.classList.toggle("hidden", section.id !== `view-${view}`);
+  }
+  const meta = viewMeta[view];
+  if (meta) {
+    els.pageTitle.textContent = meta.title;
+    els.pageSubtitle.textContent = meta.subtitle;
+  }
+}
+
+function renderShell(summary, dashboard) {
+  const ready = Boolean(summary.ready);
+  els.appShell.classList.toggle("is-logged-out", !ready);
+  els.loginStage.classList.toggle("hidden", ready);
+  els.workspace.classList.toggle("hidden", !ready);
+  els.refreshBtn.classList.toggle("hidden", !ready);
+  els.authBtn.classList.toggle("hidden", !ready);
+  els.sidebarStatus.textContent = ready ? `${summary.user?.name || "学生"} 已登录` : "未登录";
+
+  if (!ready) {
+    els.pageTitle.textContent = "登录";
+    els.pageSubtitle.textContent = "先登录，再查看今天课程、作业和提醒。";
+    return;
+  }
+
+  const meta = viewMeta[state.activeView];
+  els.pageTitle.textContent = meta.title;
+  els.pageSubtitle.textContent = meta.subtitle;
+}
+
+function renderOverview(dashboard) {
+  const summary = dashboard.session;
+  const stats = getHomeworkStats(dashboard);
+  els.studentName.textContent = summary.user?.name || "未登录";
+  els.studentClass.textContent = extractClassLabel(summary, dashboard);
+  els.termPill.textContent = normalizeTermName(summary, dashboard);
+  els.heroNote.textContent = `${summary.user?.name || "你"} 今天优先看课程，再处理最近截止的作业。`;
+  els.pendingCount.textContent = String(stats.pendingCount);
+  els.riskCount.textContent = String(stats.riskCount);
+
+  const notes = [
+    stats.nearest
+      ? `最近截止：${stats.nearest.courseName} · ${formatDateTime(stats.nearest.endTime)}`
+      : "最近截止：当前没有未到期的待提交作业",
+    stats.prioritized?.[0]
+      ? `优先处理：${stats.prioritized[0].activityName || "未命名作业"}`
+      : "优先处理：当前没有待处理项目",
+  ];
+
+  els.homeworkSummaryNotes.innerHTML = notes.map((note) => `<div class="metric-note">${note}</div>`).join("");
+
+  const currentLesson = getCurrentLessonIndex(dashboard.timeSlots);
+  const nextLesson = getNextLessonIndex(dashboard.timeSlots);
+  const todayItems = getTodaySchedule(dashboard);
+
+  if (todayItems.length === 0) {
+    els.todayTimeline.innerHTML = `<div class="empty-state">今天没有抓取到课程安排。</div>`;
+    return;
+  }
+
+  els.todayTimeline.innerHTML = todayItems
+    .map((entry) => {
+      const course = entry.courses[0];
+      const tone = entry.slot === currentLesson ? "current" : entry.slot === nextLesson ? "next" : "";
+      return `
+        <article class="timeline-item ${tone} ${course ? "" : "empty"}">
+          <div class="timeline-time">${entry.time}</div>
+          <div>
+            <div class="timeline-course">${course?.name || "空课时"}</div>
+            <div class="timeline-meta">${course ? `${course?.teacher || "未提供教师"} · ${course?.room || "未提供教室"}` : "保留这个时间段，方便你看全天节奏"}</div>
+          </div>
+        </article>
+      `;
+    })
+    .join("");
+}
+
+function renderSchedule(dashboard) {
+  const dayLabels = [
+    { key: 1, label: "周一" },
+    { key: 2, label: "周二" },
+    { key: 3, label: "周三" },
+    { key: 4, label: "周四" },
+    { key: 5, label: "周五" },
+  ];
+  const todayKey = getTodayKey();
+  const currentLesson = getCurrentLessonIndex(dashboard.timeSlots);
+  const lessonKeys = Object.keys(dashboard.timeSlots || {}).map(Number);
+
+  els.weeklySchedule.innerHTML = `
+    <div class="week-head empty"></div>
+    ${dayLabels
+      .map((day) => `<div class="week-head ${todayKey === day.key ? "today" : ""}">${day.label}</div>`)
+      .join("")}
+    ${lessonKeys
+      .map((lesson) => {
+        const row = [`<div class="week-time">${dashboard.timeSlots?.[lesson] || "—"}</div>`];
+        for (const day of dayLabels) {
+          const slot = dashboard.schedule?.[day.key]?.[lesson] || { courses: [] };
+          const course = slot.courses?.[0];
+          row.push(`
+            <div class="week-cell ${course ? "has-course" : ""} ${todayKey === day.key && currentLesson === lesson ? "current" : ""}">
+              ${
+                course
+                  ? `<div class="cell-course">${course.name}</div><div class="cell-meta">${course.teacher || "未提供教师"}<br />${course.room || "未提供教室"}</div>`
+                  : `<div class="cell-meta">空课时</div>`
+              }
+            </div>
+          `);
+        }
+        return row.join("");
+      })
+      .join("")}
+  `;
+}
+
+function renderSubjects(dashboard) {
+  const items = [{ id: "all", name: "全部科目", count: dashboard.homework.length }].concat(
+    (dashboard.courses || []).map((course) => ({
+      id: course.id,
+      name: course.name,
+      count: (dashboard.homework || []).filter((task) => String(task.courseId || "") === String(course.id)).length,
+    })),
+  );
+
+  if (!items.find((item) => String(item.id) === String(state.selectedCourseId))) {
+    state.selectedCourseId = "all";
+  }
+
+  els.homeworkSubjects.innerHTML = items
+    .map(
+      (item) => `
+        <button class="subject-item ${String(item.id) === String(state.selectedCourseId) ? "is-active" : ""}" data-course-id="${item.id}">
+          <div class="subject-title">${item.name}</div>
+          <div class="subject-meta">${item.count} 项作业</div>
+        </button>
+      `,
+    )
+    .join("");
+
+  for (const button of els.homeworkSubjects.querySelectorAll(".subject-item")) {
+    button.addEventListener("click", () => {
+      state.selectedCourseId = button.dataset.courseId;
+      state.selectedTaskId = null;
+      state.selectedTaskDetail = null;
+      renderHomework(dashboard);
+    });
+  }
+}
+
+function renderTaskList(dashboard) {
+  const tasks = getFilteredTasks(dashboard);
+  if (!tasks.length) {
+    els.homeworkTaskList.innerHTML = `<div class="empty-state">当前科目下没有可显示的作业。</div>`;
+    return;
+  }
+
+  if (!tasks.find((task) => String(task.id) === String(state.selectedTaskId))) {
+    state.selectedTaskId = tasks[0].id;
+  }
+
+  els.homeworkTaskList.innerHTML = tasks
+    .map((task) => {
+      const isRisk = String(task.scoreLevel || "").includes("E");
+      const badges = [
+        task.scoreTypeName ? `<span class="task-badge">${task.scoreTypeName}</span>` : "",
+        task.scoreLevel ? `<span class="task-badge grade">${task.scoreLevel}</span>` : "",
+        task.endTime ? `<span class="task-badge warn">${formatDateTime(task.endTime)}</span>` : "",
+        isRisk ? `<span class="task-badge danger">E+ / 待处理</span>` : "",
+      ]
+        .filter(Boolean)
+        .join("");
+
+      return `
+        <button class="task-item ${String(task.id) === String(state.selectedTaskId) ? "is-active" : ""}" data-task-id="${task.id}">
+          <div class="task-title">${task.activityName || "未命名作业"}</div>
+          <div class="task-submeta">${task.courseName}</div>
+          <div class="task-preview">${buildTaskPreview(task)}</div>
+          <div class="task-badges">${badges}</div>
+        </button>
+      `;
+    })
+    .join("");
+
+  for (const button of els.homeworkTaskList.querySelectorAll(".task-item")) {
+    button.addEventListener("click", async () => {
+      state.selectedTaskId = button.dataset.taskId;
+      renderTaskList(dashboard);
+      await openTaskDetail(button.dataset.taskId, dashboard);
+    });
+  }
+}
+
+function renderPickedFiles() {
+  if (!state.selectedSubmitFiles.length) {
+    els.pickedFiles.innerHTML = `<span class="picked-empty">未选择文件</span>`;
+    return;
+  }
+  els.pickedFiles.innerHTML = state.selectedSubmitFiles
+    .map((filePath) => `<span class="picked-file">${filePath.split(/[\\/]/).pop()}</span>`)
+    .join("");
+}
+
+function renderTaskDetail(detail) {
+  if (!detail) {
+    els.detailTitle.textContent = "请选择作业";
+    els.detailMeta.textContent = "";
+    els.detailBody.innerHTML = `<div class="detail-empty">从中间列表选择一项作业后，这里会显示作业内容、附件和提交入口。</div>`;
+    els.detailAttachments.innerHTML = `<div class="detail-empty">暂无附件</div>`;
+    renderPickedFiles();
+    return;
+  }
+
+  const summary = detail.taskSummary || detail.task || {};
+  const attachments = [
+    ...(detail.attachments || []),
+    ...(detail.task?.fileList || []),
+    ...(detail.mySubmissionAttachments || []),
+  ];
+
+  els.detailTitle.textContent = summary.activityName || detail.task?.activityName || "作业详情";
+  els.detailMeta.textContent = [
+    summary.courseName || detail.task?.courseName || "",
+    summary.scoreTypeName || detail.task?.scoreTypeName || detail.task?.statusName || "",
+    summary.scoreLevel ? `等级：${summary.scoreLevel}` : detail.lastScore?.level ? `等级：${detail.lastScore.level}` : "",
+    summary.endTime ? `截止：${formatDateTime(summary.endTime)}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  els.detailBody.textContent = buildDetailContent(detail) || "这项作业暂时没有可展示的正文内容。";
+
+  if (!attachments.length) {
+    els.detailAttachments.innerHTML = `<div class="detail-empty">暂无附件</div>`;
+  } else {
+    els.detailAttachments.innerHTML = attachments
+      .map((attachment) => {
+        const fileName = attachment.fileName || attachment.name || attachment.originName || "未命名附件";
+        return `<div class="attachment-item">${fileName}</div>`;
+      })
+      .join("");
+  }
+
+  renderPickedFiles();
+}
+
+async function openTaskDetail(taskId, dashboard = state.dashboard) {
+  if (!bridge) {
+    return;
+  }
+  state.selectedTaskId = taskId;
+  state.selectedTaskDetail = null;
+  els.detailTitle.textContent = "正在加载作业";
+  els.detailMeta.textContent = "";
+  els.detailBody.innerHTML = `<div class="detail-empty">正在获取作业内容...</div>`;
+  els.detailAttachments.innerHTML = `<div class="detail-empty">正在获取附件...</div>`;
+
+  const result = await bridge.openTask(taskId);
+  if (!result.ok) {
+    els.detailTitle.textContent = "作业加载失败";
+    els.detailBody.innerHTML = `<div class="detail-empty">${result.error}</div>`;
+    return;
+  }
+
+  state.selectedTaskDetail = result.data;
+  state.selectedSubmitFiles = [];
+  els.submitRemark.value = "";
+  renderTaskList(dashboard);
+  renderTaskDetail(result.data);
+}
+
+function renderHomework(dashboard) {
+  renderSubjects(dashboard);
+  renderTaskList(dashboard);
+  if (state.selectedTaskId) {
+    const currentTask = getFilteredTasks(dashboard).find((task) => String(task.id) === String(state.selectedTaskId));
+    if (!currentTask) {
+      state.selectedTaskId = null;
+      state.selectedTaskDetail = null;
+      renderTaskDetail(null);
+      return;
+    }
+    if (!state.selectedTaskDetail || String(state.selectedTaskDetail.taskId || state.selectedTaskDetail.taskSummary?.id) !== String(state.selectedTaskId)) {
+      openTaskDetail(state.selectedTaskId, dashboard);
+      return;
+    }
+  }
+  renderTaskDetail(state.selectedTaskDetail);
+}
+
+function hydrate(dashboard) {
+  state.dashboard = dashboard;
+  const summary = dashboard.session || loggedOutDashboard.session;
+  renderShell(summary, dashboard);
+  if (!summary.ready) {
+    return;
+  }
+  renderOverview(dashboard);
+  renderSchedule(dashboard);
+  renderHomework(dashboard);
+}
+
+async function refreshDashboard() {
+  if (!bridge) {
+    try {
+      await waitForBridge();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : String(error));
+      return;
+    }
+  }
+  setBusy(true);
+  const result = await bridge.loadDashboard();
+  setBusy(false);
+  if (!result.ok) {
+    alert(result.error);
+    return;
+  }
+  hydrate(result.data);
+}
+
+async function handleCredentialLogin() {
+  if (!bridge) {
+    try {
+      await waitForBridge();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : String(error));
+      return;
+    }
+  }
+  const username = els.loginUsername.value.trim();
+  const password = els.loginPassword.value;
+  if (!username || !password) {
+    alert("请输入账号和密码");
+    return;
+  }
+  els.loginSubmitBtn.disabled = true;
+  els.loginSubmitBtn.textContent = "登录中...";
+  const result = await bridge.loginWithCredentials(username, password);
+  els.loginSubmitBtn.disabled = false;
+  els.loginSubmitBtn.textContent = "登录";
+  if (!result.ok) {
+    alert(result.error);
+    return;
+  }
+  state.selectedCourseId = "all";
+  state.selectedTaskId = null;
+  state.selectedTaskDetail = null;
+  state.authMemory = {
+    rememberPassword: els.rememberPassword.checked,
+    username,
+    password: els.rememberPassword.checked ? password : "",
+  };
+  saveCredentials();
+  hydrate(result.data);
+}
+
+async function handleAuth() {
+  if (!bridge) {
+    return;
+  }
+  if (!state.dashboard?.session?.ready) {
+    const result = await bridge.login();
+    if (!result.ok) {
+      alert(result.error);
+      return;
+    }
+    hydrate(result.data);
+    return;
+  }
+  setBusy(true, "退出中...");
+  const result = await bridge.logout();
+  setBusy(false);
+  if (!result.ok) {
+    alert(result.error);
+    return;
+  }
+  state.selectedCourseId = "all";
+  state.selectedTaskId = null;
+  state.selectedTaskDetail = null;
+  state.selectedSubmitFiles = [];
+  hydrate(result.data);
+}
+
+async function pickSubmissionFiles() {
+  if (!bridge) {
+    return;
+  }
+  const result = await bridge.pickFiles();
+  if (!result || result.canceled) {
+    return;
+  }
+  state.selectedSubmitFiles = [...new Set([...(state.selectedSubmitFiles || []), ...(result.filePaths || [])])];
+  renderPickedFiles();
+}
+
+async function submitCurrentTask() {
+  if (!bridge) {
+    return;
+  }
+  if (!state.selectedTaskDetail?.taskId && !state.selectedTaskDetail?.taskSummary?.id) {
+    alert("请先选择一项作业");
+    return;
+  }
+  const taskId = state.selectedTaskDetail.taskId || state.selectedTaskDetail.taskSummary?.id;
+  const remark = els.submitRemark.value.trim();
+  if (!remark && state.selectedSubmitFiles.length === 0) {
+    alert("备注和附件不能都为空");
+    return;
+  }
+
+  els.submitTaskBtn.disabled = true;
+  els.submitTaskBtn.textContent = "提交中...";
+  const result = await bridge.submitTask({
+    taskId,
+    remark,
+    filePaths: state.selectedSubmitFiles,
+  });
+  els.submitTaskBtn.disabled = false;
+  els.submitTaskBtn.textContent = "提交作业";
+
+  if (!result.ok) {
+    alert(result.error);
+    return;
+  }
+
+  alert("作业提交成功");
+  state.selectedSubmitFiles = [];
+  els.submitRemark.value = "";
+  renderPickedFiles();
+  await refreshDashboard();
+}
+
+function bindEvents() {
+  els.navItems.forEach((item) => item.addEventListener("click", () => setView(item.dataset.view)));
+  els.refreshBtn.addEventListener("click", refreshDashboard);
+  els.authBtn.addEventListener("click", handleAuth);
+  els.loginSubmitBtn.addEventListener("click", handleCredentialLogin);
+  els.loginPassword.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      handleCredentialLogin();
+    }
+  });
+  els.pickFilesBtn.addEventListener("click", pickSubmissionFiles);
+  els.submitTaskBtn.addEventListener("click", submitCurrentTask);
+  els.themeChips.forEach((chip) => chip.addEventListener("click", () => setTheme(chip.dataset.theme)));
+
+  const settingBindings = [
+    [els.homeworkReminderEnabled, "homeworkReminderEnabled", "checked"],
+    [els.homeworkAbsoluteTime, "homeworkAbsoluteTime", "value"],
+    [els.homeworkReminderContent, "homeworkReminderContent", "value"],
+    [els.classReminderEnabled, "classReminderEnabled", "checked"],
+    [els.classReminderLeadTime, "classReminderLeadTime", "value"],
+    [els.motionEnabled, "motionEnabled", "checked"],
+    [els.frostEnabled, "frostEnabled", "checked"],
+  ];
+
+  for (const [element, key, prop] of settingBindings) {
+    element.addEventListener("change", () => {
+      state.settings[key] = element[prop];
+      saveSettings();
+    });
+  }
+
+  els.homeworkSort.addEventListener("change", () => {
+    state.homeworkSort = els.homeworkSort.value;
+    if (state.dashboard?.session?.ready) {
+      renderHomework(state.dashboard);
+    }
+  });
+
+  els.rememberPassword.addEventListener("change", () => {
+    state.authMemory.rememberPassword = els.rememberPassword.checked;
+    if (!state.authMemory.rememberPassword) {
+      state.authMemory.password = "";
+    }
+    state.authMemory.username = els.loginUsername.value.trim();
+    saveCredentials();
+  });
+
+  els.loginUsername.addEventListener("input", () => {
+    if (!els.rememberPassword.checked) {
+      return;
+    }
+    state.authMemory.username = els.loginUsername.value.trim();
+    saveCredentials();
+  });
+
+  els.loginPassword.addEventListener("input", () => {
+    if (!els.rememberPassword.checked) {
+      return;
+    }
+    state.authMemory.password = els.loginPassword.value;
+    saveCredentials();
+  });
+
+  for (const input of els.homeworkReminderDays.querySelectorAll('input[type="checkbox"]')) {
+    input.addEventListener("change", () => {
+      state.settings.homeworkReminderDays = [...els.homeworkReminderDays.querySelectorAll('input[type="checkbox"]:checked')]
+        .map((checkbox) => Number(checkbox.value))
+        .sort((a, b) => a - b);
+      saveSettings();
+    });
+  }
+
+  if (els.minimizeBtn) {
+    els.minimizeBtn.addEventListener("click", () => bridge?.window.minimize());
+    els.maximizeBtn.addEventListener("click", () => bridge?.window.toggleMaximize());
+    els.closeBtn.addEventListener("click", () => bridge?.window.close());
+  }
+}
+
+bindEvents();
+loadTheme();
+loadSavedCredentials();
+loadSettings();
+els.homeworkSort.value = state.homeworkSort;
+setView("overview");
+setBridgeReady(Boolean(bridge));
+hydrate(loggedOutDashboard);
+renderTaskDetail(null);
+
+if (window.pywebview) {
+  window.addEventListener("pywebviewready", () => {
+    bridge = createPyWebViewBridge() || bridge;
+    setBridgeReady(Boolean(bridge));
+    refreshDashboard();
+  });
+  setTimeout(() => {
+    bridge = createPyWebViewBridge() || bridge;
+    setBridgeReady(Boolean(bridge));
+    refreshDashboard();
+  }, 300);
+} else {
+  refreshDashboard();
+}
