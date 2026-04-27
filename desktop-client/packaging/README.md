@@ -18,7 +18,9 @@ Notes:
 
 - Uses Inno Setup.
 - The build script installs Inno Setup automatically with `winget` if it is missing.
-- The installer keeps the existing first-run bootstrap behavior, so Python and Playwright can still self-install on the user's machine.
+- The installer now bundles a full Windows Python runtime, Python packages, and Playwright Chromium to reduce first-run downloads.
+- The installed app prefers the bundled `pythonw.exe`, so normal GUI launch is quieter and faster.
+- The repository workflow `.github/workflows/build-windows-release.yml` can rebuild and replace the Windows release asset from GitHub Actions.
 
 ## macOS `.dmg`
 

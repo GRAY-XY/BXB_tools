@@ -3,7 +3,7 @@
   #define MyAppVersion "1.0.0"
 #endif
 #define MyAppPublisher "IGpig"
-#define MyAppExeName "Launch BXB Client.bat"
+#define MyAppExeName "Launch BXB Client.vbs"
 
 [Setup]
 AppId={{A7C0E386-C7B0-4699-9007-08D1A4D133C5}
@@ -20,7 +20,8 @@ OutputBaseFilename=BXB_Client_Setup_Windows
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
-UninstallDisplayIcon={app}\{#MyAppExeName}
+UninstallDisplayIcon={app}\assets\app_icon.ico
+SetupIconFile=..\..\assets\app_icon.ico
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -45,9 +46,13 @@ Source: "..\..\start_cli.command"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\generate_ui_assets.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\assets\*"; DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "Launch BXB Client.bat"; DestDir: "{app}"; Flags: ignoreversion
+Source: "Launch BXB Client.vbs"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\build\windows-runtime\python\*"; DestDir: "{app}\runtime\python"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\..\build\windows-runtime\ms-playwright\*"; DestDir: "{app}\runtime\ms-playwright"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\BXB Client"; Filename: "{app}\{#MyAppExeName}"
+Name: "{group}\Uninstall BXB Client"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\BXB Client"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]

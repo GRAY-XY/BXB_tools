@@ -1,6 +1,30 @@
 $ErrorActionPreference = "Stop"
 
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$BundledPython = Join-Path $ProjectRoot "runtime\python\python.exe"
+$BundledPythonGui = Join-Path $ProjectRoot "runtime\python\pythonw.exe"
+$BundledBrowserRoot = Join-Path $ProjectRoot "runtime\ms-playwright"
+
+function Use-BundledRuntime {
+    if (-not (Test-Path $BundledPython)) {
+        return $false
+    }
+
+    $env:PLAYWRIGHT_BROWSERS_PATH = $BundledBrowserRoot
+    $env:BXB_RUNTIME_BOOTSTRAPPED = "1"
+    $env:PYTHONUTF8 = "1"
+
+    if (Test-Path $BundledPythonGui) {
+        & $BundledPythonGui "$ProjectRoot\banxuebang_gui.py"
+    } else {
+        & $BundledPython "$ProjectRoot\banxuebang_gui.py"
+    }
+    return $true
+}
+
+if (Use-BundledRuntime) {
+    exit $LASTEXITCODE
+}
 
 function Find-Python {
     $candidates = @()
@@ -48,4 +72,9 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $env:BXB_RUNTIME_BOOTSTRAPPED = "1"
-& $python "$ProjectRoot\banxuebang_gui.py"
+$pythonGui = Join-Path (Split-Path -Parent $python) "pythonw.exe"
+if (Test-Path $pythonGui) {
+    & $pythonGui "$ProjectRoot\banxuebang_gui.py"
+} else {
+    & $python "$ProjectRoot\banxuebang_gui.py"
+}

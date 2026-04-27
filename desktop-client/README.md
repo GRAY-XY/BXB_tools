@@ -64,6 +64,8 @@ Current macOS builds are designed so users do not need to prepare a Python devel
 
 Use the Windows installer from GitHub Releases.
 
+Current Windows builds are intended to ship with their own runtime and bundled Chromium so most users do not need a separate Python setup or a long first-run download.
+
 ## Developer Setup
 
 ### Requirements

@@ -3,10 +3,33 @@ $ErrorActionPreference = "Stop"
 $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectRoot = Split-Path -Parent (Split-Path -Parent $ScriptRoot)
 $OutputDir = Join-Path $ProjectRoot "dist\windows-installer"
-$PythonExe = Join-Path $env:LOCALAPPDATA "Programs\Python\Python312\python.exe"
+$PythonExe = $null
+foreach ($candidate in @(
+    (Join-Path $env:LOCALAPPDATA "Programs\Python\Python312\python.exe"),
+    "py -3.12",
+    "python",
+    "python3"
+)) {
+    try {
+        if ($candidate -eq "py -3.12") {
+            $resolved = (& py -3.12 -c "import sys; print(sys.executable)" | Select-Object -First 1).Trim()
+            if ($resolved) {
+                $PythonExe = $resolved
+                break
+            }
+        } elseif (Get-Command $candidate -ErrorAction SilentlyContinue) {
+            $PythonExe = (Get-Command $candidate).Source
+            break
+        } elseif (Test-Path $candidate) {
+            $PythonExe = $candidate
+            break
+        }
+    } catch {
+    }
+}
 
-if (-not (Test-Path $PythonExe)) {
-    $PythonExe = "python"
+if (-not $PythonExe) {
+    throw "Python 3.12+ is required to build the Windows installer."
 }
 function Get-IsccCandidates {
     @(
@@ -37,6 +60,14 @@ function Ensure-InnoSetup {
 }
 
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
+& $PythonExe (Join-Path $ProjectRoot "generate_ui_assets.py")
+if ($LASTEXITCODE -ne 0) {
+    throw "UI asset generation failed."
+}
+& (Join-Path $ScriptRoot "prepare_windows_runtime.ps1") -ProjectRoot $ProjectRoot -PythonExe $PythonExe
+if ($LASTEXITCODE -ne 0) {
+    throw "Bundled runtime preparation failed."
+}
 $iscc = Ensure-InnoSetup
 $appVersion = (& $PythonExe -c "from app_metadata import APP_VERSION; print(APP_VERSION)" | Select-Object -First 1).Trim()
 Write-Host "[BXB Build] Using ISCC: $iscc"

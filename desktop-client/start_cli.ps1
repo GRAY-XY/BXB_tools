@@ -1,6 +1,16 @@
 $ErrorActionPreference = "Stop"
 
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$BundledPython = Join-Path $ProjectRoot "runtime\python\python.exe"
+$BundledBrowserRoot = Join-Path $ProjectRoot "runtime\ms-playwright"
+
+if (Test-Path $BundledPython) {
+    $env:PLAYWRIGHT_BROWSERS_PATH = $BundledBrowserRoot
+    $env:BXB_RUNTIME_BOOTSTRAPPED = "1"
+    $env:PYTHONUTF8 = "1"
+    & $BundledPython "$ProjectRoot\banxuebang.py" @args
+    exit $LASTEXITCODE
+}
 
 function Find-Python {
     $candidates = @()

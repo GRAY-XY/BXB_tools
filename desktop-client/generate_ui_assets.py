@@ -9,6 +9,7 @@ ASSETS_DIR = os.path.join(ROOT, "assets")
 SOURCE_ICON = os.path.join(os.path.expanduser("~"), "Desktop", "20260424-205440.png")
 APP_ICON_OUT = os.path.join(ASSETS_DIR, "app_icon_rounded.png")
 APP_ICON_ICNS_OUT = os.path.join(ASSETS_DIR, "app_icon.icns")
+APP_ICON_ICO_OUT = os.path.join(ASSETS_DIR, "app_icon.ico")
 
 
 def ensure_dir():
@@ -62,6 +63,14 @@ def macos_icns():
 
     subprocess.run(["iconutil", "-c", "icns", iconset_dir, "-o", APP_ICON_ICNS_OUT], check=True)
     shutil.rmtree(iconset_dir, ignore_errors=True)
+
+
+def windows_ico():
+    if not os.path.exists(APP_ICON_OUT):
+        return
+    image = Image.open(APP_ICON_OUT).convert("RGBA")
+    sizes = [(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
+    image.save(APP_ICON_ICO_OUT, format="ICO", sizes=sizes)
 
 
 def draw_home(draw, color):
@@ -132,6 +141,10 @@ def main():
     rounded_app_icon()
     try:
         macos_icns()
+    except Exception:
+        pass
+    try:
+        windows_ico()
     except Exception:
         pass
     nav_icon("home", draw_home)
