@@ -17,11 +17,20 @@ import re
 import base64
 import tempfile
 import traceback
+import webbrowser
 from datetime import datetime
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import tkinter.font as tkfont
-from app_metadata import APP_TAGLINE, APP_TITLE, APP_VERSION, UPDATE_FEED_URL, WINDOW_TITLE
+from app_metadata import (
+    APP_TAGLINE,
+    APP_TITLE,
+    APP_VERSION,
+    FEEDBACK_EMAIL,
+    PROJECT_URL,
+    UPDATE_FEED_URL,
+    WINDOW_TITLE,
+)
 from bootstrap_runtime import ensure_runtime
 
 # ============================================================
@@ -1098,12 +1107,52 @@ class App:
         )
         self.status_bar.pack(fill="x", pady=(14, 0))
 
+        self.footer_bar = tk.Frame(content_wrap, bg=self.ui["bg"])
+        self.footer_bar.pack(fill="x", pady=(10, 0))
+        self._build_footer(self.footer_bar)
+
         self.pages = {}
         self._build_home_page()
         self._build_schedule_page()
         self._build_homework_page()
         self._build_notice_page()
         self._show_page("home")
+
+    def _build_footer(self, parent):
+        footer = tk.Frame(parent, bg=self.ui["bg"])
+        footer.pack(fill="x")
+
+        label_style = {
+            "bg": self.ui["bg"],
+            "fg": self.ui["muted"],
+            "font": (self.font_family, 10),
+        }
+        link_style = {
+            "bg": self.ui["bg"],
+            "fg": self.ui["accent"],
+            "font": (self.font_family, 10, "underline"),
+            "cursor": "hand2",
+        }
+
+        tk.Label(footer, text="反馈邮箱：", **label_style).pack(side="left")
+        mail_link = tk.Label(footer, text=FEEDBACK_EMAIL, **link_style)
+        mail_link.pack(side="left")
+        tk.Label(footer, text="   GitHub 项目：", **label_style).pack(side="left")
+        repo_link = tk.Label(footer, text=PROJECT_URL, **link_style)
+        repo_link.pack(side="left")
+
+        mail_link.bind("<Button-1>", lambda _event: self._open_external_link(f"mailto:{FEEDBACK_EMAIL}"))
+        repo_link.bind("<Button-1>", lambda _event: self._open_external_link(PROJECT_URL))
+
+    def _open_external_link(self, url):
+        try:
+            webbrowser.open(url)
+            if url.startswith("mailto:"):
+                self._set_status(f"已打开反馈邮箱：{FEEDBACK_EMAIL}")
+            else:
+                self._set_status("已打开 GitHub 项目地址")
+        except Exception as exc:
+            self._set_status(f"打开链接失败：{exc}")
 
     # ============================================================
     # 导航
