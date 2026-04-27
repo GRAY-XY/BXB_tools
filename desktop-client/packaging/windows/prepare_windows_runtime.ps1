@@ -1,9 +1,9 @@
-$ErrorActionPreference = "Stop"
-
 param(
     [string]$ProjectRoot = "",
     [string]$PythonExe = ""
 )
+
+$ErrorActionPreference = "Stop"
 
 if (-not $ProjectRoot) {
     $ProjectRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
