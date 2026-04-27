@@ -5,6 +5,7 @@ from pathlib import Path
 
 repo_root = Path.cwd()
 node_zip = repo_root / "build_assets" / "node-v22.15.0-win-x64.zip"
+browser_zip = repo_root / "build_assets" / "ms-playwright-browsers.zip"
 
 datas = [
     (str(repo_root / "src"), "payload/src"),
@@ -17,6 +18,9 @@ datas = [
 
 if node_zip.exists():
     datas.append((str(node_zip), "payload/runtime"))
+
+if browser_zip.exists():
+    datas.append((str(browser_zip), "payload/runtime"))
 
 a = Analysis(
     ["UI/banxuebang_homework/standalone_launcher.py"],
