@@ -126,6 +126,20 @@ def draw_notice(draw, color):
     draw.ellipse((82, 32, 88, 38), fill="#ffffff")
 
 
+def draw_reminder(draw, color):
+    fill = "#eef8ff"
+    accent = "#0f8ecf"
+    shadow = "#d5ecfa"
+    draw.rounded_rectangle((18, 18, 110, 110), radius=34, fill=shadow)
+    draw.rounded_rectangle((16, 14, 112, 110), radius=34, fill=fill)
+    draw.ellipse((36, 34, 92, 90), fill="#ffffff", outline=accent, width=8)
+    draw.line((64, 48, 64, 64), fill=color, width=7)
+    draw.line((64, 64, 80, 72), fill=accent, width=7)
+    draw.rounded_rectangle((58, 22, 70, 34), radius=5, fill=color)
+    draw.arc((24, 18, 50, 44), start=20, end=170, fill=accent, width=6)
+    draw.arc((78, 18, 104, 44), start=10, end=160, fill=accent, width=6)
+
+
 def nav_icon(name, painter):
     size = 128
     scale = 4
@@ -151,6 +165,7 @@ def main():
     nav_icon("schedule", draw_schedule)
     nav_icon("homework", draw_homework)
     nav_icon("notice", draw_notice)
+    nav_icon("reminder", draw_reminder)
 
 
 if __name__ == "__main__":

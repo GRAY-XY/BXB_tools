@@ -12,7 +12,12 @@
         "pip": "requests>=2.31"
       }
     ],
-    "windows": [],
+    "windows": [
+      {
+        "module": "win10toast",
+        "pip": "win10toast>=0.9"
+      }
+    ],
     "darwin": [],
     "linux": []
   },

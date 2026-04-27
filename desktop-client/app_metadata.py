@@ -8,5 +8,6 @@ UPDATE_FEED_URL = ""
 RELEASES_PAGE_URL = "https://github.com/GRAY-XY/BXB_tools/releases/tag/bxb-client-v1.0.0"
 PROJECT_URL = "https://github.com/GRAY-XY/BXB_tools/tree/client"
 FEEDBACK_EMAIL = "igpig1226@gmail.com"
+REMINDER_SETTINGS_FILENAME = ".banxuebang_reminders.json"
 
 __version__ = APP_VERSION

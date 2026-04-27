@@ -28,6 +28,7 @@ from app_metadata import (
     APP_VERSION,
     FEEDBACK_EMAIL,
     PROJECT_URL,
+    REMINDER_SETTINGS_FILENAME,
     UPDATE_FEED_URL,
     WINDOW_TITLE,
 )
@@ -74,6 +75,7 @@ APP_ICON_PATH = os.path.join(os.path.expanduser("~"), "Desktop", "20260424-20544
 ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 ROUNDED_APP_ICON_PATH = os.path.join(ASSETS_DIR, "app_icon_rounded.png")
 CREDENTIALS_FILE = os.path.join(os.path.expanduser("~"), ".banxuebang_creds.json")
+REMINDER_SETTINGS_FILE = os.path.join(os.path.expanduser("~"), REMINDER_SETTINGS_FILENAME)
 ALL_COURSES_LABEL = "全部课程"
 
 # ============================================================
@@ -721,6 +723,13 @@ class App:
         self._schedule_cache = {}
         self._schedule_time_slots = {}
         self._page_transition_job = None
+        self._reminder_job = None
+        self._last_reminder_keys = set()
+        self._last_notice_signature = ""
+        self._last_homework_signature = ""
+        self._last_schedule_signature = ""
+        self._reminder_running = False
+        self.reminder_config = self._default_reminder_config()
 
         self.status_var = tk.StringVar(value=f"就绪 · v{APP_VERSION}")
         self.page_title_var = tk.StringVar(value="Dashboard")
@@ -745,12 +754,15 @@ class App:
         self._configure_styles()
         self._build_ui()
         self._load_saved_creds()
+        self._load_reminder_settings()
+        self._apply_reminder_config_to_form()
         self.root.bind("<Configure>", self._on_window_resize)
         self.root.bind_all("<MouseWheel>", self._on_global_mousewheel)
         self.root.bind_all("<Shift-MouseWheel>", self._on_global_shift_mousewheel)
         self.root.bind_all("<Button-4>", self._on_global_linux_scroll)
         self.root.bind_all("<Button-5>", self._on_global_linux_scroll)
         self.root.after(50, self._drain_ui_queue)
+        self.root.after(1500, self._schedule_reminder_tick)
 
     def _configure_window(self):
         self.root.configure(bg=self.ui["bg"])
@@ -808,6 +820,7 @@ class App:
             os.path.join(ASSETS_DIR, "nav_schedule.png"),
             os.path.join(ASSETS_DIR, "nav_homework.png"),
             os.path.join(ASSETS_DIR, "nav_notice.png"),
+            os.path.join(ASSETS_DIR, "nav_reminder.png"),
         ]
         if all(os.path.exists(path) for path in needed):
             return
@@ -1046,6 +1059,7 @@ class App:
             ("schedule", "Schedule"),
             ("homework", "Homework"),
             ("notice", "Notices"),
+            ("reminder", "Alerts"),
         ]
         for name, tip in nav_items:
             btn = self._make_nav_button(
@@ -1116,6 +1130,7 @@ class App:
         self._build_schedule_page()
         self._build_homework_page()
         self._build_notice_page()
+        self._build_reminder_page()
         self._show_page("home")
 
     def _build_footer(self, parent):
@@ -1169,6 +1184,7 @@ class App:
             "schedule": ("Weekly Schedule", "Your classes arranged in a cleaner studio-style grid."),
             "homework": ("Homework", "Focused course view with submission and score controls."),
             "notice": ("Notices", "A reading-first inbox for school announcements and updates."),
+            "reminder": ("Alerts", "System reminders for homework, schedule, and school notices."),
         }
         title, subtitle = page_titles.get(name, ("BXB Client developed by IGpig", ""))
         self.page_title_var.set(title)
@@ -1786,6 +1802,394 @@ class App:
             self._show_user_info(self.api.session)
 
     # ============================================================
+    # 提醒页面
+    # ============================================================
+    def _build_reminder_page(self):
+        page = tk.Frame(self.content, bg=self.ui["bg"])
+        self.pages["reminder"] = page
+
+        hero = RoundedPanel(page, bg=self.ui["bg"], fill=self.ui["panel"], outline=self.ui["border"], radius=28, padding=18)
+        hero.pack(fill="x", pady=(0, 14))
+        tk.Label(hero.inner, text="Reminder Center", bg=self.ui["panel"], fg=self.ui["text"], font=(self.font_family_display, 18, "bold")).pack(anchor="w")
+        tk.Label(
+            hero.inner,
+            text="把系统级提醒、提醒时间和提醒内容集中放在这里。支持固定时刻和循环间隔，适合没有开发环境的普通用户直接使用。",
+            bg=self.ui["panel"],
+            fg=self.ui["muted"],
+            font=(self.font_family, 11),
+            wraplength=960,
+            justify="left",
+        ).pack(anchor="w", pady=(4, 14))
+
+        hero_actions = tk.Frame(hero.inner, bg=self.ui["panel"])
+        hero_actions.pack(fill="x")
+        self._make_button(hero_actions, "保存提醒设置", self._save_reminder_settings_from_form, kind="primary", width=160, height=42).pack(side="left")
+        self._make_button(hero_actions, "立即测试提醒", self._send_test_reminder, kind="secondary", width=150, height=42).pack(side="left", padx=(10, 0))
+        self._make_button(hero_actions, "刷新账号数据", self._refresh_reminder_sources, kind="secondary", width=150, height=42).pack(side="left", padx=(10, 0))
+
+        body = tk.Frame(page, bg=self.ui["bg"])
+        body.pack(fill="both", expand=True)
+
+        left = RoundedPanel(body, bg=self.ui["bg"], fill=self.ui["panel"], outline=self.ui["border"], radius=28, padding=18, width=420)
+        left.pack(side="left", fill="y", padx=(0, 14))
+        left_inner = left.inner
+
+        self.reminders_enabled_var = tk.BooleanVar(value=False)
+        self.system_notify_var = tk.BooleanVar(value=True)
+        self.reminder_mode_var = tk.StringVar(value="daily")
+        self.reminder_times_var = tk.StringVar(value="07:20, 18:30, 21:00")
+        self.reminder_interval_var = tk.StringVar(value="120")
+        self.reminder_window_start_var = tk.StringVar(value="07:00")
+        self.reminder_window_end_var = tk.StringVar(value="22:30")
+        self.reminder_homework_var = tk.BooleanVar(value=True)
+        self.reminder_schedule_var = tk.BooleanVar(value=True)
+        self.reminder_notice_var = tk.BooleanVar(value=True)
+        self.reminder_only_schooldays_var = tk.BooleanVar(value=False)
+        self.reminder_allow_repeat_var = tk.BooleanVar(value=False)
+
+        tk.Label(left_inner, text="总开关", bg=self.ui["panel"], fg=self.ui["text"], font=(self.font_family_display, 16, "bold")).pack(anchor="w")
+        ttk.Checkbutton(left_inner, text="启用提醒中心", variable=self.reminders_enabled_var).pack(anchor="w", pady=(10, 4))
+        ttk.Checkbutton(left_inner, text="启用系统级通知（Windows / macOS）", variable=self.system_notify_var).pack(anchor="w", pady=(0, 10))
+
+        tk.Label(left_inner, text="提醒方式", bg=self.ui["panel"], fg=self.ui["text"], font=(self.font_family_display, 16, "bold")).pack(anchor="w", pady=(14, 0))
+        ttk.Radiobutton(left_inner, text="固定时刻提醒", value="daily", variable=self.reminder_mode_var).pack(anchor="w", pady=(10, 2))
+        tk.Label(left_inner, text="时间列表，多个时间用英文逗号分隔，例如 07:20, 12:40, 18:30", bg=self.ui["panel"], fg=self.ui["muted"], font=(self.font_family, 10), wraplength=340, justify="left").pack(anchor="w")
+        ttk.Entry(left_inner, textvariable=self.reminder_times_var, width=36).pack(anchor="w", pady=(6, 10))
+
+        ttk.Radiobutton(left_inner, text="循环间隔提醒", value="interval", variable=self.reminder_mode_var).pack(anchor="w", pady=(6, 2))
+        interval_row = tk.Frame(left_inner, bg=self.ui["panel"])
+        interval_row.pack(fill="x", pady=(6, 0))
+        tk.Label(interval_row, text="每隔", bg=self.ui["panel"], fg=self.ui["muted"], font=(self.font_family, 10)).pack(side="left")
+        ttk.Entry(interval_row, textvariable=self.reminder_interval_var, width=8).pack(side="left", padx=(8, 8))
+        tk.Label(interval_row, text="分钟提醒一次", bg=self.ui["panel"], fg=self.ui["muted"], font=(self.font_family, 10)).pack(side="left")
+
+        window_row = tk.Frame(left_inner, bg=self.ui["panel"])
+        window_row.pack(fill="x", pady=(10, 0))
+        tk.Label(window_row, text="生效时段", bg=self.ui["panel"], fg=self.ui["muted"], font=(self.font_family, 10)).pack(side="left")
+        ttk.Entry(window_row, textvariable=self.reminder_window_start_var, width=8).pack(side="left", padx=(8, 6))
+        tk.Label(window_row, text="到", bg=self.ui["panel"], fg=self.ui["muted"], font=(self.font_family, 10)).pack(side="left")
+        ttk.Entry(window_row, textvariable=self.reminder_window_end_var, width=8).pack(side="left", padx=(6, 0))
+
+        ttk.Checkbutton(left_inner, text="仅周一到周五提醒", variable=self.reminder_only_schooldays_var).pack(anchor="w", pady=(12, 4))
+        ttk.Checkbutton(left_inner, text="允许同一分钟重复提醒一次以上", variable=self.reminder_allow_repeat_var).pack(anchor="w")
+
+        right = RoundedPanel(body, bg=self.ui["bg"], fill=self.ui["panel"], outline=self.ui["border"], radius=28, padding=18)
+        right.pack(side="left", fill="both", expand=True)
+        right_inner = right.inner
+
+        tk.Label(right_inner, text="提醒内容", bg=self.ui["panel"], fg=self.ui["text"], font=(self.font_family_display, 16, "bold")).pack(anchor="w")
+        ttk.Checkbutton(right_inner, text="提醒我看未提交作业", variable=self.reminder_homework_var).pack(anchor="w", pady=(12, 4))
+        ttk.Checkbutton(right_inner, text="提醒我看今天课表", variable=self.reminder_schedule_var).pack(anchor="w", pady=4)
+        ttk.Checkbutton(right_inner, text="提醒我看老师通知 / 公告", variable=self.reminder_notice_var).pack(anchor="w", pady=4)
+
+        tk.Label(right_inner, text="提示规则说明", bg=self.ui["panel"], fg=self.ui["text"], font=(self.font_family_display, 16, "bold")).pack(anchor="w", pady=(18, 0))
+        for line in [
+            "固定时刻模式：到点就提醒一次，适合早读、放学、睡前检查。",
+            "循环间隔模式：在生效时段内按分钟循环，例如每 90 分钟提醒一次。",
+            "作业提醒会优先展示未提交项，课表提醒会展示今天剩余 / 全部课程，通知提醒会展示最近公告标题。",
+            "需要先登录账号，提醒中心才能自动拉取作业、课表和通知。",
+        ]:
+            tk.Label(right_inner, text=f"•  {line}", bg=self.ui["panel"], fg=self.ui["muted"], font=(self.font_family, 10), wraplength=700, justify="left").pack(anchor="w", pady=3)
+
+        tk.Label(right_inner, text="当前状态", bg=self.ui["panel"], fg=self.ui["text"], font=(self.font_family_display, 16, "bold")).pack(anchor="w", pady=(18, 0))
+        self.reminder_status_label = tk.Label(
+            right_inner,
+            text="提醒中心已待命。",
+            bg=self.ui["panel_alt"],
+            fg=self.ui["text"],
+            font=(self.font_family, 11),
+            justify="left",
+            wraplength=720,
+            padx=16,
+            pady=16,
+        )
+        self.reminder_status_label.pack(fill="x", pady=(12, 0))
+
+    def _default_reminder_config(self):
+        return {
+            "enabled": False,
+            "system_notifications": True,
+            "mode": "daily",
+            "times": ["07:20", "18:30", "21:00"],
+            "interval_minutes": 120,
+            "active_hours_start": "07:00",
+            "active_hours_end": "22:30",
+            "include_homework": True,
+            "include_schedule": True,
+            "include_notice": True,
+            "schooldays_only": False,
+            "allow_repeat_same_minute": False,
+        }
+
+    def _load_reminder_settings(self):
+        config = self._default_reminder_config()
+        if os.path.exists(REMINDER_SETTINGS_FILE):
+            try:
+                with open(REMINDER_SETTINGS_FILE, "r", encoding="utf-8") as f:
+                    saved = json.load(f)
+                if isinstance(saved, dict):
+                    config.update(saved)
+            except Exception:
+                pass
+        self.reminder_config = config
+
+    def _apply_reminder_config_to_form(self):
+        if not hasattr(self, "reminders_enabled_var"):
+            return
+        config = self.reminder_config
+        self.reminders_enabled_var.set(bool(config.get("enabled")))
+        self.system_notify_var.set(bool(config.get("system_notifications", True)))
+        self.reminder_mode_var.set(config.get("mode") or "daily")
+        self.reminder_times_var.set(", ".join(config.get("times") or []))
+        self.reminder_interval_var.set(str(config.get("interval_minutes", 120)))
+        self.reminder_window_start_var.set(config.get("active_hours_start") or "07:00")
+        self.reminder_window_end_var.set(config.get("active_hours_end") or "22:30")
+        self.reminder_homework_var.set(bool(config.get("include_homework", True)))
+        self.reminder_schedule_var.set(bool(config.get("include_schedule", True)))
+        self.reminder_notice_var.set(bool(config.get("include_notice", True)))
+        self.reminder_only_schooldays_var.set(bool(config.get("schooldays_only")))
+        self.reminder_allow_repeat_var.set(bool(config.get("allow_repeat_same_minute")))
+        self._update_reminder_status_card("提醒设置已加载。")
+
+    def _save_reminder_settings_from_form(self):
+        try:
+            config = self._collect_reminder_config_from_form()
+        except ValueError as exc:
+            messagebox.showwarning("提醒设置", str(exc))
+            return
+
+        self.reminder_config = config
+        try:
+            with open(REMINDER_SETTINGS_FILE, "w", encoding="utf-8") as f:
+                json.dump(config, f, ensure_ascii=False, indent=2)
+        except Exception as exc:
+            messagebox.showerror("保存失败", str(exc))
+            return
+
+        self._last_reminder_keys.clear()
+        self._update_reminder_status_card("提醒设置已保存，新的规则会自动生效。")
+        self._set_status("提醒设置已保存")
+
+    def _collect_reminder_config_from_form(self):
+        times = self._parse_reminder_times(self.reminder_times_var.get())
+        interval = self._parse_positive_int(self.reminder_interval_var.get(), "循环分钟数")
+        start_time = self._normalize_time_text(self.reminder_window_start_var.get(), "循环开始时间")
+        end_time = self._normalize_time_text(self.reminder_window_end_var.get(), "循环结束时间")
+        mode = self.reminder_mode_var.get().strip() or "daily"
+
+        if mode == "daily" and not times:
+            raise ValueError("固定时刻模式至少需要填写一个提醒时间。")
+        if mode == "interval" and interval <= 0:
+            raise ValueError("循环分钟数必须大于 0。")
+        if not (self.reminder_homework_var.get() or self.reminder_schedule_var.get() or self.reminder_notice_var.get()):
+            raise ValueError("至少勾选一种提醒内容。")
+
+        return {
+            "enabled": bool(self.reminders_enabled_var.get()),
+            "system_notifications": bool(self.system_notify_var.get()),
+            "mode": mode,
+            "times": times,
+            "interval_minutes": interval,
+            "active_hours_start": start_time,
+            "active_hours_end": end_time,
+            "include_homework": bool(self.reminder_homework_var.get()),
+            "include_schedule": bool(self.reminder_schedule_var.get()),
+            "include_notice": bool(self.reminder_notice_var.get()),
+            "schooldays_only": bool(self.reminder_only_schooldays_var.get()),
+            "allow_repeat_same_minute": bool(self.reminder_allow_repeat_var.get()),
+        }
+
+    def _parse_reminder_times(self, text):
+        values = []
+        for raw in str(text or "").split(","):
+            item = raw.strip()
+            if not item:
+                continue
+            values.append(self._normalize_time_text(item, "提醒时间"))
+        return values
+
+    def _parse_positive_int(self, value, label):
+        try:
+            number = int(str(value).strip())
+        except Exception:
+            raise ValueError(f"{label}必须是整数。")
+        return number
+
+    def _normalize_time_text(self, value, label):
+        text = str(value or "").strip()
+        if not re.fullmatch(r"\d{1,2}:\d{2}", text):
+            raise ValueError(f"{label}格式应为 HH:MM，例如 07:20。")
+        hour, minute = [int(part) for part in text.split(":", 1)]
+        if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+            raise ValueError(f"{label}超出正常时间范围。")
+        return f"{hour:02d}:{minute:02d}"
+
+    def _time_text_to_minutes(self, value):
+        hour, minute = [int(part) for part in str(value).split(":", 1)]
+        return hour * 60 + minute
+
+    def _schedule_reminder_tick(self):
+        self._reminder_job = None
+        try:
+            self._run_reminder_tick()
+        finally:
+            self._reminder_job = self.root.after(60000, self._schedule_reminder_tick)
+
+    def _run_reminder_tick(self):
+        config = self.reminder_config or {}
+        now = datetime.now()
+        minute_key = now.strftime("%Y-%m-%d %H:%M")
+        self._last_reminder_keys = {key for key in self._last_reminder_keys if key.startswith(now.strftime("%Y-%m-%d"))}
+
+        if not config.get("enabled"):
+            self._update_reminder_status_card("提醒中心当前关闭。")
+            return
+        if not self.logged_in:
+            self._update_reminder_status_card("提醒中心已开启，但需要先登录账号才能拉取作业、课表和通知。")
+            return
+        if config.get("schooldays_only") and now.isoweekday() > 5:
+            self._update_reminder_status_card("今天不是周一到周五，已跳过提醒。")
+            return
+        if not self._should_trigger_reminder(now, config):
+            return
+        if (not config.get("allow_repeat_same_minute")) and minute_key in self._last_reminder_keys:
+            return
+        if self._reminder_running:
+            return
+
+        self._reminder_running = True
+        self._last_reminder_keys.add(minute_key)
+        threading.Thread(target=self._collect_and_send_reminder, args=(minute_key, config), daemon=True).start()
+
+    def _should_trigger_reminder(self, now, config):
+        current = now.hour * 60 + now.minute
+        mode = config.get("mode") or "daily"
+        if mode == "interval":
+            start_minutes = self._time_text_to_minutes(config.get("active_hours_start", "07:00"))
+            end_minutes = self._time_text_to_minutes(config.get("active_hours_end", "22:30"))
+            if current < start_minutes or current > end_minutes:
+                return False
+            interval = max(int(config.get("interval_minutes", 120)), 1)
+            return (current - start_minutes) % interval == 0
+        return f"{now.hour:02d}:{now.minute:02d}" in set(config.get("times") or [])
+
+    def _collect_and_send_reminder(self, minute_key, config):
+        title = "BXB 提醒"
+        lines = []
+        status_bits = []
+        try:
+            if config.get("include_homework"):
+                homework = self.api.get_homework(ALL_COURSES_LABEL)
+                pending = [h for h in homework if h.get("is_na")]
+                signature = "|".join(f"{h.get('course')}::{h.get('name')}" for h in pending[:8])
+                if signature != self._last_homework_signature:
+                    self._last_homework_signature = signature
+                if pending:
+                    lines.append(f"未交作业 {len(pending)} 条：")
+                    for hw in pending[:3]:
+                        lines.append(f"• {hw.get('course') or '-'} - {hw.get('name') or '-'}")
+                else:
+                    lines.append("未交作业：当前没有待交项目。")
+                status_bits.append("作业")
+
+            if config.get("include_schedule"):
+                schedule, time_slots = self.api.get_schedule()
+                day = datetime.now().isoweekday()
+                day_slots = schedule.get(day, {}) if 1 <= day <= 5 else {}
+                schedule_items = []
+                for lesson in sorted(day_slots.keys()):
+                    slot = day_slots.get(lesson, {})
+                    courses = slot.get("courses") or []
+                    if courses:
+                        for course in courses[:2]:
+                            schedule_items.append(f"{slot.get('time') or ''} {course.get('name') or '-'}".strip())
+                signature = "|".join(schedule_items[:8])
+                if signature != self._last_schedule_signature:
+                    self._last_schedule_signature = signature
+                if schedule_items:
+                    lines.append("今日日程：")
+                    for item in schedule_items[:3]:
+                        lines.append(f"• {item}")
+                else:
+                    lines.append("今日日程：今天暂无课程安排。")
+                self._schedule_cache = schedule
+                self._schedule_time_slots = time_slots
+                self._call_in_ui(self._refresh_today_schedule_summary)
+                status_bits.append("课表")
+
+            if config.get("include_notice"):
+                notices = self.api.get_notices()
+                signature = "|".join((n.get("title") or "") for n in notices[:5])
+                if signature != self._last_notice_signature:
+                    self._last_notice_signature = signature
+                if notices:
+                    lines.append("老师通知：")
+                    for notice in notices[:3]:
+                        sender = notice.get("sender") or "老师"
+                        title_text = notice.get("title") or "未命名通知"
+                        lines.append(f"• {sender}: {title_text}")
+                else:
+                    lines.append("老师通知：当前没有新的公告。")
+                self._call_in_ui(self._display_notices, notices)
+                status_bits.append("通知")
+
+            body = "\n".join(lines).strip() or "提醒时间到了，记得看一下今天的学习安排。"
+            if config.get("system_notifications"):
+                self._notify(title, body)
+            self._call_in_ui(self._update_reminder_status_card, f"{minute_key} 已发送提醒，内容包含：{' / '.join(status_bits) or '默认提醒'}。")
+        except Exception as exc:
+            self._call_in_ui(self._update_reminder_status_card, f"{minute_key} 提醒执行失败：{exc}")
+        finally:
+            self._reminder_running = False
+
+    def _update_reminder_status_card(self, text):
+        if hasattr(self, "reminder_status_label"):
+            self.reminder_status_label.config(text=text)
+
+    def _send_test_reminder(self):
+        try:
+            config = self._collect_reminder_config_from_form()
+        except ValueError as exc:
+            messagebox.showwarning("测试提醒", str(exc))
+            return
+
+        parts = []
+        if config.get("include_homework"):
+            parts.append("作业")
+        if config.get("include_schedule"):
+            parts.append("今天课表")
+        if config.get("include_notice"):
+            parts.append("老师通知")
+        body = "这是一条测试提醒。\n当前会提醒：" + (" / ".join(parts) if parts else "默认内容")
+        if config.get("system_notifications"):
+            self._notify("BXB 测试提醒", body)
+        self._update_reminder_status_card("测试提醒已触发。")
+        self._set_status("测试提醒已触发")
+
+    def _refresh_reminder_sources(self):
+        if not self.logged_in:
+            messagebox.showinfo("提醒中心", "请先登录账号，再刷新作业、课表和通知。")
+            return
+        self._set_status("正在刷新提醒所需数据...")
+        self._update_reminder_status_card("正在刷新提醒所需数据...")
+
+        def do_refresh():
+            try:
+                homework = self.api.get_homework(ALL_COURSES_LABEL)
+                schedule, time_slots = self.api.get_schedule()
+                notices = self.api.get_notices()
+                self._call_in_ui(self._display_homework, homework)
+                self._call_in_ui(self._display_schedule, schedule, time_slots)
+                self._call_in_ui(self._display_notices, notices)
+                self._call_in_ui(self._update_reminder_status_card, "提醒所需数据已刷新。")
+                self._call_in_ui(self._set_status, "提醒所需数据已刷新")
+            except Exception as exc:
+                self._call_in_ui(self._update_reminder_status_card, f"刷新失败：{exc}")
+                self._call_in_ui(self._set_status, f"刷新失败：{exc}")
+
+        threading.Thread(target=do_refresh, daemon=True).start()
+
+    # ============================================================
     # 登录 / 退出
     # ============================================================
     def _on_login(self):
@@ -1836,6 +2240,7 @@ class App:
         self._load_schedule()
         self._load_notices()
         self._load_message_count()
+        self._update_reminder_status_card("已登录。提醒中心会按你的设置自动检查作业、课表和通知。")
 
         if self.remember_var.get():
             with open(CREDENTIALS_FILE, "w") as f:
@@ -1875,6 +2280,7 @@ class App:
         for item in self.notice_tree.get_children():
             self.notice_tree.delete(item)
 
+        self._update_reminder_status_card("已退出登录。提醒中心会在你重新登录后继续工作。")
         self._show_login_form()
         self._show_page("home")
 
@@ -1902,11 +2308,6 @@ class App:
         self._homework_subject_loading = False
         self._refresh_homework_view()
         self._refresh_home_status_summary()
-
-        pending = [h for h in homework if h.get("is_na")]
-        if pending:
-            self._notify(f"⚠️ 有 {len(pending)} 条未提交作业",
-                         "\n".join([f"• {h['course']} - {h['name']}" for h in pending[:5]]))
 
     def _populate_homework_subjects(self, course_names):
         for widget in self.homework_subjects_wrap.winfo_children():
