@@ -82,7 +82,11 @@ class HomeworkUiApp:
     def _configure_theme(self) -> None:
         theme_mode = getattr(self.ui_settings, "theme_mode", "light")
         theme_name = "darkly" if theme_mode == "dark" else "litera"
-        if hasattr(self, "style"):
+        root_style = getattr(self.root, "style", None)
+        if root_style is not None:
+            self.style = root_style
+            self.style.theme_use(theme_name)
+        elif hasattr(self, "style"):
             self.style.theme_use(theme_name)
         else:
             self.style = ttkb.Style(theme_name)

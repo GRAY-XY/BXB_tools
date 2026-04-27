@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -23,12 +24,22 @@ class DirectToolBackend(BanxuebangUiBackend):
             json.dumps(payload, ensure_ascii=False),
         ]
 
+        startupinfo = None
+        creationflags = 0
+        if os.name == "nt":
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = 0
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
         result = subprocess.run(
             command,
             cwd=self.repo_root,
             capture_output=True,
             text=True,
             encoding="utf-8",
+            startupinfo=startupinfo,
+            creationflags=creationflags,
         )
 
         if result.returncode != 0:
