@@ -1,9 +1,13 @@
 $ErrorActionPreference = "Stop"
 
 param(
-    [string]$ProjectRoot = (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)),
+    [string]$ProjectRoot = "",
     [string]$PythonExe = ""
 )
+
+if (-not $ProjectRoot) {
+    $ProjectRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+}
 
 function Resolve-PythonExe {
     param([string]$RequestedPython)
