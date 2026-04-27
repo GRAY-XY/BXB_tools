@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "enforcementEnabled": true,
+  "registrationEnabled": true,
+  "lockMessage": "当前账号的桌面端访问已被管理员暂时锁定。如有疑问，请联系维护者。",
+  "blockedUserIds": [],
+  "blockedEmails": [],
+  "blockedNames": [],
+  "minimumSupportedVersion": "1.0.1"
+}

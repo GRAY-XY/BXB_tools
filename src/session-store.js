@@ -1,9 +1,14 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
+
+const defaultAppSupportDir = () =>
+  process.env.BANXUEBANG_APP_SUPPORT_DIR ||
+  path.join(os.homedir(), "Library", "Application Support", "BXB Student");
 
 const defaultSessionFile = () =>
   process.env.BANXUEBANG_SESSION_FILE ||
-  path.join(process.cwd(), ".banxuebang", "session.json");
+  path.join(defaultAppSupportDir(), ".banxuebang", "session.json");
 
 export class SessionStore {
   constructor(sessionFile = defaultSessionFile()) {

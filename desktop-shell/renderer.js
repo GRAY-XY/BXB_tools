@@ -17,16 +17,25 @@ const state = {
     classReminderLeadTime: "10",
     motionEnabled: true,
     frostEnabled: true,
+    accentColor: "#1f6feb",
+    backgroundImagePath: "",
+    backgroundOpacity: 28,
   },
   authMemory: {
     rememberPassword: false,
     username: "",
     password: "",
   },
+  appMeta: null,
+  updateInfo: null,
+  access: null,
+  registry: null,
 };
 
 if (navigator.userAgent.includes("Mac OS X")) {
   document.body.classList.add("darwin");
+} else if (navigator.userAgent.includes("Windows")) {
+  document.body.classList.add("windows");
 }
 
 function createMockDashboard() {
@@ -121,7 +130,12 @@ function createPyWebViewBridge() {
     setSubject: (subjectName) => window.pywebview.api.set_subject(subjectName),
     openTask: (taskId) => window.pywebview.api.open_task(taskId),
     submitTask: (payload) => window.pywebview.api.submit_task(payload),
+    downloadAttachment: (taskId, fileId) => window.pywebview.api.download_attachment(taskId, fileId),
     pickFiles: () => window.pywebview.api.pick_files(),
+    pickBackgroundImage: () => window.pywebview.api.pick_background_image(),
+    getAppMeta: () => window.pywebview.api.get_app_meta(),
+    checkForUpdates: () => window.pywebview.api.check_for_updates(),
+    revealPath: (targetPath) => window.pywebview.api.reveal_path(targetPath),
     openExternal: (url) => window.pywebview.api.open_external(url),
     window: {
       minimize: async () => {},
@@ -167,7 +181,47 @@ const mockBridge = {
     },
   }),
   submitTask: async () => ({ ok: true, data: {} }),
+  downloadAttachment: async (taskId, fileId) => ({
+    ok: true,
+    data: {
+      taskId,
+      fileId,
+      fileName: "mock-attachment.pdf",
+      path: "/mock/BXB Student/mock-attachment.pdf",
+      uri: "file:///mock/BXB%20Student/mock-attachment.pdf",
+    },
+  }),
   pickFiles: async () => ({ canceled: false, filePaths: ["/mock/Homework.pdf"] }),
+  pickBackgroundImage: async () => ({ canceled: false, filePath: "/mock/background.png" }),
+  getAppMeta: async () => ({
+    ok: true,
+    data: {
+      appName: "BXB Student",
+      version: "1.0.1",
+      platform: "Preview",
+      downloadsDir: "/mock/Downloads/BXB Student",
+      logsDir: "/mock/AppSupport/BXB Student/logs",
+      releaseNotesPath: "/mock/docs/releases/1.0.1.md",
+      agreementPath: "/mock/docs/legal/BXB_Student_User_Agreement_zh-CN.md",
+      privacyPath: "/mock/docs/legal/BXB_Student_Privacy_Notice_zh-CN.md",
+      releaseUrl: "https://github.com/GRAY-XY/BXB_tools/releases",
+      githubUrl: "https://github.com/GRAY-XY/BXB_tools",
+      email: "igpig1226@gmail.com",
+    },
+  }),
+  checkForUpdates: async () => ({
+    ok: true,
+    data: {
+      currentVersion: "1.0.1",
+      latestVersion: "1.0.1",
+      hasUpdate: false,
+      releaseName: "BXB Student 1.0.1",
+      releaseUrl: "https://github.com/GRAY-XY/BXB_tools/releases/tag/v1.0.1",
+      publishedAt: "2026-04-27T00:00:00Z",
+      body: "Current build",
+    },
+  }),
+  revealPath: async () => true,
   openExternal: async () => {},
   window: {
     minimize: async () => {},
@@ -223,9 +277,37 @@ const els = {
   classReminderLeadTime: document.querySelector("#setting-class-reminder-time"),
   motionEnabled: document.querySelector("#setting-motion-enabled"),
   frostEnabled: document.querySelector("#setting-frost-enabled"),
+  accentColor: document.querySelector("#setting-accent-color"),
+  accentColorValue: document.querySelector("#setting-accent-color-value"),
+  backgroundOpacity: document.querySelector("#setting-background-opacity"),
+  backgroundOpacityValue: document.querySelector("#setting-background-opacity-value"),
+  pickBackgroundBtn: document.querySelector("#pick-background-btn"),
+  clearBackgroundBtn: document.querySelector("#clear-background-btn"),
+  backgroundPreview: document.querySelector("#background-preview"),
   minimizeBtn: document.querySelector("#minimize-btn"),
   maximizeBtn: document.querySelector("#maximize-btn"),
   closeBtn: document.querySelector("#close-btn"),
+  contactLinks: [...document.querySelectorAll(".contact-link")],
+  updateBtn: document.querySelector("#update-btn"),
+  settingsCheckUpdateBtn: document.querySelector("#settings-check-update-btn"),
+  openReleaseBtn: document.querySelector("#open-release-btn"),
+  appVersionPill: document.querySelector("#app-version-pill"),
+  aboutVersion: document.querySelector("#about-version"),
+  aboutPlatform: document.querySelector("#about-platform"),
+  aboutDownloadsPath: document.querySelector("#about-downloads-path"),
+  aboutLogsPath: document.querySelector("#about-logs-path"),
+  updateCard: document.querySelector("#update-card"),
+  updateStatusTitle: document.querySelector("#update-status-title"),
+  updateStatusCopy: document.querySelector("#update-status-copy"),
+  openDownloadsBtn: document.querySelector("#open-downloads-btn"),
+  openLogsBtn: document.querySelector("#open-logs-btn"),
+  openAgreementBtn: document.querySelector("#open-agreement-btn"),
+  openPrivacyBtn: document.querySelector("#open-privacy-btn"),
+  openReleaseNotesBtn: document.querySelector("#open-release-notes-btn"),
+  lockCard: document.querySelector("#lock-card"),
+  lockMessage: document.querySelector("#lock-message"),
+  aboutPolicyUrl: document.querySelector("#about-policy-url"),
+  aboutRegistryStatus: document.querySelector("#about-registry-status"),
 };
 
 const viewMeta = {
@@ -283,6 +365,64 @@ function setTheme(theme) {
   for (const chip of els.themeChips) {
     chip.classList.toggle("is-active", chip.dataset.theme === state.theme);
   }
+  applyAppearanceSettings();
+}
+
+function hexToRgb(hex) {
+  const normalized = String(hex || "").trim().replace("#", "");
+  const value = normalized.length === 3
+    ? normalized
+        .split("")
+        .map((char) => char + char)
+        .join("")
+    : normalized;
+  const int = Number.parseInt(value, 16);
+  if (Number.isNaN(int) || value.length !== 6) {
+    return { r: 31, g: 111, b: 235 };
+  }
+  return {
+    r: (int >> 16) & 255,
+    g: (int >> 8) & 255,
+    b: int & 255,
+  };
+}
+
+function rgbaString(hex, alpha) {
+  const { r, g, b } = hexToRgb(hex);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function pathToFileUrl(filePath) {
+  if (!filePath) {
+    return "";
+  }
+  const normalized = filePath.replace(/\\/g, "/");
+  return encodeURI(`file://${normalized.startsWith("/") ? "" : "/"}${normalized}`);
+}
+
+function applyAppearanceSettings() {
+  const accent = state.settings.accentColor || "#1f6feb";
+  const opacity = Math.max(0, Math.min(100, Number(state.settings.backgroundOpacity) || 0));
+  const backgroundUrl = state.settings.backgroundImagePath ? `url("${pathToFileUrl(state.settings.backgroundImagePath)}")` : "none";
+  document.documentElement.style.setProperty("--blue", accent);
+  document.documentElement.style.setProperty("--blue-soft", rgbaString(accent, state.theme === "dark" ? 0.28 : 0.12));
+  document.documentElement.style.setProperty("--user-bg-image", backgroundUrl);
+  document.documentElement.style.setProperty("--user-bg-opacity", String(opacity / 100));
+  if (els.accentColor) {
+    els.accentColor.value = accent;
+  }
+  if (els.accentColorValue) {
+    els.accentColorValue.textContent = accent.toUpperCase();
+  }
+  if (els.backgroundOpacity) {
+    els.backgroundOpacity.value = String(opacity);
+  }
+  if (els.backgroundOpacityValue) {
+    els.backgroundOpacityValue.textContent = `${opacity}%`;
+  }
+  if (els.backgroundPreview) {
+    els.backgroundPreview.textContent = state.settings.backgroundImagePath || "当前未设置自定义背景";
+  }
 }
 
 function loadSettings() {
@@ -306,11 +446,14 @@ function syncSettingsToInputs() {
   els.classReminderLeadTime.value = state.settings.classReminderLeadTime;
   els.motionEnabled.checked = Boolean(state.settings.motionEnabled);
   els.frostEnabled.checked = Boolean(state.settings.frostEnabled);
+  els.accentColor.value = state.settings.accentColor;
+  els.backgroundOpacity.value = String(state.settings.backgroundOpacity);
   for (const input of els.homeworkReminderDays.querySelectorAll('input[type="checkbox"]')) {
     input.checked = state.settings.homeworkReminderDays.includes(Number(input.value));
   }
   document.body.classList.toggle("reduced-motion", !state.settings.motionEnabled);
   document.body.classList.toggle("frost-off", !state.settings.frostEnabled);
+  applyAppearanceSettings();
 }
 
 function saveSettings() {
@@ -578,6 +721,8 @@ function setBusy(isBusy, label = "处理中...") {
   els.authBtn.disabled = isBusy;
   els.loginSubmitBtn.disabled = isBusy;
   els.submitTaskBtn.disabled = isBusy;
+  els.updateBtn.disabled = isBusy;
+  els.settingsCheckUpdateBtn.disabled = isBusy;
   if (isBusy) {
     els.refreshBtn.textContent = label;
   } else {
@@ -591,6 +736,142 @@ function setBridgeReady(ready) {
   els.refreshBtn.disabled = !ready;
   els.authBtn.disabled = !ready;
   els.loginSubmitBtn.disabled = !ready;
+  els.updateBtn.disabled = !ready;
+  els.settingsCheckUpdateBtn.disabled = !ready;
+}
+
+function truncateMiddle(value, max = 48) {
+  const text = String(value || "");
+  if (text.length <= max) {
+    return text;
+  }
+  const head = text.slice(0, Math.ceil(max / 2) - 2);
+  const tail = text.slice(-Math.floor(max / 2) + 1);
+  return `${head}...${tail}`;
+}
+
+function getErrorMessage(error) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error || "发生未知错误");
+}
+
+function showError(message, fallback = "") {
+  const text = [message, fallback].filter(Boolean).join("\n");
+  alert(text);
+}
+
+function renderAppMeta() {
+  const meta = state.appMeta;
+  if (!meta) {
+    els.appVersionPill.textContent = "v--";
+    els.aboutVersion.textContent = "--";
+    els.aboutPlatform.textContent = "--";
+    els.aboutDownloadsPath.textContent = "--";
+    els.aboutLogsPath.textContent = "--";
+    els.aboutPolicyUrl.textContent = "--";
+    els.aboutRegistryStatus.textContent = "--";
+    return;
+  }
+  els.appVersionPill.textContent = `v${meta.version}`;
+  els.aboutVersion.textContent = meta.version;
+  els.aboutPlatform.textContent = meta.platform || "--";
+  els.aboutDownloadsPath.textContent = truncateMiddle(meta.downloadsDir, 56);
+  els.aboutDownloadsPath.title = meta.downloadsDir || "";
+  els.aboutLogsPath.textContent = truncateMiddle(meta.logsDir, 56);
+  els.aboutLogsPath.title = meta.logsDir || "";
+  els.aboutPolicyUrl.textContent = truncateMiddle(meta.policyUrl, 56);
+  els.aboutPolicyUrl.title = meta.policyUrl || "";
+  els.aboutRegistryStatus.textContent = state.registry?.synced
+    ? "已同步到 GitHub"
+    : state.registry?.reason === "missing-token"
+      ? "仅本地缓存，未配置远程写入"
+      : state.registry?.reason
+        ? `待同步：${state.registry.reason}`
+        : "等待首次登录";
+}
+
+function renderUpdateInfo() {
+  const info = state.updateInfo;
+  els.updateCard.classList.remove("is-attention", "is-success");
+
+  if (!info) {
+    els.updateStatusTitle.textContent = "还没有更新信息";
+    els.updateStatusCopy.textContent = "点击检查更新后，这里会显示当前版本状态和下载入口。";
+    return;
+  }
+
+  if (info.hasUpdate) {
+    els.updateCard.classList.add("is-attention");
+    els.updateStatusTitle.textContent = `发现新版本 v${info.latestVersion}`;
+    els.updateStatusCopy.textContent = `当前版本 v${info.currentVersion}，建议前往发布页下载 ${info.releaseName || `v${info.latestVersion}`}。`;
+    return;
+  }
+
+  els.updateCard.classList.add("is-success");
+  els.updateStatusTitle.textContent = `当前已是最新版本 v${info.currentVersion}`;
+  els.updateStatusCopy.textContent = "这台 mac 上的安装包已经和 GitHub 最新发布版本对齐。";
+}
+
+async function ensureAppMeta() {
+  if (!bridge) {
+    return;
+  }
+  const result = await bridge.getAppMeta();
+  if (!result.ok) {
+    return;
+  }
+  state.appMeta = result.data;
+  renderAppMeta();
+}
+
+async function checkForUpdates({ silent = false } = {}) {
+  if (!bridge) {
+    return;
+  }
+  const originalTopLabel = els.updateBtn.textContent;
+  const originalSettingsLabel = els.settingsCheckUpdateBtn.textContent;
+  els.updateBtn.textContent = "检查中...";
+  els.settingsCheckUpdateBtn.textContent = "检查中...";
+  els.updateBtn.disabled = true;
+  els.settingsCheckUpdateBtn.disabled = true;
+
+  const result = await bridge.checkForUpdates();
+
+  els.updateBtn.textContent = originalTopLabel;
+  els.settingsCheckUpdateBtn.textContent = originalSettingsLabel;
+  els.updateBtn.disabled = false;
+  els.settingsCheckUpdateBtn.disabled = false;
+
+  if (!result.ok) {
+    if (!silent) {
+      showError(result.error, "你也可以稍后直接打开 GitHub 发布页手动下载。");
+    }
+    return;
+  }
+
+  state.updateInfo = result.data;
+  renderUpdateInfo();
+
+  if (!silent && result.data?.hasUpdate) {
+    const shouldOpen = window.confirm(`发现新版本 v${result.data.latestVersion}，现在打开发布页吗？`);
+    if (shouldOpen) {
+      bridge.openExternal(result.data.releaseUrl || state.appMeta?.releaseUrl || "");
+    }
+  }
+}
+
+async function openPathOrUrl(targetPath, fallbackUrl) {
+  if (targetPath && bridge?.openExternal) {
+    await bridge.openExternal(targetPath);
+    return;
+  }
+  if (fallbackUrl) {
+    await bridge?.openExternal(fallbackUrl);
+    return;
+  }
+  showError("目标还没有准备好。");
 }
 
 async function waitForBridge(maxAttempts = 60, intervalMs = 250) {
@@ -630,16 +911,24 @@ function setView(view) {
 
 function renderShell(summary, dashboard) {
   const ready = Boolean(summary.ready);
+  const access = dashboard?.access || state.access || { locked: false };
   els.appShell.classList.toggle("is-logged-out", !ready);
   els.loginStage.classList.toggle("hidden", ready);
   els.workspace.classList.toggle("hidden", !ready);
+  els.updateBtn.classList.remove("hidden");
   els.refreshBtn.classList.toggle("hidden", !ready);
   els.authBtn.classList.toggle("hidden", !ready);
   els.sidebarStatus.textContent = ready ? `${summary.user?.name || "学生"} 已登录` : "未登录";
+  els.lockCard.classList.toggle("hidden", !access.locked);
+  els.lockMessage.textContent = access.locked ? access.reason || "管理员已临时停用当前桌面端，请稍后再试。" : "";
+  els.loginUsername.disabled = access.locked;
+  els.loginPassword.disabled = access.locked;
+  els.rememberPassword.disabled = access.locked;
+  els.loginSubmitBtn.disabled = access.locked;
 
   if (!ready) {
-    els.pageTitle.textContent = "登录";
-    els.pageSubtitle.textContent = "先登录，再查看今天课程、作业和提醒。";
+    els.pageTitle.textContent = access.locked ? "已锁定" : "登录";
+    els.pageSubtitle.textContent = access.locked ? "当前软件访问已被管理员限制。" : "先登录，再查看今天课程、作业和提醒。";
     return;
   }
 
@@ -836,7 +1125,13 @@ function renderTaskDetail(detail) {
     ...(detail.attachments || []),
     ...(detail.task?.fileList || []),
     ...(detail.mySubmissionAttachments || []),
-  ];
+  ].filter((attachment, index, items) => {
+    const fileId = String(attachment?.fileId || attachment?.id || "");
+    if (!fileId) {
+      return false;
+    }
+    return index === items.findIndex((item) => String(item?.fileId || item?.id || "") === fileId);
+  });
 
   els.detailTitle.textContent = summary.activityName || detail.task?.activityName || "作业详情";
   els.detailMeta.textContent = [
@@ -855,9 +1150,38 @@ function renderTaskDetail(detail) {
     els.detailAttachments.innerHTML = attachments
       .map((attachment) => {
         const fileName = attachment.fileName || attachment.name || attachment.originName || "未命名附件";
-        return `<div class="attachment-item">${fileName}</div>`;
+        const fileId = attachment.fileId || attachment.id || "";
+        return `<button class="attachment-item" data-task-id="${summary.id || detail.taskId || ""}" data-file-id="${fileId}">${fileName}</button>`;
       })
       .join("");
+
+    for (const button of els.detailAttachments.querySelectorAll(".attachment-item")) {
+      button.addEventListener("click", async () => {
+        const taskId = button.dataset.taskId;
+        const fileId = button.dataset.fileId;
+        if (!taskId || !fileId) {
+          alert("这个附件缺少下载信息，暂时无法获取。");
+          return;
+        }
+        if (!bridge) {
+          return;
+        }
+        const originalLabel = button.textContent;
+        button.disabled = true;
+        button.textContent = `${originalLabel} · 下载中...`;
+        const result = await bridge.downloadAttachment(taskId, fileId);
+        button.disabled = false;
+        button.textContent = originalLabel;
+        if (!result.ok) {
+          alert(result.error);
+          return;
+        }
+        const savedPath = result.data?.path || "下载目录";
+        const targetUri = result.data?.uri || savedPath;
+        await bridge.openExternal(targetUri);
+        alert(`附件已下载到：\n${savedPath}`);
+      });
+    }
   }
 
   renderPickedFiles();
@@ -909,8 +1233,11 @@ function renderHomework(dashboard) {
 
 function hydrate(dashboard) {
   state.dashboard = dashboard;
+  state.access = dashboard.access || null;
+  state.registry = dashboard.registry || state.registry;
   const summary = dashboard.session || loggedOutDashboard.session;
   renderShell(summary, dashboard);
+  renderAppMeta();
   if (!summary.ready) {
     return;
   }
@@ -932,7 +1259,7 @@ async function refreshDashboard() {
   const result = await bridge.loadDashboard();
   setBusy(false);
   if (!result.ok) {
-    alert(result.error);
+    showError(result.error, "如果问题持续，可以在设置页打开日志目录查看运行日志。");
     return;
   }
   hydrate(result.data);
@@ -943,14 +1270,14 @@ async function handleCredentialLogin() {
     try {
       await waitForBridge();
     } catch (error) {
-      alert(error instanceof Error ? error.message : String(error));
+      showError(getErrorMessage(error));
       return;
     }
   }
   const username = els.loginUsername.value.trim();
   const password = els.loginPassword.value;
   if (!username || !password) {
-    alert("请输入账号和密码");
+    showError("请输入账号和密码");
     return;
   }
   els.loginSubmitBtn.disabled = true;
@@ -959,7 +1286,7 @@ async function handleCredentialLogin() {
   els.loginSubmitBtn.disabled = false;
   els.loginSubmitBtn.textContent = "登录";
   if (!result.ok) {
-    alert(result.error);
+    showError(result.error, "请确认账号密码是否正确，或稍后重试。");
     return;
   }
   state.selectedCourseId = "all";
@@ -981,7 +1308,7 @@ async function handleAuth() {
   if (!state.dashboard?.session?.ready) {
     const result = await bridge.login();
     if (!result.ok) {
-      alert(result.error);
+      showError(result.error, "如果登录窗口没有继续，请检查网络后重试。");
       return;
     }
     hydrate(result.data);
@@ -991,7 +1318,7 @@ async function handleAuth() {
   const result = await bridge.logout();
   setBusy(false);
   if (!result.ok) {
-    alert(result.error);
+    showError(result.error);
     return;
   }
   state.selectedCourseId = "all";
@@ -1011,6 +1338,23 @@ async function pickSubmissionFiles() {
   }
   state.selectedSubmitFiles = [...new Set([...(state.selectedSubmitFiles || []), ...(result.filePaths || [])])];
   renderPickedFiles();
+}
+
+async function pickBackgroundImage() {
+  if (!bridge) {
+    return;
+  }
+  const result = await bridge.pickBackgroundImage();
+  if (!result || result.canceled || !result.filePath) {
+    return;
+  }
+  state.settings.backgroundImagePath = result.filePath;
+  saveSettings();
+}
+
+function clearBackgroundImage() {
+  state.settings.backgroundImagePath = "";
+  saveSettings();
 }
 
 async function submitCurrentTask() {
@@ -1039,7 +1383,7 @@ async function submitCurrentTask() {
   els.submitTaskBtn.textContent = "提交作业";
 
   if (!result.ok) {
-    alert(result.error);
+    showError(result.error, "如连续失败，可以打开日志目录把最新日志发给我。");
     return;
   }
 
@@ -1062,6 +1406,8 @@ function bindEvents() {
   });
   els.pickFilesBtn.addEventListener("click", pickSubmissionFiles);
   els.submitTaskBtn.addEventListener("click", submitCurrentTask);
+  els.updateBtn.addEventListener("click", () => checkForUpdates());
+  els.settingsCheckUpdateBtn.addEventListener("click", () => checkForUpdates());
   els.themeChips.forEach((chip) => chip.addEventListener("click", () => setTheme(chip.dataset.theme)));
 
   const settingBindings = [
@@ -1072,6 +1418,7 @@ function bindEvents() {
     [els.classReminderLeadTime, "classReminderLeadTime", "value"],
     [els.motionEnabled, "motionEnabled", "checked"],
     [els.frostEnabled, "frostEnabled", "checked"],
+    [els.accentColor, "accentColor", "value"],
   ];
 
   for (const [element, key, prop] of settingBindings) {
@@ -1080,6 +1427,14 @@ function bindEvents() {
       saveSettings();
     });
   }
+
+  els.backgroundOpacity.addEventListener("input", () => {
+    state.settings.backgroundOpacity = Number(els.backgroundOpacity.value);
+    saveSettings();
+  });
+
+  els.pickBackgroundBtn.addEventListener("click", pickBackgroundImage);
+  els.clearBackgroundBtn.addEventListener("click", clearBackgroundImage);
 
   els.homeworkSort.addEventListener("change", () => {
     state.homeworkSort = els.homeworkSort.value;
@@ -1127,6 +1482,40 @@ function bindEvents() {
     els.maximizeBtn.addEventListener("click", () => bridge?.window.toggleMaximize());
     els.closeBtn.addEventListener("click", () => bridge?.window.close());
   }
+
+  els.contactLinks.forEach((button) => {
+    button.addEventListener("click", () => {
+      const target = button.dataset.external;
+      if (target) {
+        bridge?.openExternal(target);
+      }
+    });
+  });
+
+  els.openReleaseBtn.addEventListener("click", () => {
+    const url = state.updateInfo?.releaseUrl || state.appMeta?.releaseUrl;
+    if (url) {
+      bridge?.openExternal(url);
+    }
+  });
+
+  els.openDownloadsBtn.addEventListener("click", () => {
+    const target = state.appMeta?.downloadsDir;
+    if (target) {
+      bridge?.revealPath(target);
+    }
+  });
+
+  els.openLogsBtn.addEventListener("click", () => {
+    const target = state.appMeta?.logsDir;
+    if (target) {
+      bridge?.revealPath(target);
+    }
+  });
+
+  els.openAgreementBtn.addEventListener("click", () => openPathOrUrl(state.appMeta?.agreementPath, state.appMeta?.githubUrl));
+  els.openPrivacyBtn.addEventListener("click", () => openPathOrUrl(state.appMeta?.privacyPath, state.appMeta?.githubUrl));
+  els.openReleaseNotesBtn.addEventListener("click", () => openPathOrUrl(state.appMeta?.releaseNotesPath, state.appMeta?.releaseUrl));
 }
 
 bindEvents();
@@ -1138,18 +1527,26 @@ setView("overview");
 setBridgeReady(Boolean(bridge));
 hydrate(loggedOutDashboard);
 renderTaskDetail(null);
+renderAppMeta();
+renderUpdateInfo();
 
 if (window.pywebview) {
   window.addEventListener("pywebviewready", () => {
     bridge = createPyWebViewBridge() || bridge;
     setBridgeReady(Boolean(bridge));
+    ensureAppMeta();
     refreshDashboard();
+    checkForUpdates({ silent: true });
   });
   setTimeout(() => {
     bridge = createPyWebViewBridge() || bridge;
     setBridgeReady(Boolean(bridge));
+    ensureAppMeta();
     refreshDashboard();
+    checkForUpdates({ silent: true });
   }, 300);
 } else {
+  ensureAppMeta();
   refreshDashboard();
+  checkForUpdates({ silent: true });
 }

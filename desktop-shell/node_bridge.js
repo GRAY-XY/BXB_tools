@@ -181,6 +181,14 @@ async function run(command, payload) {
           filePaths: payload.filePaths || [],
         }),
       );
+    case "download-attachment":
+      return ok(
+        await client.downloadTaskAttachment({
+          taskId: payload.taskId,
+          fileId: payload.fileId,
+          directory: payload.directory,
+        }),
+      );
     default:
       throw new Error(`Unknown desktop-shell bridge command: ${command}`);
   }

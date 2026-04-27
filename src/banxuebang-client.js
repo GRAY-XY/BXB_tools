@@ -1,4 +1,5 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { chromium } from "playwright";
 
@@ -48,6 +49,11 @@ const TEXT_FILE_EXTENSIONS = new Set([
 const IMAGE_EXTENSIONS = new Set([".bmp", ".gif", ".jpeg", ".jpg", ".png", ".svg", ".webp"]);
 const VIDEO_EXTENSIONS = new Set([".avi", ".m4v", ".mov", ".mp4", ".mkv", ".webm"]);
 const AUDIO_EXTENSIONS = new Set([".aac", ".flac", ".m4a", ".mp3", ".ogg", ".wav"]);
+
+function getAppSupportDir() {
+  return process.env.BANXUEBANG_APP_SUPPORT_DIR ||
+    path.join(os.homedir(), "Library", "Application Support", "BXB Student");
+}
 
 function parseMaybeJson(value) {
   if (typeof value !== "string") {
@@ -1469,7 +1475,7 @@ export class BanxuebangClient {
 
   async downloadFile(fileId, { directory, fileName } = {}) {
     const session = await this.requireSession();
-    const downloadDir = directory || path.join(process.cwd(), ".banxuebang", "downloads");
+    const downloadDir = directory || path.join(getAppSupportDir(), ".banxuebang", "downloads");
     const accessToken = session.auth?.access_token;
     if (!accessToken) {
       throw new Error("The current session does not contain an access token.");

@@ -8,6 +8,7 @@ npm-debug.log*
 !.env.example
 coverage/
 dist/
+build/
 .DS_Store
 __pycache__/
 *.py[cod]
