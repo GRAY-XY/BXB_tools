@@ -19,6 +19,8 @@ APP_NAME = "BXB Homework UI"
 PAYLOAD_VERSION = "standalone-2026-04-27-1"
 NODE_DIST = "node-v22.15.0-win-x64"
 NODE_ZIP_NAME = f"{NODE_DIST}.zip"
+BROWSER_ARCHIVE_NAME = "ms-playwright-browsers.zip"
+BROWSER_RUNTIME_DIR = "ms-playwright"
 
 
 class BootstrapWindow:
@@ -129,12 +131,21 @@ def _node_zip_source() -> Path | None:
     return candidate if candidate.exists() else None
 
 
+def _browser_zip_source() -> Path | None:
+    candidate = _resource_root() / "runtime" / BROWSER_ARCHIVE_NAME
+    return candidate if candidate.exists() else None
+
+
 def _payload_target_root() -> Path:
     return _local_app_root() / "app"
 
 
 def _runtime_root() -> Path:
     return _local_app_root() / "runtime"
+
+
+def _bundled_browser_root() -> Path:
+    return _runtime_root() / BROWSER_RUNTIME_DIR
 
 
 def _payload_version_file(target_root: Path) -> Path:
@@ -202,14 +213,46 @@ def _ensure_node_runtime(status: BootstrapWindow) -> Path:
     return node_exe
 
 
+def _has_playwright_browser(root: Path) -> bool:
+    if not root.exists():
+        return False
+
+    for candidate in root.glob("chromium-*"):
+        if (candidate / "chrome-win" / "chrome.exe").exists():
+            return True
+        if (candidate / "chrome-win64" / "chrome.exe").exists():
+            return True
+    return False
+
+
+def _extract_browser_archive(status: BootstrapWindow, archive_path: Path, browsers_root: Path) -> bool:
+    status.set_status("Extracting bundled browser...", archive_path.name)
+    if browsers_root.exists():
+        shutil.rmtree(browsers_root, ignore_errors=True)
+    browsers_root.mkdir(parents=True, exist_ok=True)
+
+    with zipfile.ZipFile(archive_path) as archive:
+        archive.extractall(browsers_root)
+
+    return _has_playwright_browser(browsers_root)
+
+
 def _ensure_playwright_browser(status: BootstrapWindow, app_root: Path, node_exe: Path) -> None:
     if not getattr(sys, "frozen", False):
         status.set_status("Source mode detected.", "Skipping bundled browser bootstrap.")
         return
 
-    browsers_root = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))) / "ms-playwright"
-    if browsers_root.exists():
+    browsers_root = _bundled_browser_root()
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(browsers_root)
+    os.environ["PLAYWRIGHT_SKIP_BROWSER_GC"] = "1"
+
+    if _has_playwright_browser(browsers_root):
         status.set_status("Browser dependency is already installed.", str(browsers_root))
+        return
+
+    browser_zip = _browser_zip_source()
+    if browser_zip and _extract_browser_archive(status, browser_zip, browsers_root):
+        status.set_status("Bundled browser is ready.", str(browsers_root))
         return
 
     status.set_status("Installing browser dependency...", "This may take a few minutes on first launch.")
@@ -219,16 +262,31 @@ def _ensure_playwright_browser(status: BootstrapWindow, app_root: Path, node_exe
         "install",
         "chromium",
     ]
+    startupinfo = None
+    creationflags = 0
+    if os.name == "nt":
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = 0
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+    install_env = os.environ.copy()
     result = subprocess.run(
         command,
         cwd=app_root,
         capture_output=True,
         text=True,
         encoding="utf-8",
+        env=install_env,
+        startupinfo=startupinfo,
+        creationflags=creationflags,
     )
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()
         raise RuntimeError(f"Failed to install Chromium for Playwright.\n{detail}")
+
+    if not _has_playwright_browser(browsers_root):
+        raise RuntimeError("Chromium installation completed, but no Playwright browser payload was found.")
 
 
 def launch() -> None:
