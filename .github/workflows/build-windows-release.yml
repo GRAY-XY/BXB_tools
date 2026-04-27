@@ -9,6 +9,9 @@ on:
       - "desktop-client/**"
       - ".github/workflows/build-windows-release.yml"
 
+permissions:
+  contents: write
+
 jobs:
   windows-installer:
     runs-on: windows-latest
