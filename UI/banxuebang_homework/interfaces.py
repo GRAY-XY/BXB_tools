@@ -87,7 +87,70 @@ class BanxuebangUiBackend(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def download_task_attachment(
+        self,
+        *,
+        file_id: str,
+        task_id: str | None = None,
+        directory: str | None = None,
+    ) -> dict[str, Any]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def read_task_attachment(
+        self,
+        *,
+        file_id: str,
+        task_id: str | None = None,
+        max_chars: int = 4000,
+        directory: str | None = None,
+    ) -> dict[str, Any]:
+        raise NotImplementedError
+
+    @abstractmethod
     def get_current_subject_gpa(self) -> dict[str, Any]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def collect_task_submission_context(
+        self,
+        task_id: str,
+        *,
+        max_chars: int = 4000,
+        max_attachments: int = 6,
+    ) -> dict[str, Any]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def draft_task_submission(
+        self,
+        *,
+        task_id: str,
+        subject_name: str | None,
+        task_title: str | None,
+        draft_text: str,
+        summary: str = "",
+        evidence: list[dict[str, Any]] | None = None,
+        warnings: list[str] | None = None,
+        missing_info: list[str] | None = None,
+        needs_user_input: bool = False,
+    ) -> dict[str, Any]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def list_submission_drafts(self, *, status: str | None = None) -> dict[str, Any]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_submission_draft(self, draft_id: str) -> dict[str, Any]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def approve_submission_draft(self, draft_id: str, *, review_note: str = "") -> dict[str, Any]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def reject_submission_draft(self, draft_id: str, *, review_note: str = "") -> dict[str, Any]:
         raise NotImplementedError
 
     def get_schedule(self) -> dict[str, Any]:

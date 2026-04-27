@@ -306,6 +306,120 @@ export function createToolDefinitions(client) {
         client.readTaskAttachment({ taskId, fileId, maxChars, directory }),
     },
     {
+      name: "collect_task_submission_context",
+      description:
+        "Collect the task text, attachments, extracted attachment text, and missing-information signals needed before drafting a submission.",
+      inputSchema: {
+        task_id: z.union([z.string(), z.number()]).describe("Activity/task id."),
+        max_chars: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe("Maximum number of characters to keep for each text field. Default 4000."),
+        max_attachments: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe("Maximum number of attachments to read. Default 6."),
+      },
+      execute: async ({ task_id: taskId, max_chars: maxChars, max_attachments: maxAttachments }) =>
+        client.collectTaskSubmissionContext(taskId, {
+          maxChars: maxChars ?? 4000,
+          maxAttachments: maxAttachments ?? 6,
+        }),
+    },
+    {
+      name: "draft_task_submission",
+      description:
+        "Save an agent-written draft for later human review. This does not upload files or submit the task.",
+      inputSchema: {
+        task_id: z.union([z.string(), z.number()]).describe("Activity/task id."),
+        subject_name: z.string().optional().describe("Course name."),
+        task_title: z.string().optional().describe("Task title."),
+        draft_text: z.string().describe("The draft submission text created by the agent."),
+        summary: z.string().optional().describe("Short summary of what the draft tries to do."),
+        evidence: z
+          .array(z.any())
+          .optional()
+          .describe("Optional evidence objects or snippets used to justify the draft."),
+        warnings: z
+          .array(z.string())
+          .optional()
+          .describe("Optional warnings about uncertainty or partial information."),
+        missing_info: z
+          .array(z.string())
+          .optional()
+          .describe("Optional missing-information items that still block or weaken the answer."),
+        needs_user_input: z
+          .boolean()
+          .optional()
+          .describe("Whether the agent believes more user input is needed before submission."),
+      },
+      execute: async ({
+        task_id: taskId,
+        subject_name: subjectName,
+        task_title: taskTitle,
+        draft_text: draftText,
+        summary,
+        evidence,
+        warnings,
+        missing_info: missingInfo,
+        needs_user_input: needsUserInput,
+      }) =>
+        client.draftTaskSubmission({
+          taskId,
+          subjectName,
+          taskTitle,
+          draftText,
+          summary,
+          evidence: evidence ?? [],
+          warnings: warnings ?? [],
+          missingInfo: missingInfo ?? [],
+          needsUserInput: needsUserInput ?? false,
+        }),
+    },
+    {
+      name: "list_submission_drafts",
+      description: "List locally archived submission drafts and their review status.",
+      inputSchema: {
+        status: z
+          .enum(["pending_review", "approved", "rejected", "submitted"])
+          .optional()
+          .describe("Optional status filter."),
+      },
+      execute: async ({ status }) => client.listSubmissionDrafts({ status }),
+    },
+    {
+      name: "get_submission_draft",
+      description: "Read a saved submission draft for review.",
+      inputSchema: {
+        draft_id: z.string().describe("Draft id returned by draft_task_submission."),
+      },
+      execute: async ({ draft_id: draftId }) => client.getSubmissionDraft(draftId),
+    },
+    {
+      name: "approve_submission_draft",
+      description: "Mark a saved submission draft as approved after human review.",
+      inputSchema: {
+        draft_id: z.string().describe("Draft id returned by draft_task_submission."),
+        review_note: z.string().optional().describe("Optional reviewer note."),
+      },
+      execute: async ({ draft_id: draftId, review_note: reviewNote }) =>
+        client.approveSubmissionDraft(draftId, { reviewNote }),
+    },
+    {
+      name: "reject_submission_draft",
+      description: "Mark a saved submission draft as rejected after human review.",
+      inputSchema: {
+        draft_id: z.string().describe("Draft id returned by draft_task_submission."),
+        review_note: z.string().optional().describe("Optional reviewer note."),
+      },
+      execute: async ({ draft_id: draftId, review_note: reviewNote }) =>
+        client.rejectSubmissionDraft(draftId, { reviewNote }),
+    },
+    {
       name: "upload_submission_file",
       description:
         "Upload a local file to Banxuebang's file system and return the submission file object used by homework submission.",
