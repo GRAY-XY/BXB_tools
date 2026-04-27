@@ -32,7 +32,7 @@ class DirectToolBackend(BanxuebangUiBackend):
         )
 
         if result.returncode != 0:
-            message = (result.stderr or result.stdout or "").strip()
+            message = self._clean_error_message(result.stderr or result.stdout or "")
             raise UiBackendError(message or f"Tool {tool_name} failed with exit code {result.returncode}.")
 
         stdout = result.stdout.strip()
@@ -43,6 +43,23 @@ class DirectToolBackend(BanxuebangUiBackend):
             return json.loads(stdout)
         except json.JSONDecodeError as error:
             raise UiBackendError(f"Tool {tool_name} returned non-JSON output: {error}") from error
+
+    @staticmethod
+    def _clean_error_message(raw: str) -> str:
+        lines: list[str] = []
+        for line in raw.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("at "):
+                continue
+            lines.append(stripped)
+
+        if not lines:
+            return raw.strip()
+
+        first = lines[0]
+        if first.startswith("Error: "):
+            return first[len("Error: ") :]
+        return first
 
     def session_status(self) -> dict[str, Any]:
         return self._call_tool("session_status")
@@ -215,5 +232,108 @@ class DirectToolBackend(BanxuebangUiBackend):
             },
         )
 
+    def download_task_attachment(
+        self,
+        *,
+        file_id: str,
+        task_id: str | None = None,
+        directory: str | None = None,
+    ) -> dict[str, Any]:
+        args: dict[str, Any] = {"file_id": file_id}
+        if task_id:
+            args["task_id"] = task_id
+        if directory:
+            args["directory"] = directory
+        return self._call_tool("download_task_attachment", args)
+
+    def read_task_attachment(
+        self,
+        *,
+        file_id: str,
+        task_id: str | None = None,
+        max_chars: int = 4000,
+        directory: str | None = None,
+    ) -> dict[str, Any]:
+        args: dict[str, Any] = {
+            "file_id": file_id,
+            "max_chars": max_chars,
+        }
+        if task_id:
+            args["task_id"] = task_id
+        if directory:
+            args["directory"] = directory
+        return self._call_tool("read_task_attachment", args)
+
     def get_current_subject_gpa(self) -> dict[str, Any]:
         return self._call_tool("get_current_subject_gpa")
+
+    def collect_task_submission_context(
+        self,
+        task_id: str,
+        *,
+        max_chars: int = 4000,
+        max_attachments: int = 6,
+    ) -> dict[str, Any]:
+        return self._call_tool(
+            "collect_task_submission_context",
+            {
+                "task_id": task_id,
+                "max_chars": max_chars,
+                "max_attachments": max_attachments,
+            },
+        )
+
+    def draft_task_submission(
+        self,
+        *,
+        task_id: str,
+        subject_name: str | None,
+        task_title: str | None,
+        draft_text: str,
+        summary: str = "",
+        evidence: list[dict[str, Any]] | None = None,
+        warnings: list[str] | None = None,
+        missing_info: list[str] | None = None,
+        needs_user_input: bool = False,
+    ) -> dict[str, Any]:
+        args: dict[str, Any] = {
+            "task_id": task_id,
+            "draft_text": draft_text,
+            "summary": summary,
+            "evidence": evidence or [],
+            "warnings": warnings or [],
+            "missing_info": missing_info or [],
+            "needs_user_input": needs_user_input,
+        }
+        if subject_name:
+            args["subject_name"] = subject_name
+        if task_title:
+            args["task_title"] = task_title
+        return self._call_tool("draft_task_submission", args)
+
+    def list_submission_drafts(self, *, status: str | None = None) -> dict[str, Any]:
+        args: dict[str, Any] = {}
+        if status:
+            args["status"] = status
+        return self._call_tool("list_submission_drafts", args)
+
+    def get_submission_draft(self, draft_id: str) -> dict[str, Any]:
+        return self._call_tool("get_submission_draft", {"draft_id": draft_id})
+
+    def approve_submission_draft(self, draft_id: str, *, review_note: str = "") -> dict[str, Any]:
+        return self._call_tool(
+            "approve_submission_draft",
+            {
+                "draft_id": draft_id,
+                "review_note": review_note,
+            },
+        )
+
+    def reject_submission_draft(self, draft_id: str, *, review_note: str = "") -> dict[str, Any]:
+        return self._call_tool(
+            "reject_submission_draft",
+            {
+                "draft_id": draft_id,
+                "review_note": review_note,
+            },
+        )

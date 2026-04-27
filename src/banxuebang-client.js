@@ -1,6 +1,8 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { chromium } from "playwright";
+import { DraftStore } from "./draft-store.js";
 
 const BASE_URL = "https://student.banxuebang.com";
 const BASIC_AUTH = "Basic YnhiLXdlYi1zOmJ4Yi13ZWItcw==";
@@ -441,8 +443,9 @@ function parseTextBuffer(buffer, extension) {
 }
 
 export class BanxuebangClient {
-  constructor(store) {
+  constructor(store, draftStore = new DraftStore()) {
     this.store = store;
+    this.draftStore = draftStore;
   }
 
   async getSession() {
@@ -1454,6 +1457,215 @@ export class BanxuebangClient {
       fileId: normalizeId(fileId),
       download: downloaded,
       read: parsed,
+    };
+  }
+
+  async collectTaskSubmissionContext(taskId, { maxChars = 4000, maxAttachments = 6 } = {}) {
+    const detail = await this.getTaskDetail(taskId, { includeOtherSubmissions: false });
+    const attachments = [...detail.attachments];
+    const attachmentContexts = [];
+
+    for (const attachment of attachments.slice(0, Math.max(1, maxAttachments))) {
+      try {
+        const result = await this.readTaskAttachment({
+          taskId,
+          fileId: attachment.fileId,
+          maxChars,
+        });
+        attachmentContexts.push({
+          fileId: attachment.fileId,
+          fileName: attachment.fileName || attachment.name || null,
+          category: attachment.category || null,
+          readable: Boolean(result.read?.readable),
+          text: result.read?.text || "",
+          truncated: Boolean(result.read?.truncated),
+          totalChars: result.read?.totalChars ?? 0,
+          note: result.read?.note || null,
+          error: null,
+        });
+      } catch (error) {
+        attachmentContexts.push({
+          fileId: attachment.fileId,
+          fileName: attachment.fileName || attachment.name || null,
+          category: attachment.category || null,
+          readable: false,
+          text: "",
+          truncated: false,
+          totalChars: 0,
+          note: null,
+          error: error.message,
+        });
+      }
+    }
+
+    const contentPreview = buildTextPreview(detail.contentText || "", maxChars);
+    const answerPreview = buildTextPreview(detail.answerText || "", maxChars);
+    const readableAttachmentCount = attachmentContexts.filter((item) => item.readable && item.text).length;
+    const missingInfo = [];
+
+    if (!contentPreview.text && !answerPreview.text && readableAttachmentCount === 0) {
+      missingInfo.push("任务正文和附件都没有可读文本，无法可靠生成提交草稿。");
+    }
+    if (attachments.length > maxAttachments) {
+      missingInfo.push(`附件较多，本次只读取了前 ${maxAttachments} 个附件。`);
+    }
+
+    return {
+      context: detail.context,
+      collectedAt: new Date().toISOString(),
+      taskId: detail.taskId,
+      taskSummary: detail.taskSummary,
+      subjectName: detail.context?.currentSubject?.name || null,
+      contentText: contentPreview.text,
+      contentTruncated: contentPreview.truncated,
+      answerText: answerPreview.text,
+      answerTruncated: answerPreview.truncated,
+      attachments,
+      attachmentContexts,
+      mySubmissionAttachments: detail.mySubmissionAttachments || [],
+      requirementsSummary: buildTextPreview(
+        [detail.taskSummary?.activityName, detail.contentText, detail.answerText]
+          .filter(Boolean)
+          .join("\n\n"),
+        1500,
+      ).text,
+      missingInfo,
+      isSufficient: missingInfo.length === 0,
+    };
+  }
+
+  async draftTaskSubmission({
+    taskId,
+    subjectName = null,
+    taskTitle = null,
+    draftText,
+    summary = "",
+    evidence = [],
+    warnings = [],
+    missingInfo = [],
+    needsUserInput = false,
+  } = {}) {
+    const normalizedDraftText = String(draftText || "").trim();
+    if (!normalizedDraftText) {
+      throw new Error("draft_text is required and cannot be empty.");
+    }
+
+    const session = await this.getSession();
+    const sessionSummary = this.summarizeSession(session);
+    const now = new Date().toISOString();
+    const draftId = `draft_${Date.now()}_${randomUUID().slice(0, 8)}`;
+    const draft = {
+      draftId,
+      status: "pending_review",
+      createdAt: now,
+      updatedAt: now,
+      reviewedAt: null,
+      reviewNote: null,
+      taskId: normalizeId(taskId),
+      subjectName: subjectName || sessionSummary.currentSubject?.name || null,
+      taskTitle: taskTitle || null,
+      draftText: normalizedDraftText,
+      summary: String(summary || "").trim(),
+      evidence: Array.isArray(evidence) ? evidence : [],
+      warnings: Array.isArray(warnings) ? warnings : [],
+      missingInfo: Array.isArray(missingInfo) ? missingInfo : [],
+      needsUserInput: Boolean(needsUserInput),
+      sourceSession: sessionSummary,
+    };
+
+    await this.draftStore.save(draft);
+
+    return {
+      saved: true,
+      draftId,
+      status: draft.status,
+      taskId: draft.taskId,
+      subjectName: draft.subjectName,
+      taskTitle: draft.taskTitle,
+      reviewPath: path.join(this.draftStore.draftDir, `${draftId}.json`),
+      draft,
+    };
+  }
+
+  async listSubmissionDrafts({ status } = {}) {
+    const drafts = await this.draftStore.list();
+    const normalizedStatus = status ? String(status).trim() : null;
+    const filtered = normalizedStatus
+      ? drafts.filter((item) => String(item.status || "") === normalizedStatus)
+      : drafts;
+
+    return {
+      draftDirectory: this.draftStore.draftDir,
+      count: filtered.length,
+      drafts: filtered.map((draft) => ({
+        draftId: draft.draftId,
+        status: draft.status,
+        taskId: draft.taskId,
+        subjectName: draft.subjectName,
+        taskTitle: draft.taskTitle,
+        createdAt: draft.createdAt,
+        updatedAt: draft.updatedAt,
+        reviewedAt: draft.reviewedAt,
+        needsUserInput: Boolean(draft.needsUserInput),
+        missingInfoCount: Array.isArray(draft.missingInfo) ? draft.missingInfo.length : 0,
+        warningCount: Array.isArray(draft.warnings) ? draft.warnings.length : 0,
+      })),
+    };
+  }
+
+  async getSubmissionDraft(draftId) {
+    const draft = await this.draftStore.get(draftId);
+    if (!draft) {
+      throw new Error(`Draft ${draftId} was not found.`);
+    }
+
+    return {
+      draftDirectory: this.draftStore.draftDir,
+      draft,
+    };
+  }
+
+  async approveSubmissionDraft(draftId, { reviewNote = "" } = {}) {
+    const updated = await this.draftStore.update(draftId, async (draft) => ({
+      ...draft,
+      status: "approved",
+      reviewedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      reviewNote: String(reviewNote || "").trim() || null,
+    }));
+
+    if (!updated) {
+      throw new Error(`Draft ${draftId} was not found.`);
+    }
+
+    return {
+      draftId: updated.draftId,
+      status: updated.status,
+      reviewedAt: updated.reviewedAt,
+      reviewNote: updated.reviewNote,
+      draft: updated,
+    };
+  }
+
+  async rejectSubmissionDraft(draftId, { reviewNote = "" } = {}) {
+    const updated = await this.draftStore.update(draftId, async (draft) => ({
+      ...draft,
+      status: "rejected",
+      reviewedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      reviewNote: String(reviewNote || "").trim() || "Rejected in UI review.",
+    }));
+
+    if (!updated) {
+      throw new Error(`Draft ${draftId} was not found.`);
+    }
+
+    return {
+      draftId: updated.draftId,
+      status: updated.status,
+      reviewedAt: updated.reviewedAt,
+      reviewNote: updated.reviewNote,
+      draft: updated,
     };
   }
 
