@@ -39,6 +39,8 @@ echo [BXB] 检查并安装 x64 Python / Node / WebView2 ...
 call :winget_install "Python.Python.3.12" "Python 3.12 x64" "--architecture x64 --scope user"
 call :winget_install "OpenJS.NodeJS.LTS" "Node.js LTS x64" "--architecture x64 --scope user"
 call :winget_install "Microsoft.EdgeWebView2Runtime" "WebView2 Runtime" "--scope user"
+call :winget_install "Microsoft.VCRedist.2015+.X64" "VC++ x64 Runtime" "--scope user"
+call :winget_install "JRSoftware.InnoSetup" "Inno Setup" "--scope user"
 
 set "PYTHON_BIN=%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
 if not exist "%PYTHON_BIN%" set "PYTHON_BIN=%LOCALAPPDATA%\Programs\Python\Python312-64\python.exe"

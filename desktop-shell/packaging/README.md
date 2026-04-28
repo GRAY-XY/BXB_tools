@@ -51,6 +51,7 @@ dist/desktop-shell-windows-<timestamp>/BXB_Student_Windows_v1.0.1_Setup.exe  (if
 Notes:
 
 - The Windows build bundles the same `desktop-shell/`, `src/`, `docs/`, `config/`, `node_modules`, Node runtime, and Playwright Chromium runtime used by the macOS build.
+- The Windows installer also stages and silently installs `Microsoft Edge WebView2 Runtime` and `Microsoft Visual C++ x64 Runtime`, so login and embedded web content do not depend on the target machine being preconfigured.
 - Build on a Windows `x64` Python + Node toolchain when you want a native x64 output. On Windows ARM, the same script can still be run under x64 emulation to produce and validate the x64 package.
 - If Playwright Chromium is missing, run `npx playwright install chromium` before packaging.
 
@@ -65,6 +66,7 @@ build_windows_x64_one_click.cmd
 What it does:
 
 - installs or reuses Windows `x64` Python 3.12, Node.js LTS, and WebView2
+- installs or reuses VC++ x64 Runtime and Inno Setup
 - installs Python packaging dependencies
 - installs project `npm` dependencies
 - installs Playwright Chromium

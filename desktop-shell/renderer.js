@@ -735,9 +735,12 @@ function setBridgeReady(ready) {
   state.bridgeReady = Boolean(ready);
   els.refreshBtn.disabled = !ready;
   els.authBtn.disabled = !ready;
-  els.loginSubmitBtn.disabled = !ready;
   els.updateBtn.disabled = !ready;
   els.settingsCheckUpdateBtn.disabled = !ready;
+  if (!ready && !(state.access && state.access.locked)) {
+    els.loginSubmitBtn.disabled = false;
+    els.loginSubmitBtn.textContent = "登录";
+  }
 }
 
 function truncateMiddle(value, max = 48) {
@@ -1267,12 +1270,18 @@ async function refreshDashboard() {
 
 async function handleCredentialLogin() {
   if (!bridge) {
+    els.loginSubmitBtn.disabled = true;
+    els.loginSubmitBtn.textContent = "连接中...";
     try {
       await waitForBridge();
     } catch (error) {
+      els.loginSubmitBtn.disabled = false;
+      els.loginSubmitBtn.textContent = "登录";
       showError(getErrorMessage(error));
       return;
     }
+    els.loginSubmitBtn.disabled = false;
+    els.loginSubmitBtn.textContent = "登录";
   }
   const username = els.loginUsername.value.trim();
   const password = els.loginPassword.value;

@@ -8,6 +8,7 @@ $BundleName = "BXBStudent"
 $BuildRoot = Join-Path $ProjectRoot "build\desktop-shell-windows"
 $RuntimeRoot = Join-Path $BuildRoot "runtime"
 $NpmRuntimeRoot = Join-Path $BuildRoot "npm-runtime"
+$PrereqsRoot = Join-Path $BuildRoot "prereqs"
 $SpecRoot = Join-Path $BuildRoot "spec"
 $PyInstallerRoot = Join-Path $BuildRoot "pyinstaller"
 $Version = (Get-Content (Join-Path $ProjectRoot "package.json") -Raw | ConvertFrom-Json).version
@@ -20,6 +21,10 @@ $InstallerPath = Join-Path $DistRoot ("BXB_Student_Windows_v{0}_Setup.exe" -f $V
 $IconPng = Join-Path $ProjectRoot "desktop-shell\assets\app-icon.png"
 $IconIco = Join-Path $ProjectRoot "desktop-shell\assets\app-icon.ico"
 $LicenseFile = Join-Path $ProjectRoot "docs\legal\BXB_Student_User_Agreement_Installer_zh-CN.txt"
+$WebView2InstallerUrl = "https://go.microsoft.com/fwlink/p/?LinkId=2124703"
+$VcRedistUrl = "https://aka.ms/vc14/vc_redist.x64.exe"
+$WebView2InstallerPath = Join-Path $PrereqsRoot "MicrosoftEdgeWebView2RuntimeInstallerX64.exe"
+$VcRedistPath = Join-Path $PrereqsRoot "vc_redist.x64.exe"
 
 function Resolve-Tool([string]$ToolName) {
   $overrideMap = @{
@@ -54,6 +59,23 @@ image = Image.open(source).convert("RGBA")
 sizes = [(256, 256), (128, 128), (64, 64), (48, 48), (32, 32), (16, 16)]
 image.save(target, format="ICO", sizes=sizes)
 "@
+}
+
+function Download-RequiredFile([string]$Url, [string]$DestinationPath) {
+  $destinationDir = Split-Path -Parent $DestinationPath
+  New-Item -ItemType Directory -Force -Path $destinationDir | Out-Null
+
+  if (Test-Path $DestinationPath) {
+    return
+  }
+
+  Write-Host "[BXB Build] Downloading prerequisite: $([System.IO.Path]::GetFileName($DestinationPath))"
+  Invoke-WebRequest -Uri $Url -OutFile $DestinationPath
+}
+
+function Stage-Prerequisites {
+  Download-RequiredFile -Url $WebView2InstallerUrl -DestinationPath $WebView2InstallerPath
+  Download-RequiredFile -Url $VcRedistUrl -DestinationPath $VcRedistPath
 }
 
 function Find-PlaywrightCacheRoot {
@@ -122,7 +144,7 @@ OutputBaseFilename=BXB_Student_Windows_v$Version`_Setup
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
-PrivilegesRequired=lowest
+PrivilegesRequired=admin
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\{#AppExeName}
@@ -135,12 +157,16 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "$($VcRedistPath -replace '\\', '\\')"; DestDir: "{tmp}"; Flags: deleteafterinstall
+Source: "$($WebView2InstallerPath -replace '\\', '\\')"; DestDir: "{tmp}"; Flags: deleteafterinstall
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
 
 [Run]
+Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "安装 Microsoft Visual C++ x64 Runtime..."; Flags: waituntilterminated runhidden
+Filename: "{tmp}\MicrosoftEdgeWebView2RuntimeInstallerX64.exe"; Parameters: "/silent /install"; StatusMsg: "安装 Microsoft Edge WebView2 Runtime..."; Flags: waituntilterminated runhidden
 Filename: "{app}\{#AppExeName}"; Description: "启动 {#AppName}"; Flags: nowait postinstall skipifsilent
 "@ | Set-Content -Path $issPath -Encoding UTF8
 
@@ -184,10 +210,11 @@ if (Test-Path $DistRoot) {
   Remove-Item $DistRoot -Recurse -Force
 }
 
-New-Item -ItemType Directory -Force -Path $BuildRoot, $RuntimeRoot, $NpmRuntimeRoot, $SpecRoot, $PyInstallerRoot, $DistRoot | Out-Null
+New-Item -ItemType Directory -Force -Path $BuildRoot, $RuntimeRoot, $NpmRuntimeRoot, $PrereqsRoot, $SpecRoot, $PyInstallerRoot, $DistRoot | Out-Null
 
 Copy-Item $node -Destination (Join-Path $RuntimeRoot "node.exe") -Force
 Stage-PlaywrightRuntime (Find-PlaywrightCacheRoot)
+Stage-Prerequisites
 
 Copy-Item (Join-Path $ProjectRoot "package.json") -Destination (Join-Path $NpmRuntimeRoot "package.json") -Force
 Copy-Item (Join-Path $ProjectRoot "package-lock.json") -Destination (Join-Path $NpmRuntimeRoot "package-lock.json") -Force
