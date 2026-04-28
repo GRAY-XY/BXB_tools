@@ -8,6 +8,7 @@ npm-debug.log*
 !.env.example
 coverage/
 dist/
+dist-electron*/
 build/
 build_assets/
 .DS_Store

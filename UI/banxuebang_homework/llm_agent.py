@@ -39,6 +39,7 @@ class LlmConversationAgent:
         self.turns: deque[AgentTurn] = deque(maxlen=max_turns * 2)
         self.rule_fallback = RuleConversationAgent(backend, max_turns=max_turns)
         self.max_tool_rounds = max(1, int(max_tool_rounds))
+        self.last_usage: dict[str, Any] = {}
         self._progress_callback: Callable[[AgentProgressEvent], None] | None = None
 
     def recent_turns(self) -> list[AgentTurn]:
@@ -56,6 +57,7 @@ class LlmConversationAgent:
         if not text:
             return AgentReply("请输入要执行的操作。")
 
+        self.last_usage = {}
         self._progress_callback = progress_callback
         config = load_model_config()
         if not self._config_ready(config):
@@ -100,6 +102,7 @@ class LlmConversationAgent:
         for round_index in range(self.max_tool_rounds):
             self._emit_progress("llm", f"第 {round_index + 1} 轮请求模型")
             response = self._chat_completion(config, messages, self._tool_schemas())
+            self.last_usage = response.get("usage") if isinstance(response.get("usage"), dict) else {}
             message = (((response.get("choices") or [{}])[0]).get("message") or {})
             tool_calls = message.get("tool_calls") or []
 
@@ -192,6 +195,11 @@ class LlmConversationAgent:
         if max_turns is not None:
             self.turns = deque(self.turns, maxlen=max(1, int(max_turns)) * 2)
             self.rule_fallback.update_limits(max_turns=max_turns)
+
+    def reset_conversation(self) -> None:
+        self.turns.clear()
+        self.last_usage = {}
+        self.rule_fallback.reset_conversation()
 
     def _chat_completion(
         self,

@@ -16,7 +16,7 @@ from UI.banxuebang_homework.tk_app import HomeworkUiApp
 
 
 APP_NAME = "BXB Homework UI"
-PAYLOAD_VERSION = "standalone-2026-04-27-1"
+PAYLOAD_VERSION = "standalone-2026-04-28-3"
 NODE_DIST = "node-v22.15.0-win-x64"
 NODE_ZIP_NAME = f"{NODE_DIST}.zip"
 BROWSER_ARCHIVE_NAME = "ms-playwright-browsers.zip"
