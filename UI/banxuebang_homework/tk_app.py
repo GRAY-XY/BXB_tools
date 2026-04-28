@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import json
 import re
 import threading
@@ -9,7 +10,9 @@ import webbrowser
 from tkinter import messagebox, ttk
 from typing import Any, Callable
 import unicodedata
+from markdown_it import MarkdownIt
 import ttkbootstrap as ttkb
+from tkinterweb import HtmlFrame
 
 from .agent import AgentProgressEvent, AgentReply
 from .backend_factory import create_backend
@@ -19,6 +22,7 @@ from .model_config import (
     ModelConfig,
     clear_model_config,
     config_path,
+    known_context_length,
     load_model_config,
     masked_key,
     save_model_config,
@@ -43,6 +47,10 @@ class HomeworkUiApp:
         )
         self.session_data: dict[str, Any] = {}
         self.current_task_rows: list[dict[str, Any]] = []
+        self.agent_messages: list[dict[str, str]] = []
+        self.markdown_renderer = MarkdownIt("commonmark", {"html": False, "linkify": False}).enable(
+            ["table", "strikethrough"],
+        )
 
         self.status_var = tk.StringVar(value="Ready")
         self.term_var = tk.StringVar(value="")
@@ -54,6 +62,7 @@ class HomeworkUiApp:
         self.model_api_key_var = tk.StringVar(value="")
         self.model_base_url_var = tk.StringVar(value="")
         self.model_name_var = tk.StringVar(value="")
+        self.model_context_length_var = tk.StringVar(value="")
         self.model_key_masked_var = tk.StringVar(value="")
         self.model_status_var = tk.StringVar(value="尚未配置模型。")
         self.max_tool_rounds_var = tk.StringVar(value=str(self.ui_settings.max_tool_rounds))
@@ -63,6 +72,7 @@ class HomeworkUiApp:
         self.repo_url_var = tk.StringVar(value="https://github.com/GRAY-XY/BXB_tools")
         self.agent_run_status_var = tk.StringVar(value="空闲")
         self.agent_elapsed_var = tk.StringVar(value="0.0s")
+        self.agent_context_var = tk.StringVar(value="上下文 0 / 4800")
         self.draft_filter_var = tk.StringVar(value="pending_review")
         self.review_status_var = tk.StringVar(value="")
 
@@ -71,6 +81,7 @@ class HomeworkUiApp:
         self._agent_run_active = False
         self._agent_run_started_at = 0.0
         self._agent_progress_counter = 0
+        self._agent_usage_is_current = False
         self.current_draft_id: str | None = None
 
         self._configure_theme()
@@ -97,32 +108,32 @@ class HomeworkUiApp:
         self.style.configure("App.TFrame", background=self.palette["app_bg"])
         self.style.configure("Sidebar.TFrame", background=self.palette["sidebar"])
         self.style.configure("ContentShell.TFrame", background=self.palette["app_bg"])
-        self.style.configure("Page.TFrame", background=self.palette["surface"])
-        self.style.configure("Section.TFrame", background=self.palette["surface"])
-        self.style.configure("PageHeader.TFrame", background=self.palette["surface"])
-        self.style.configure("CardRow.TFrame", background=self.palette["surface"])
-        self.style.configure("HeaderTitle.TLabel", background=self.palette["surface"], foreground=self.palette["text"], font=("Segoe UI Semibold", 26))
-        self.style.configure("HeaderSub.TLabel", background=self.palette["surface"], foreground=self.palette["muted"], font=("Segoe UI", 10))
-        self.style.configure("BrandTitle.TLabel", background=self.palette["sidebar"], foreground="#f2f6ff", font=("Segoe UI Semibold", 22))
-        self.style.configure("BrandSub.TLabel", background=self.palette["sidebar"], foreground="#9fb2d1", font=("Segoe UI", 10))
-        self.style.configure("MetricLabel.TLabel", background=self.palette["surface"], foreground=self.palette["muted"], font=("Segoe UI", 10))
-        self.style.configure("MetricValue.TLabel", background=self.palette["surface"], foreground=self.palette["text"], font=("Segoe UI Semibold", 15))
+        self.style.configure("Page.TFrame", background=self.palette["app_bg"])
+        self.style.configure("Section.TFrame", background=self.palette["app_bg"])
+        self.style.configure("PageHeader.TFrame", background=self.palette["app_bg"])
+        self.style.configure("CardRow.TFrame", background=self.palette["app_bg"])
+        self.style.configure("HeaderTitle.TLabel", background=self.palette["app_bg"], foreground=self.palette["text"], font=("Segoe UI Variable Display", 27))
+        self.style.configure("HeaderSub.TLabel", background=self.palette["app_bg"], foreground=self.palette["muted"], font=("Segoe UI", 10))
+        self.style.configure("BrandTitle.TLabel", background=self.palette["sidebar"], foreground=self.palette["sidebar_text"], font=("Segoe UI Variable Display", 19))
+        self.style.configure("BrandSub.TLabel", background=self.palette["sidebar"], foreground=self.palette["sidebar_muted"], font=("Segoe UI", 9))
+        self.style.configure("MetricLabel.TLabel", background=self.palette["surface_raised"], foreground=self.palette["muted"], font=("Segoe UI", 10))
+        self.style.configure("MetricValue.TLabel", background=self.palette["surface_raised"], foreground=self.palette["text"], font=("Segoe UI Semibold", 14))
         self.style.configure("MetricBadge.TLabel", background=self.palette["accent_soft"], foreground=self.palette["accent"], font=("Segoe UI Semibold", 9), padding=(10, 5))
-        self.style.configure("Subtle.TLabel", background=self.palette["surface"], foreground=self.palette["muted"], font=("Segoe UI", 10))
-        self.style.configure("StatusBar.TLabel", background=self.palette["surface_alt"], foreground=self.palette["muted"], padding=(16, 10))
-        self.style.configure("Card.TLabelframe", background=self.palette["surface"], bordercolor=self.palette["border"], relief="solid", borderwidth=1)
-        self.style.configure("Card.TLabelframe.Label", background=self.palette["surface"], foreground=self.palette["text"], font=("Segoe UI Semibold", 11))
-        self.style.configure("Sidebar.TButton", background=self.palette["sidebar"], foreground="#dbe7ff", padding=(18, 13), anchor="w", font=("Segoe UI Semibold", 10), borderwidth=0)
+        self.style.configure("Subtle.TLabel", background=self.palette["surface_raised"], foreground=self.palette["muted"], font=("Segoe UI", 10))
+        self.style.configure("StatusBar.TLabel", background=self.palette["app_bg"], foreground=self.palette["muted"], padding=(18, 10))
+        self.style.configure("Card.TLabelframe", background=self.palette["surface_raised"], bordercolor=self.palette["border"], relief="solid", borderwidth=1)
+        self.style.configure("Card.TLabelframe.Label", background=self.palette["app_bg"], foreground=self.palette["text"], font=("Segoe UI Semibold", 11))
+        self.style.configure("Sidebar.TButton", background=self.palette["sidebar"], foreground=self.palette["sidebar_text"], padding=(18, 12), anchor="w", font=("Segoe UI", 10), borderwidth=0)
         self.style.map(
             "Sidebar.TButton",
             background=[("active", self.palette["sidebar_hover"])],
-            foreground=[("active", "#f3f7ff")],
+            foreground=[("active", self.palette["sidebar_text"])],
         )
-        self.style.configure("SidebarActive.TButton", background=self.palette["sidebar_active"], foreground="#ffffff", padding=(18, 13), anchor="w", font=("Segoe UI Semibold", 10), borderwidth=0)
+        self.style.configure("SidebarActive.TButton", background=self.palette["sidebar_active"], foreground=self.palette["sidebar_text"], padding=(18, 12), anchor="w", font=("Segoe UI Semibold", 10), borderwidth=0)
         self.style.map(
             "SidebarActive.TButton",
             background=[("active", self.palette["sidebar_active"])],
-            foreground=[("active", "#ffffff")],
+            foreground=[("active", self.palette["sidebar_text"])],
         )
         self.style.configure("Accent.TButton", font=("Segoe UI Semibold", 10), padding=(16, 10))
         self.style.configure("Quick.TButton", font=("Segoe UI", 10), padding=(13, 9))
@@ -139,57 +150,61 @@ class HomeworkUiApp:
     def _build_palette(self, theme_mode: str) -> dict[str, str]:
         if theme_mode == "dark":
             return {
-                "app_bg": "#0f1723",
-                "surface": "#162030",
-                "surface_alt": "#111927",
-                "surface_raised": "#1b2638",
-                "sidebar": "#0b1220",
-                "sidebar_active": "#264574",
-                "sidebar_hover": "#132136",
-                "border": "#2c3b53",
-                "text": "#e8eef8",
-                "muted": "#9aa9c0",
-                "accent": "#60a5fa",
-                "accent_soft": "#1d3557",
-                "success_soft": "#17382b",
-                "shadow": "#09101a",
-                "bubble_user": "#2f74dd",
-                "bubble_user_text": "#f5f9ff",
-                "bubble_assistant": "#1a2434",
-                "bubble_assistant_text": "#e8eef8",
-                "bubble_assistant_border": "#33445d",
+                "app_bg": "#202020",
+                "surface": "#202020",
+                "surface_alt": "#252525",
+                "surface_raised": "#2b2b2b",
+                "sidebar": "#1c1c1c",
+                "sidebar_active": "#2d3f53",
+                "sidebar_hover": "#292929",
+                "sidebar_text": "#f3f3f3",
+                "sidebar_muted": "#a7a7a7",
+                "border": "#3a3a3a",
+                "text": "#f3f3f3",
+                "muted": "#b7b7b7",
+                "accent": "#60cdff",
+                "accent_soft": "#17384a",
+                "success_soft": "#193a2a",
+                "shadow": "#161616",
+                "bubble_user": "#005fb8",
+                "bubble_user_text": "#ffffff",
+                "bubble_assistant": "#303030",
+                "bubble_assistant_text": "#f3f3f3",
+                "bubble_assistant_border": "#464646",
             }
         return {
-            "app_bg": "#dbe3ee",
-            "surface": "#edf2f8",
-            "surface_alt": "#e3eaf4",
-            "surface_raised": "#f5f8fc",
-            "sidebar": "#20293a",
-            "sidebar_active": "#2e4f86",
-            "sidebar_hover": "#273246",
-            "border": "#c2ccdb",
-            "text": "#132033",
-            "muted": "#61708a",
-            "accent": "#3b82f6",
-            "accent_soft": "#dbeafe",
-            "success_soft": "#e2f6ea",
-            "shadow": "#b8c4d5",
-            "bubble_user": "#3778e8",
-            "bubble_user_text": "#f8fbff",
-            "bubble_assistant": "#e8eef7",
-            "bubble_assistant_text": "#132033",
-            "bubble_assistant_border": "#c5d1e2",
+            "app_bg": "#f3f3f3",
+            "surface": "#f3f3f3",
+            "surface_alt": "#fafafa",
+            "surface_raised": "#ffffff",
+            "sidebar": "#f7f7f7",
+            "sidebar_active": "#e5f1fb",
+            "sidebar_hover": "#eeeeee",
+            "sidebar_text": "#1f1f1f",
+            "sidebar_muted": "#6b6b6b",
+            "border": "#e5e5e5",
+            "text": "#1f1f1f",
+            "muted": "#606060",
+            "accent": "#0067c0",
+            "accent_soft": "#e5f1fb",
+            "success_soft": "#e8f5e9",
+            "shadow": "#d9d9d9",
+            "bubble_user": "#0067c0",
+            "bubble_user_text": "#ffffff",
+            "bubble_assistant": "#ffffff",
+            "bubble_assistant_text": "#1f1f1f",
+            "bubble_assistant_border": "#e5e5e5",
         }
 
     def _build_ui(self) -> None:
         main = ttk.Frame(self.root, style="App.TFrame")
         main.pack(fill="both", expand=True)
 
-        self.sidebar = ttk.Frame(main, style="Sidebar.TFrame", width=248)
+        self.sidebar = ttk.Frame(main, style="Sidebar.TFrame", width=278)
         self.sidebar.pack(side="left", fill="y")
         self.sidebar.pack_propagate(False)
 
-        self.content_shell = ttk.Frame(main, style="ContentShell.TFrame", padding=(18, 18, 18, 14))
+        self.content_shell = ttk.Frame(main, style="ContentShell.TFrame", padding=(24, 22, 24, 14))
         self.content_shell.pack(side="left", fill="both", expand=True)
 
         self.content = ttk.Frame(self.content_shell, style="Page.TFrame")
@@ -203,10 +218,24 @@ class HomeworkUiApp:
         )
         self.status_bar.pack(fill="x", side="bottom")
 
-        brand = ttk.Frame(self.sidebar, style="Sidebar.TFrame", padding=(24, 28, 20, 22))
+        brand = ttk.Frame(self.sidebar, style="Sidebar.TFrame", padding=(22, 24, 18, 18))
         brand.pack(fill="x")
-        ttk.Label(brand, text="BXB", style="BrandTitle.TLabel").pack(anchor="w")
-        ttk.Label(brand, text="Homework Assistant", style="BrandSub.TLabel").pack(anchor="w", pady=(2, 0))
+        brand_row = ttk.Frame(brand, style="Sidebar.TFrame")
+        brand_row.pack(fill="x")
+        mark = tk.Label(
+            brand_row,
+            text="BXB",
+            bg=self.palette["accent"],
+            fg="#ffffff",
+            font=("Segoe UI Semibold", 10),
+            width=4,
+            height=2,
+        )
+        mark.pack(side="left", padx=(0, 12))
+        brand_text = ttk.Frame(brand_row, style="Sidebar.TFrame")
+        brand_text.pack(side="left", fill="x", expand=True)
+        ttk.Label(brand_text, text="BXB Homework", style="BrandTitle.TLabel").pack(anchor="w")
+        ttk.Label(brand_text, text="Local agent workspace", style="BrandSub.TLabel").pack(anchor="w", pady=(1, 0))
 
         nav_items = [
             ("home", "主页"),
@@ -218,19 +247,19 @@ class HomeworkUiApp:
             ("schedule", "课表"),
             ("notices", "通知"),
         ]
-        nav_group = ttk.Frame(self.sidebar, style="Sidebar.TFrame", padding=(14, 12, 14, 12))
+        nav_group = ttk.Frame(self.sidebar, style="Sidebar.TFrame", padding=(12, 8, 12, 12))
         nav_group.pack(fill="x")
         for key, label in nav_items:
             button = ttk.Button(
                 nav_group,
-                text=label,
+                text=f"  {label}",
                 style="Sidebar.TButton",
                 command=lambda page_key=key: self._show_page(page_key),
             )
-            button.pack(fill="x", pady=(0, 8))
+            button.pack(fill="x", pady=(0, 5))
             self.nav_buttons[key] = button
 
-        sidebar_footer = ttk.Frame(self.sidebar, style="Sidebar.TFrame", padding=(18, 18, 18, 18))
+        sidebar_footer = ttk.Frame(self.sidebar, style="Sidebar.TFrame", padding=(14, 14, 14, 16))
         sidebar_footer.pack(side="bottom", fill="x")
         footer_card = ttk.LabelFrame(sidebar_footer, text="Workspace", style="Card.TLabelframe", padding=14)
         footer_card.pack(fill="x")
@@ -333,6 +362,7 @@ class HomeworkUiApp:
         ttk.Button(quick, text="查看当前课程GPA", command=lambda: self._submit_agent_text("查看当前课程GPA"), style="Quick.TButton").pack(
             side="left", padx=(8, 0)
         )
+        ttk.Button(quick, text="新对话", command=self._reset_agent_conversation, style="Ghost.TButton").pack(side="right")
 
         runtime_bar = ttk.LabelFrame(page, text="运行状态", style="Card.TLabelframe", padding=12)
         runtime_bar.pack(fill="x", pady=(0, 10))
@@ -340,6 +370,19 @@ class HomeworkUiApp:
         ttk.Label(runtime_bar, textvariable=self.agent_run_status_var, style="MetricValue.TLabel").pack(side="left", padx=(8, 18))
         ttk.Label(runtime_bar, text="耗时:", style="Subtle.TLabel").pack(side="left")
         ttk.Label(runtime_bar, textvariable=self.agent_elapsed_var, style="MetricValue.TLabel").pack(side="left", padx=(8, 0))
+        ttk.Label(runtime_bar, text="上下文:", style="Subtle.TLabel").pack(side="left", padx=(24, 6))
+        self.agent_context_progress = ttk.Progressbar(
+            runtime_bar,
+            orient="horizontal",
+            mode="determinate",
+            maximum=100,
+            value=0,
+            length=180,
+            style="info.Horizontal.TProgressbar",
+        )
+        self.agent_context_progress.pack(side="left")
+        ttk.Label(runtime_bar, textvariable=self.agent_context_var, style="Subtle.TLabel").pack(side="left", padx=(8, 0))
+        self._update_agent_context_meter()
 
         split = ttk.PanedWindow(page, orient="horizontal", style="Horizontal.TPanedwindow")
         split.pack(fill="both", expand=True)
@@ -348,6 +391,9 @@ class HomeworkUiApp:
         progress_frame = ttk.LabelFrame(split, text="工作过程", style="Card.TLabelframe", padding=14)
         split.add(left_frame, weight=3)
         split.add(progress_frame, weight=2)
+        left_frame.columnconfigure(0, weight=1)
+        left_frame.rowconfigure(0, weight=1)
+        left_frame.rowconfigure(1, weight=0)
 
         self.agent_chat_shell = tk.Frame(
             left_frame,
@@ -355,14 +401,17 @@ class HomeworkUiApp:
             highlightthickness=0,
             bd=0,
         )
-        self.agent_chat_shell.pack(fill="both", expand=True)
+        self.agent_chat_shell.grid(row=0, column=0, sticky="nsew")
         self.agent_chat_region = tk.Frame(self.agent_chat_shell, bg=self.palette["surface_alt"])
         self.agent_chat_region.pack(fill="both", expand=True, padx=(0, 1), pady=(0, 1))
-        self.agent_chat_canvas, self.agent_chat_feed = self._build_scrollable_region(
+        self.agent_chat_html = HtmlFrame(
             self.agent_chat_region,
-            background=self.palette["surface_alt"],
-            inner_background=self.palette["surface_alt"],
+            messages_enabled=False,
+            vertical_scrollbar=True,
+            horizontal_scrollbar=True,
         )
+        self.agent_chat_html.pack(fill="both", expand=True)
+        self._render_agent_chat_html()
 
         timeline_meta = ttk.Frame(progress_frame, style="Page.TFrame")
         timeline_meta.pack(fill="x", pady=(0, 10))
@@ -389,11 +438,12 @@ class HomeworkUiApp:
         )
 
         composer = ttk.Frame(left_frame, style="Page.TFrame")
-        composer.pack(fill="x", pady=(10, 0))
+        composer.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        composer.columnconfigure(0, weight=1)
         entry = ttk.Entry(composer, textvariable=self.agent_input_var)
-        entry.pack(side="left", fill="x", expand=True)
+        entry.grid(row=0, column=0, sticky="ew")
         entry.bind("<Return>", lambda _event: self._on_agent_submit())
-        ttk.Button(composer, text="发送", command=self._on_agent_submit, style="Accent.TButton").pack(side="left", padx=(10, 0))
+        ttk.Button(composer, text="发送", command=self._on_agent_submit, style="Accent.TButton").grid(row=0, column=1, padx=(10, 0))
 
     def _build_model_page(self) -> None:
         page = ttk.Frame(self.content, style="Page.TFrame", padding=24)
@@ -418,6 +468,10 @@ class HomeworkUiApp:
         ttk.Label(form, text="模型名称").grid(row=2, column=0, sticky="w", pady=8)
         ttk.Entry(form, textvariable=self.model_name_var, width=58).grid(
             row=2, column=1, sticky="ew", pady=8, padx=(10, 0)
+        )
+        ttk.Label(form, text="上下文长度").grid(row=3, column=0, sticky="w", pady=8)
+        ttk.Entry(form, textvariable=self.model_context_length_var, width=58).grid(
+            row=3, column=1, sticky="ew", pady=8, padx=(10, 0)
         )
 
         form.columnconfigure(1, weight=1)
@@ -749,6 +803,7 @@ class HomeworkUiApp:
         self.model_api_key_var.set(config.api_key)
         self.model_base_url_var.set(config.base_url)
         self.model_name_var.set(config.model_name)
+        self.model_context_length_var.set(str(config.context_length) if config.context_length else "")
         self.model_key_masked_var.set(f"当前本地密钥摘要: {masked_key(config.api_key) or '(未设置)'}")
         path = config_path()
         self.model_status_var.set(f"已从 {path} 读取模型配置。")
@@ -759,6 +814,7 @@ class HomeworkUiApp:
             api_key=self.model_api_key_var.get().strip(),
             base_url=self.model_base_url_var.get().strip(),
             model_name=self.model_name_var.get().strip(),
+            context_length=self._safe_positive_int(self.model_context_length_var.get()),
         )
 
     def _save_model_config(self) -> None:
@@ -773,15 +829,18 @@ class HomeworkUiApp:
                 "config_path": str(path),
                 "base_url": config.base_url,
                 "model_name": config.model_name,
+                "context_length": config.context_length,
                 "api_key_masked": masked_key(config.api_key),
             },
         )
+        self._update_agent_context_meter()
 
     def _clear_model_config(self) -> None:
         path = clear_model_config()
         self.model_api_key_var.set("")
         self.model_base_url_var.set("")
         self.model_name_var.set("")
+        self.model_context_length_var.set("")
         self.model_key_masked_var.set("当前本地密钥摘要: (未设置)")
         self.model_status_var.set(f"模型配置已清除，本地文件位置: {path}")
         self.model_result_text.delete("1.0", "end")
@@ -797,8 +856,14 @@ class HomeworkUiApp:
 
     def _on_model_test_finished(self, result: dict[str, Any]) -> None:
         self._write_json(self.model_result_text, result)
+        context_length = self._safe_positive_int(result.get("context_length"))
+        if context_length:
+            self.model_context_length_var.set(str(context_length))
+            config = self._current_model_config()
+            save_model_config(config)
         self.model_status_var.set(result.get("message", "模型连通性测试完成。"))
         self._set_status(result.get("message", "模型连通性测试完成。"))
+        self._update_agent_context_meter()
 
     def _load_ui_settings_into_form(self) -> None:
         self.ui_settings = load_ui_settings()
@@ -809,6 +874,7 @@ class HomeworkUiApp:
             max_tool_rounds=self.ui_settings.max_tool_rounds,
             max_turns=self.ui_settings.max_memory_turns,
         )
+        self._update_agent_context_meter()
         path = settings_path()
         self.settings_status_var.set(f"已从 {path} 读取设置。")
         if hasattr(self, "settings_result_text"):
@@ -842,6 +908,7 @@ class HomeworkUiApp:
         self.max_tool_rounds_var.set(str(self.ui_settings.max_tool_rounds))
         self.max_memory_turns_var.set(str(self.ui_settings.max_memory_turns))
         self.theme_mode_var.set(self.ui_settings.theme_mode)
+        self._update_agent_context_meter()
         self.settings_status_var.set(f"设置已保存到 {path}")
         self._write_json(self.settings_result_text, settings_as_dict(self.ui_settings))
         self._set_status("设置已保存")
@@ -1180,6 +1247,7 @@ class HomeworkUiApp:
         self._submit_agent_text(text)
 
     def _submit_agent_text(self, text: str) -> None:
+        self._agent_usage_is_current = False
         self._append_agent_message("user", text)
         self._start_agent_run()
 
@@ -1194,11 +1262,32 @@ class HomeworkUiApp:
 
         threading.Thread(target=runner, daemon=True).start()
 
+    def _reset_agent_conversation(self) -> None:
+        if self._agent_run_active:
+            messagebox.showwarning("提示", "助手正在执行，完成后再开始新对话。")
+            return
+
+        self.agent_messages.clear()
+        self._agent_usage_is_current = False
+        if hasattr(self.agent, "reset_conversation"):
+            self.agent.reset_conversation()
+        if hasattr(self, "agent_timeline_feed"):
+            for child in self.agent_timeline_feed.winfo_children():
+                child.destroy()
+        self.agent_run_status_var.set("空闲")
+        self.agent_elapsed_var.set("0.0s")
+        self._render_agent_chat_html()
+        self._update_agent_context_meter()
+        self._set_status("已开始新对话")
+
     def _append_agent_message(self, role: str, text: str) -> None:
-        self._create_chat_bubble(role, text)
+        self.agent_messages.append({"role": role, "text": text or ""})
+        self._render_agent_chat_html()
+        self._update_agent_context_meter()
         self._scroll_chat_to_bottom()
 
     def _apply_agent_reply(self, reply: AgentReply) -> None:
+        self._agent_usage_is_current = bool(getattr(self.agent, "last_usage", {}).get("prompt_tokens"))
         self._append_agent_message("assistant", reply.message)
         if reply.session is not None:
             self._on_session_loaded(reply.session)
@@ -1218,6 +1307,7 @@ class HomeworkUiApp:
             self._show_page("review")
             self.load_submission_drafts(focus_draft_id=str(draft_id) if draft_id else None)
         self._set_status(reply.message.splitlines()[0])
+        self._update_agent_context_meter()
 
     def _start_agent_run(self) -> None:
         self._agent_run_active = True
@@ -1293,11 +1383,183 @@ class HomeworkUiApp:
 
     def _scroll_chat_to_bottom(self) -> None:
         self.root.update_idletasks()
-        self.root.after_idle(lambda: self.agent_chat_canvas.yview_moveto(1.0))
+        if hasattr(self, "agent_chat_html"):
+            self.root.after_idle(lambda: self.agent_chat_html.yview_moveto(1.0))
 
     def _scroll_timeline_to_bottom(self) -> None:
         self.root.update_idletasks()
         self.root.after_idle(lambda: self.agent_timeline_canvas.yview_moveto(1.0))
+
+    def _render_agent_chat_html(self) -> None:
+        if not hasattr(self, "agent_chat_html"):
+            return
+
+        document = self._build_agent_chat_document()
+        self.agent_chat_html.load_html(document, base_url=None)
+
+    def _update_agent_context_meter(self) -> None:
+        max_tokens = self._agent_context_budget_tokens()
+        used_tokens = self._estimate_agent_context_tokens()
+        percent = min(100, int((used_tokens / max_tokens) * 100)) if max_tokens else 0
+        self.agent_context_var.set(f"上下文 {used_tokens} / {max_tokens}")
+        if hasattr(self, "agent_context_progress"):
+            self.agent_context_progress.configure(value=percent)
+
+    def _agent_context_budget_tokens(self) -> int:
+        model_limit = self._safe_positive_int(self.model_context_length_var.get())
+        if model_limit:
+            return model_limit
+        known_limit = known_context_length(self.model_name_var.get())
+        if known_limit:
+            return known_limit
+        turns = max(1, int(getattr(self.ui_settings, "max_memory_turns", 6)))
+        return turns * 800
+
+    def _estimate_agent_context_tokens(self) -> int:
+        prompt_tokens = (
+            self._safe_positive_int(getattr(self.agent, "last_usage", {}).get("prompt_tokens"))
+            if self._agent_usage_is_current
+            else 0
+        )
+        if prompt_tokens:
+            return max(prompt_tokens, self._estimated_memory_tokens())
+        return self._estimated_memory_tokens()
+
+    def _estimated_memory_tokens(self) -> int:
+        remembered_turns = list(self.agent.recent_turns()) if hasattr(self.agent, "recent_turns") else []
+        if remembered_turns:
+            text = "\n".join(turn.text for turn in remembered_turns)
+        else:
+            max_messages = max(1, int(getattr(self.ui_settings, "max_memory_turns", 6))) * 2
+            text = "\n".join(item.get("text", "") for item in self.agent_messages[-max_messages:])
+        return max(0, (len(text) + 3) // 4)
+
+    @staticmethod
+    def _safe_positive_int(value: Any) -> int:
+        try:
+            parsed = int(value or 0)
+        except (TypeError, ValueError):
+            return 0
+        return parsed if parsed > 0 else 0
+
+    def _build_agent_chat_document(self) -> str:
+        theme_mode = getattr(self.ui_settings, "theme_mode", "light")
+        css = self._agent_chat_css(theme_mode)
+        rows = []
+        for message in self.agent_messages:
+            role = message.get("role", "assistant")
+            label = "你" if role == "user" else "助手"
+            rendered = self._markdown_to_html(message.get("text", ""))
+            rows.append(
+                f'<div class="message-row {html.escape(role)}">'
+                f'<div class="bubble {html.escape(role)}">'
+                f'<div class="message-label">{html.escape(label)}</div>'
+                f'<div class="message-body">{rendered}</div>'
+                "</div>"
+                '<div class="clear"></div>'
+                "</div>",
+            )
+
+        body = "\n".join(rows) or '<div class="empty-chat"></div>'
+        return (
+            "<!doctype html>"
+            "<html><head><meta charset=\"utf-8\">"
+            f"<style>{css}</style>"
+            "</head><body>"
+            f"<main class=\"chat-feed\">{body}<div id=\"chat-bottom\"></div></main>"
+            "</body></html>"
+        )
+
+    def _markdown_to_html(self, markdown_text: str) -> str:
+        prepared = self._protect_ascii_tables(markdown_text or "")
+        rendered = self.markdown_renderer.render(prepared)
+        return re.sub(
+            r"(<table\b.*?</table>)",
+            r'<div class="md-scroll">\1</div>',
+            rendered,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+
+    def _protect_ascii_tables(self, markdown_text: str) -> str:
+        lines = markdown_text.splitlines()
+        output: list[str] = []
+        index = 0
+        while index < len(lines):
+            if self._is_ascii_table_start(lines, index):
+                table_lines: list[str] = []
+                while index < len(lines):
+                    stripped = lines[index].rstrip()
+                    if not stripped:
+                        break
+                    if not (self._is_ascii_table_border(stripped) or self._is_markdown_table_row(stripped)):
+                        break
+                    table_lines.append(stripped)
+                    index += 1
+                output.append("```text")
+                output.extend(table_lines)
+                output.append("```")
+                continue
+
+            output.append(lines[index])
+            index += 1
+        return "\n".join(output)
+
+    def _agent_chat_css(self, theme_mode: str) -> str:
+        if theme_mode == "dark":
+            return """
+                html, body { margin: 0; padding: 0; background: #252525; color: #f3f3f3; font-family: "Segoe UI", "Microsoft YaHei", sans-serif; }
+                .chat-feed { box-sizing: border-box; min-height: 100vh; padding: 18px 18px 28px; }
+                .message-row { display: block; clear: both; margin: 0 0 16px; }
+                .bubble { display: inline-block; width: auto; max-width: 82%; border-radius: 10px; padding: 12px 15px; line-height: 1.62; overflow-x: auto; }
+                .bubble.user { float: right; background: #005fb8; color: #ffffff; }
+                .bubble.assistant { float: left; background: #303030; color: #f3f3f3; border: 1px solid #464646; }
+                .clear { clear: both; height: 0; overflow: hidden; }
+                .message-label { font-size: 12px; font-weight: 700; margin-bottom: 8px; color: inherit; opacity: .78; }
+                .user .message-label { text-align: right; }
+                .message-body { font-size: 14px; max-width: 100%; overflow-x: auto; }
+                p { margin: 0 0 10px; }
+                p:last-child { margin-bottom: 0; }
+                h1, h2, h3 { margin: 14px 0 10px; line-height: 1.25; }
+                h1 { font-size: 22px; } h2 { font-size: 18px; } h3 { font-size: 16px; }
+                ul, ol { margin: 8px 0 12px 24px; padding: 0; }
+                blockquote { margin: 10px 0; padding: 8px 12px; border-left: 3px solid #60cdff; background: rgba(96, 205, 255, .08); color: #d6d6d6; }
+                code { font-family: Consolas, "Cascadia Mono", monospace; background: rgba(255,255,255,.09); border-radius: 5px; padding: 2px 5px; }
+                pre { margin: 12px 0; padding: 12px; overflow-x: auto; background: #202020; border: 1px solid #464646; border-radius: 8px; }
+                pre code { background: transparent; padding: 0; white-space: pre; }
+                .md-scroll { max-width: 100%; overflow-x: auto; }
+                table { border-collapse: collapse; margin: 12px 0; width: auto; font-size: 13px; }
+                th, td { border: 1px solid #464646; padding: 8px 10px; text-align: left; vertical-align: top; white-space: nowrap; }
+                th { background: #383838; font-weight: 700; }
+                tr:nth-child(even) td { background: rgba(255,255,255,.035); }
+                a { color: #60cdff; }
+            """
+        return """
+            html, body { margin: 0; padding: 0; background: #fafafa; color: #1f1f1f; font-family: "Segoe UI", "Microsoft YaHei", sans-serif; }
+            .chat-feed { box-sizing: border-box; min-height: 100vh; padding: 18px 18px 28px; }
+            .message-row { display: block; clear: both; margin: 0 0 16px; }
+            .bubble { display: inline-block; width: auto; max-width: 82%; border-radius: 10px; padding: 12px 15px; line-height: 1.62; overflow-x: auto; }
+            .bubble.user { float: right; background: #0067c0; color: #ffffff; }
+            .bubble.assistant { float: left; background: #ffffff; color: #1f1f1f; border: 1px solid #e5e5e5; }
+            .clear { clear: both; height: 0; overflow: hidden; }
+            .message-label { font-size: 12px; font-weight: 700; margin-bottom: 8px; color: inherit; opacity: .72; }
+            .user .message-label { text-align: right; }
+            .message-body { font-size: 14px; max-width: 100%; overflow-x: auto; }
+            p { margin: 0 0 10px; }
+            p:last-child { margin-bottom: 0; }
+            h1, h2, h3 { margin: 14px 0 10px; line-height: 1.25; }
+            h1 { font-size: 22px; } h2 { font-size: 18px; } h3 { font-size: 16px; }
+            ul, ol { margin: 8px 0 12px 24px; padding: 0; }
+            blockquote { margin: 10px 0; padding: 8px 12px; border-left: 3px solid #0067c0; background: #f0f6fc; color: #4f4f4f; }
+            code { font-family: Consolas, "Cascadia Mono", monospace; background: rgba(19,32,51,.08); border-radius: 5px; padding: 2px 5px; }
+            pre { margin: 12px 0; padding: 12px; overflow-x: auto; background: #f6f6f6; border: 1px solid #e5e5e5; border-radius: 8px; }
+            pre code { background: transparent; padding: 0; white-space: pre; }
+            .md-scroll { max-width: 100%; overflow-x: auto; }
+            table { border-collapse: collapse; margin: 12px 0; width: auto; font-size: 13px; }
+            th, td { border: 1px solid #e5e5e5; padding: 8px 10px; text-align: left; vertical-align: top; white-space: nowrap; }
+            th { background: #f3f3f3; font-weight: 700; }
+            tr:nth-child(even) td { background: #fafafa; }
+            a { color: #0067c0; }
+        """
 
     def _create_chat_bubble(self, role: str, text: str) -> None:
         is_user = role == "user"

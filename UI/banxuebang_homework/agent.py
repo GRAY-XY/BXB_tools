@@ -339,6 +339,9 @@ class ConversationAgent:
 
         self.turns = deque(self.turns, maxlen=max(1, int(max_turns)) * 2)
 
+    def reset_conversation(self) -> None:
+        self.turns.clear()
+
     def _emit_progress(self, kind: str, summary: str, detail: str | None = None) -> None:
         if self._progress_callback is not None:
             self._progress_callback(AgentProgressEvent(kind=kind, summary=summary, detail=detail))

@@ -16,8 +16,8 @@ if (-not (Test-Path $buildAssets)) {
     New-Item -ItemType Directory -Path $buildAssets | Out-Null
 }
 
-Write-Host "Installing build dependency: PyInstaller"
-python -m pip install --disable-pip-version-check pyinstaller | Out-Host
+Write-Host "Installing Python build/runtime dependencies"
+python -m pip install --disable-pip-version-check pyinstaller ttkbootstrap tkinterweb markdown-it-py | Out-Host
 
 if (-not (Test-Path $nodeZip)) {
     Write-Host "Downloading bundled Node runtime from $nodeUrl"

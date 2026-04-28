@@ -17,6 +17,7 @@ class ModelConfig:
     api_key: str = ""
     base_url: str = ""
     model_name: str = ""
+    context_length: int = 0
 
 
 def config_path() -> Path:
@@ -33,6 +34,7 @@ def load_model_config() -> ModelConfig:
         api_key=str(payload.get("api_key", "")),
         base_url=str(payload.get("base_url", "")),
         model_name=str(payload.get("model_name", "")),
+        context_length=_safe_int(payload.get("context_length")),
     )
 
 
@@ -141,12 +143,15 @@ def test_model_connection(config: ModelConfig, *, timeout_sec: int = 15) -> dict
     models = data if isinstance(data, list) else []
     model_ids = [str(item.get("id", "")) for item in models if isinstance(item, dict)]
     model_available = model_name in model_ids
+    selected_model = next((item for item in models if isinstance(item, dict) and str(item.get("id", "")) == model_name), None)
+    context_length = extract_context_length(selected_model or {"id": model_name})
 
     return {
         "ok": model_available,
         "status_code": status_code,
         "models_url": models_url,
         "model_name": model_name,
+        "context_length": context_length,
         "model_available": model_available,
         "models_count": len(model_ids),
         "sample_models": model_ids[:20],
@@ -164,3 +169,55 @@ def _normalize_base_url(base_url: str) -> str:
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ValueError("调用链接必须是完整的 http(s):// URL。")
     return normalized
+
+
+def extract_context_length(model_payload: dict[str, Any]) -> int:
+    for key in (
+        "context_length",
+        "max_context_length",
+        "max_context_tokens",
+        "max_input_tokens",
+        "input_token_limit",
+        "max_tokens",
+    ):
+        value = _safe_int(model_payload.get(key))
+        if value > 0:
+            return value
+
+    nested = model_payload.get("limits")
+    if isinstance(nested, dict):
+        value = extract_context_length(nested)
+        if value > 0:
+            return value
+
+    return known_context_length(str(model_payload.get("id", "")))
+
+
+def known_context_length(model_name: str) -> int:
+    normalized = model_name.lower()
+    known = {
+        "gpt-4o-mini": 128000,
+        "gpt-4o": 128000,
+        "gpt-4.1": 1047576,
+        "gpt-4.1-mini": 1047576,
+        "gpt-4.1-nano": 1047576,
+        "gpt-5": 400000,
+        "gpt-5-mini": 400000,
+        "gpt-5-nano": 400000,
+        "qwen3.5-plus": 1000000,
+        "qwen-3.5-plus": 1000000,
+        "qwen3.5plus": 1000000,
+        "qwen-3.5plus": 1000000,
+        "3.5plus": 1000000,
+    }
+    for key, value in known.items():
+        if key in normalized:
+            return value
+    return 0
+
+
+def _safe_int(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
