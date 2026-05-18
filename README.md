@@ -27,20 +27,25 @@ scripts/
 README.md
 PROMPTS.md
 UI/
-desktop-client/           standalone desktop client project
+  banxuebang_flutter/     Flutter desktop app + installer scripts
+desktop-shell/            bundled bridge/runtime layer + legacy shell assets
+desktop-client/           earlier standalone desktop client project
 package.json
 ```
 
-## Desktop Shell Packaging
+## Flutter Desktop Packaging
 
-The new `desktop-shell/` macOS app can be built into a `.pkg` installer:
+当前推荐的桌面端发布入口是 `UI/banxuebang_flutter/`，它复用了现有 `src/` 与 `desktop-shell/node_bridge.js` 作为运行时层，并提供独立的 macOS / Windows 打包脚本。
+
+构建 macOS 安装包：
 
 ```bash
-chmod +x ./desktop-shell/packaging/macos/build_macos_pkg.sh
-./desktop-shell/packaging/macos/build_macos_pkg.sh
+chmod +x ./UI/banxuebang_flutter/packaging/macos/build_macos_pkg.sh
+./UI/banxuebang_flutter/packaging/macos/build_macos_pkg.sh
 ```
 
-Packaging notes live in [desktop-shell/packaging/README.md](desktop-shell/packaging/README.md).
+Flutter 打包说明见 [UI/banxuebang_flutter/packaging/README.md](UI/banxuebang_flutter/packaging/README.md)。
+旧的 `desktop-shell/packaging/` 仍保留，主要用于历史壳层方案参考。
 
 本地运行产生的会话、附件、截图和调试输出统一放在这些目录，并且默认被忽略：
 

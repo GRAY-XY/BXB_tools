@@ -99,8 +99,8 @@ def get_app_version() -> str:
     try:
         payload = json.loads(PACKAGE_JSON.read_text(encoding="utf-8"))
     except Exception:
-        return "1.0.1"
-    return str(payload.get("version") or "1.0.1")
+        return "1.0.2"
+    return str(payload.get("version") or "1.0.2")
 
 
 def now_iso() -> str:
@@ -523,6 +523,10 @@ class DesktopApi:
 
     def logout(self) -> dict:
         return self._run_bridge("logout")
+
+    def set_term(self, term_id: str) -> dict:
+        result = self._run_bridge("set-term", {"termId": term_id})
+        return self._post_process_dashboard(result)
 
     def _post_process_dashboard(
         self,

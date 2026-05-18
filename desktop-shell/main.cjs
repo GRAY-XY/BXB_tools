@@ -131,6 +131,13 @@ app.whenReady().then(() => {
       return buildDashboardPayload();
     }),
   );
+  ipcMain.handle("term:set", (_event, termId) =>
+    withErrorBoundary(async () => {
+      const api = await getClient();
+      await api.setCurrentTerm(termId);
+      return buildDashboardPayload();
+    }),
+  );
   ipcMain.handle("subject:set", (_event, subjectName) =>
     withErrorBoundary(async () => {
       const api = await getClient();

@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld("bxbApp", {
   loadDashboard: () => ipcRenderer.invoke("dashboard:load"),
   login: () => ipcRenderer.invoke("session:login"),
   logout: () => ipcRenderer.invoke("session:logout"),
+  setTerm: (termId) => ipcRenderer.invoke("term:set", termId),
   setSubject: (subjectName) => ipcRenderer.invoke("subject:set", subjectName),
   openTask: (taskId) => ipcRenderer.invoke("task:open", taskId),
   submitTask: (payload) => ipcRenderer.invoke("task:submit", payload),

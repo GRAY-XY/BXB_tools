@@ -6,7 +6,7 @@ import { createToolDefinitions } from "./tool-definitions.js";
 
 const server = new McpServer({
   name: "banxuebang-achievement-mcp",
-  version: "1.0.1",
+  version: "1.0.2",
 });
 
 const client = new BanxuebangClient(new SessionStore());

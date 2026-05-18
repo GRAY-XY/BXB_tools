@@ -1,0 +1,22 @@
+name: banxuebang_flutter
+description: Flutter desktop rewrite for the Banxuebang student shell.
+publish_to: "none"
+version: 1.0.2+1
+
+environment:
+  sdk: ^3.9.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  file_selector: ^1.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/

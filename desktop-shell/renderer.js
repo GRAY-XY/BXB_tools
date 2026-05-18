@@ -39,15 +39,21 @@ if (navigator.userAgent.includes("Mac OS X")) {
 }
 
 function createMockDashboard() {
+  const terms = [
+    { id: "term-3", name: "2026-2027上学期", status: false },
+    { id: "term-2", name: "2025-2026下学期", status: true },
+    { id: "term-1", name: "2025-2026上学期", status: false },
+  ];
   return {
     session: {
       ready: true,
       user: { name: "周田园", loginName: "igpig@example.com" },
-      currentClass: { name: "高二6班" },
-      currentTermId: "2025-2026下学期",
+      currentClass: { name: "高二6班", alias: "G12 AP3" },
+      currentTermId: "term-2",
       currentSubject: { id: "stats", name: "AP统计学" },
+      availableTerms: terms,
     },
-    terms: [{ id: "term-1", name: "2025-2026下学期", status: true }],
+    terms,
     courses: [
       { id: "citizen", name: "国际公民素养", unSubmitCount: 2 },
       { id: "stats", name: "AP统计学", unSubmitCount: 1 },
@@ -127,6 +133,7 @@ function createPyWebViewBridge() {
     login: () => window.pywebview.api.login(),
     loginWithCredentials: (username, password) => window.pywebview.api.login_with_credentials(username, password),
     logout: () => window.pywebview.api.logout(),
+    setTerm: (termId) => window.pywebview.api.set_term(termId),
     setSubject: (subjectName) => window.pywebview.api.set_subject(subjectName),
     openTask: (taskId) => window.pywebview.api.open_task(taskId),
     submitTask: (payload) => window.pywebview.api.submit_task(payload),
@@ -168,6 +175,11 @@ const mockBridge = {
   login: async () => ({ ok: true, data: createMockDashboard() }),
   loginWithCredentials: async () => ({ ok: true, data: createMockDashboard() }),
   logout: async () => ({ ok: true, data: loggedOutDashboard }),
+  setTerm: async (termId) => {
+    const dashboard = createMockDashboard();
+    dashboard.session.currentTermId = termId;
+    return { ok: true, data: dashboard };
+  },
   setSubject: async () => ({ ok: true, data: createMockDashboard() }),
   openTask: async (taskId) => ({
     ok: true,
@@ -197,11 +209,11 @@ const mockBridge = {
     ok: true,
     data: {
       appName: "BXB Student",
-      version: "1.0.1",
+      version: "1.0.2",
       platform: "Preview",
       downloadsDir: "/mock/Downloads/BXB Student",
       logsDir: "/mock/AppSupport/BXB Student/logs",
-      releaseNotesPath: "/mock/docs/releases/1.0.1.md",
+      releaseNotesPath: "/mock/docs/releases/1.0.2.md",
       agreementPath: "/mock/docs/legal/BXB_Student_User_Agreement_zh-CN.md",
       privacyPath: "/mock/docs/legal/BXB_Student_Privacy_Notice_zh-CN.md",
       releaseUrl: "https://github.com/GRAY-XY/BXB_tools/releases",
@@ -212,12 +224,12 @@ const mockBridge = {
   checkForUpdates: async () => ({
     ok: true,
     data: {
-      currentVersion: "1.0.1",
-      latestVersion: "1.0.1",
+      currentVersion: "1.0.2",
+      latestVersion: "1.0.2",
       hasUpdate: false,
-      releaseName: "BXB Student 1.0.1",
-      releaseUrl: "https://github.com/GRAY-XY/BXB_tools/releases/tag/v1.0.1",
-      publishedAt: "2026-04-27T00:00:00Z",
+      releaseName: "BXB Student 1.0.2",
+      releaseUrl: "https://github.com/GRAY-XY/BXB_tools/releases/tag/v1.0.2",
+      publishedAt: "2026-05-18T00:00:00Z",
       body: "Current build",
     },
   }),
@@ -246,6 +258,8 @@ const els = {
   loginSubmitBtn: document.querySelector("#login-submit-btn"),
   pageTitle: document.querySelector("#page-title"),
   pageSubtitle: document.querySelector("#page-subtitle"),
+  termSwitch: document.querySelector("#term-switch"),
+  termSelect: document.querySelector("#term-select"),
   navItems: [...document.querySelectorAll(".nav-item")],
   views: [...document.querySelectorAll(".content-view")],
   studentName: document.querySelector("#student-name"),
@@ -477,47 +491,90 @@ function formatDateTime(value) {
   }).format(date);
 }
 
-function normalizeTermName(summary, dashboard) {
-  return summary?.availableTerms?.find((term) => term.status)?.name || dashboard.terms?.find((term) => term.status)?.name || summary?.currentTermId || "学期未加载";
-}
+function findCurrentTerm(summary, dashboard) {
+  const terms = [...(summary?.availableTerms || []), ...(dashboard?.terms || [])];
+  const currentTermId = String(summary?.currentTermId || "");
 
-function normalizeGradeLabel(value) {
-  const text = String(value || "");
-  const gMatch = text.match(/G\s*([0-9]{1,2})/i);
-  if (gMatch?.[1]) {
-    const gradeNum = Number(gMatch[1]);
-    if (gradeNum === 10) return "高一";
-    if (gradeNum === 11) return "高二";
-    if (gradeNum === 12) return "高三";
-  }
-
-  const cnMatch = text.match(/高([一二三])|高([0-9])/);
-  if (cnMatch?.[1]) {
-    return `高${cnMatch[1]}`;
-  }
-  if (cnMatch?.[2]) {
-    const map = { 1: "一", 2: "二", 3: "三" };
-    return `高${map[Number(cnMatch[2])] || cnMatch[2]}`;
-  }
-
-  return "";
-}
-
-function extractClassLabel(summary, dashboard) {
-  const candidates = [
-    dashboard.gpa?.selectedTransferClass?.className,
-    dashboard.gpa?.selectedTransferClass?.srcClassName,
-    summary.currentClass?.name,
-  ].filter(Boolean);
-
-  for (const value of candidates) {
-    const grade = normalizeGradeLabel(value);
-    if (grade) {
-      return grade;
+  if (currentTermId) {
+    const matchedTerm =
+      terms.find((term) => String(term?.id || "") === currentTermId) ||
+      terms.find((term) => String(term?.name || term?.termName || "") === currentTermId);
+    if (matchedTerm) {
+      return matchedTerm;
     }
   }
 
-  return "未分配年级";
+  return terms.find((term) => Boolean(term?.status)) || terms[0] || null;
+}
+
+function normalizeTermName(summary, dashboard) {
+  return findCurrentTerm(summary, dashboard)?.name || summary?.currentTermId || "学期未加载";
+}
+
+function parseApClassLabel(value) {
+  const text = String(value || "").trim().toUpperCase();
+  const match = text.match(/\bG\s*([0-9]{1,2})\s*AP\s*([0-9]{1,2})\b/);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    grade: Number(match[1]),
+    ap: Number(match[2]),
+  };
+}
+
+function formatApClassLabel(parsed) {
+  if (!parsed || !Number.isFinite(parsed.grade) || !Number.isFinite(parsed.ap)) {
+    return "";
+  }
+
+  return `G${parsed.grade}ap${parsed.ap}班`;
+}
+
+function parseTermStartYear(term) {
+  const text = String(term?.name || term?.termName || "");
+  const match = text.match(/\b(20[0-9]{2})\s*-\s*20[0-9]{2}\b/);
+  return match?.[1] ? Number(match[1]) : null;
+}
+
+function extractClassLabel(summary, dashboard) {
+  const gpaCandidates = [
+    dashboard.gpa?.selectedTransferClass?.className,
+    dashboard.gpa?.selectedTransferClass?.srcClassName,
+  ].filter(Boolean);
+
+  for (const value of gpaCandidates) {
+    const parsed = parseApClassLabel(value);
+    if (parsed) {
+      return formatApClassLabel(parsed);
+    }
+  }
+
+  const alias = parseApClassLabel(summary.currentClass?.alias);
+  if (alias) {
+    const terms = [...(summary?.availableTerms || []), ...(dashboard?.terms || [])];
+    const latestYear = Math.max(...terms.map((term) => parseTermStartYear(term)).filter(Number.isFinite));
+    const currentYear = parseTermStartYear(findCurrentTerm(summary, dashboard));
+
+    if (Number.isFinite(latestYear) && Number.isFinite(currentYear)) {
+      const adjustedGrade = alias.grade - (latestYear - currentYear);
+      if (adjustedGrade > 0) {
+        return formatApClassLabel({ grade: adjustedGrade, ap: alias.ap });
+      }
+    }
+
+    return formatApClassLabel(alias);
+  }
+
+  const aliasText = String(summary.currentClass?.alias || "")
+    .replace(/\s+/g, "")
+    .replace(/AP/gi, "ap");
+  if (aliasText) {
+    return aliasText.endsWith("班") ? aliasText : `${aliasText}班`;
+  }
+
+  return summary.currentClass?.name || "未分配班级";
 }
 
 function buildCourseMap(dashboard) {
@@ -817,6 +874,35 @@ function renderUpdateInfo() {
   els.updateStatusCopy.textContent = "这台 mac 上的安装包已经和 GitHub 最新发布版本对齐。";
 }
 
+function renderTermSelector(dashboard) {
+  const summary = dashboard?.session || loggedOutDashboard.session;
+  const terms = dashboard?.terms?.length ? dashboard.terms : summary.availableTerms || [];
+
+  if (!summary.ready) {
+    els.termSelect.innerHTML = `<option value="">学期未加载</option>`;
+    els.termSelect.disabled = true;
+    return;
+  }
+
+  if (!terms.length) {
+    els.termSelect.innerHTML = `<option value="">没有可切换的学期</option>`;
+    els.termSelect.disabled = true;
+    return;
+  }
+
+  const currentTerm = findCurrentTerm(summary, dashboard);
+  const currentId = String(currentTerm?.id || "");
+  els.termSelect.innerHTML = terms
+    .map((term) => {
+      const termId = String(term?.id || "");
+      const termName = term?.name || term?.termName || "未命名学期";
+      const selected = termId === currentId ? " selected" : "";
+      return `<option value="${termId}"${selected}>${termName}</option>`;
+    })
+    .join("");
+  els.termSelect.disabled = terms.length <= 1;
+}
+
 async function ensureAppMeta() {
   if (!bridge) {
     return;
@@ -918,6 +1004,7 @@ function renderShell(summary, dashboard) {
   els.appShell.classList.toggle("is-logged-out", !ready);
   els.loginStage.classList.toggle("hidden", ready);
   els.workspace.classList.toggle("hidden", !ready);
+  els.termSwitch.classList.toggle("hidden", !ready);
   els.updateBtn.classList.remove("hidden");
   els.refreshBtn.classList.toggle("hidden", !ready);
   els.authBtn.classList.toggle("hidden", !ready);
@@ -1240,6 +1327,7 @@ function hydrate(dashboard) {
   state.registry = dashboard.registry || state.registry;
   const summary = dashboard.session || loggedOutDashboard.session;
   renderShell(summary, dashboard);
+  renderTermSelector(dashboard);
   renderAppMeta();
   if (!summary.ready) {
     return;
@@ -1265,6 +1353,39 @@ async function refreshDashboard() {
     showError(result.error, "如果问题持续，可以在设置页打开日志目录查看运行日志。");
     return;
   }
+  hydrate(result.data);
+}
+
+async function handleTermChange() {
+  if (!bridge || !state.dashboard?.session?.ready) {
+    return;
+  }
+
+  const targetTermId = String(els.termSelect.value || "");
+  if (!targetTermId) {
+    return;
+  }
+
+  const currentTerm = findCurrentTerm(state.dashboard.session, state.dashboard);
+  if (String(currentTerm?.id || "") === targetTermId) {
+    return;
+  }
+
+  els.termSelect.disabled = true;
+  setBusy(true, "切换中...");
+  const result = await bridge.setTerm(targetTermId);
+  setBusy(false);
+
+  if (!result.ok) {
+    renderTermSelector(state.dashboard);
+    showError(result.error, "学期切换失败，请稍后再试。");
+    return;
+  }
+
+  state.selectedCourseId = "all";
+  state.selectedTaskId = null;
+  state.selectedTaskDetail = null;
+  state.selectedSubmitFiles = [];
   hydrate(result.data);
 }
 
@@ -1407,6 +1528,7 @@ function bindEvents() {
   els.navItems.forEach((item) => item.addEventListener("click", () => setView(item.dataset.view)));
   els.refreshBtn.addEventListener("click", refreshDashboard);
   els.authBtn.addEventListener("click", handleAuth);
+  els.termSelect.addEventListener("change", handleTermChange);
   els.loginSubmitBtn.addEventListener("click", handleCredentialLogin);
   els.loginPassword.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {

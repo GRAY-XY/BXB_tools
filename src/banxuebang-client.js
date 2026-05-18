@@ -51,8 +51,25 @@ const VIDEO_EXTENSIONS = new Set([".avi", ".m4v", ".mov", ".mp4", ".mkv", ".webm
 const AUDIO_EXTENSIONS = new Set([".aac", ".flac", ".m4a", ".mp3", ".ogg", ".wav"]);
 
 function getAppSupportDir() {
-  return process.env.BANXUEBANG_APP_SUPPORT_DIR ||
-    path.join(os.homedir(), "Library", "Application Support", "BXB Student");
+  if (process.env.BANXUEBANG_APP_SUPPORT_DIR) {
+    return process.env.BANXUEBANG_APP_SUPPORT_DIR;
+  }
+
+  if (process.platform === "darwin") {
+    return path.join(os.homedir(), "Library", "Application Support", "BXB Student");
+  }
+
+  if (process.platform === "win32") {
+    return path.join(
+      process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"),
+      "BXB Student",
+    );
+  }
+
+  return path.join(
+    process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"),
+    "BXB Student",
+  );
 }
 
 function parseMaybeJson(value) {
@@ -488,6 +505,7 @@ export class BanxuebangClient {
         ? {
             id: currentClass.id,
             name: currentClass.className || currentClass.name || null,
+            alias: currentClass.classAlias || null,
             campusId: currentClass.campusId || null,
           }
         : null,

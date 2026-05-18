@@ -168,8 +168,15 @@ async function run(command, payload) {
     case "logout":
       await client.clearSession();
       return ok(await buildDashboardPayload());
+    case "set-term":
+      await client.setCurrentTerm(payload.termId);
+      return ok(await buildDashboardPayload());
     case "set-subject":
-      await client.setCurrentSubjectByName(payload.subjectName);
+      if (payload.subjectId) {
+        await client.setCurrentSubject(payload.subjectId, payload.classId);
+      } else {
+        await client.setCurrentSubjectByName(payload.subjectName, payload.classId);
+      }
       return ok(await buildDashboardPayload());
     case "open-task":
       return ok(await client.getTaskDetail(payload.taskId, { includeOtherSubmissions: false }));

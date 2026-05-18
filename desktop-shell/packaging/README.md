@@ -1,5 +1,7 @@
 # Desktop Shell Packaging
 
+> Note: the current end-user release flow now lives under `UI/banxuebang_flutter/packaging/`. This document is kept for the earlier shell-only packaging path.
+
 ## macOS `.pkg`
 
 Build the packaged desktop shell app and installer on macOS:

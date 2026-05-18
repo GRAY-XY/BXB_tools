@@ -12,14 +12,25 @@ python_meets_requirement() {
   "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1
 }
 
+python_supports_tkinter() {
+  local candidate="$1"
+  "$candidate" -c 'import tkinter' >/dev/null 2>&1
+}
+
 find_python() {
-  for candidate in \
-    "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3" \
-    "/opt/homebrew/bin/python3" \
-    "/usr/local/bin/python3" \
+  local candidates=()
+  local candidate
+  shopt -s nullglob
+  candidates+=("/Library/Frameworks/Python.framework/Versions/"*/bin/python3)
+  shopt -u nullglob
+  candidates+=(
+    "/usr/local/bin/python3"
+    "/opt/homebrew/bin/python3"
     "$(command -v python3 2>/dev/null || true)"
-  do
-    if [ -n "${candidate:-}" ] && [ -x "$candidate" ] && python_meets_requirement "$candidate"; then
+  )
+
+  for candidate in "${candidates[@]}"; do
+    if [ -n "${candidate:-}" ] && [ -x "$candidate" ] && python_meets_requirement "$candidate" && python_supports_tkinter "$candidate"; then
       echo "$candidate"
       return 0
     fi
@@ -28,10 +39,44 @@ find_python() {
   return 1
 }
 
+find_python_launcher() {
+  local python_bin="$1"
+  local version=""
+  local launcher_path=""
+  local candidate
+
+  version="$("$python_bin" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || true)"
+  if [ -n "$version" ]; then
+    launcher_path="/Applications/Python $version/Python Launcher.app"
+    if [ -d "$launcher_path" ]; then
+      echo "$launcher_path"
+      return 0
+    fi
+  fi
+
+  shopt -s nullglob
+  for candidate in /Applications/Python*/Python\ Launcher.app; do
+    if [ -d "$candidate" ]; then
+      echo "$candidate"
+      shopt -u nullglob
+      return 0
+    fi
+  done
+  shopt -u nullglob
+
+  return 1
+}
+
 launch_gui() {
   local python_bin="$1"
+  local launcher_app=""
   export BXB_RUNTIME_BOOTSTRAPPED=1
-  nohup "$python_bin" "$PROJECT_ROOT/banxuebang_gui.py" >>"$GUI_LOG" 2>&1 < /dev/null &
+  launcher_app="$(find_python_launcher "$python_bin" || true)"
+  if [ -n "$launcher_app" ]; then
+    open -a "$launcher_app" "$PROJECT_ROOT/banxuebang_gui.py"
+  else
+    nohup "$python_bin" "$PROJECT_ROOT/banxuebang_gui.py" >>"$GUI_LOG" 2>&1 < /dev/null &
+  fi
 }
 
 PYTHON_BIN="$(find_python || true)"
