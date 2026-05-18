@@ -1,0 +1,68 @@
+name: Build macOS Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag to build and upload
+        required: true
+        default: v1.0.2
+
+permissions:
+  contents: write
+
+jobs:
+  macos-package:
+    runs-on: macos-14
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag }}
+          fetch-depth: 0
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Enable Flutter macOS desktop
+        working-directory: UI/banxuebang_flutter
+        run: flutter config --enable-macos-desktop
+
+      - name: Build macOS package
+        run: |
+          chmod +x ./UI/banxuebang_flutter/packaging/macos/build_macos_pkg.sh
+          ./UI/banxuebang_flutter/packaging/macos/build_macos_pkg.sh
+
+      - name: Resolve package path
+        id: pkg
+        shell: bash
+        run: |
+          pkg_path="$(ls -1 dist/banxuebang-flutter-release-*/BXB_Student_macOS_v*.pkg | head -n 1)"
+          echo "pkg_path=$pkg_path" >> "$GITHUB_OUTPUT"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BXB_Student_macOS_Package
+          path: ${{ steps.pkg.outputs.pkg_path }}
+
+      - name: Attach package to GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ inputs.release_tag }}" "${{ steps.pkg.outputs.pkg_path }}" --clobber
