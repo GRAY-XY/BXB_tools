@@ -19,6 +19,9 @@ const quickPrompts = [
   "查看当前课程GPA",
 ];
 
+const fallbackSystemPrompt =
+  "你是伴学邦桌面助手。需要真实数据时必须调用工具，不要猜测。不要上传、提交或删除任何内容。处理作业草稿时先调用 collect_task_submission_context；信息不足就说明缺什么；信息足够才调用 draft_task_submission 保存草稿等待用户审核。";
+
 function md(text) {
   return { __html: marked.parse(text || "", { breaks: true, gfm: true }) };
 }
@@ -27,11 +30,71 @@ function JsonBlock({ data }) {
   return <pre className="json-block">{JSON.stringify(data, null, 2)}</pre>;
 }
 
+function getTermId(term) {
+  return term?.id || term?.term_id || term?.termId;
+}
+
+function getTermName(term) {
+  return term?.name || term?.termName || term?.title;
+}
+
+function SessionSummary({ session }) {
+  if (!session?.ready) {
+    return (
+      <div className="session-summary empty">
+        <strong>当前未登录</strong>
+        <span>请先点击“浏览器登录”，登录后这里会显示账户、班级、学期和课程信息。</span>
+      </div>
+    );
+  }
+
+  const activeTerm = session.availableTerms?.find((term) => term.status) || session.availableTerms?.find((term) => term.id === session.currentTermId);
+  const courseCount = Array.isArray(session.availableSubjects) ? session.availableSubjects.length : 0;
+  const pendingCount = session.currentSubject?.unSubmitCount;
+
+  return (
+    <div className="session-summary">
+      <div className="summary-main">
+        <div>
+          <span>当前账户姓名</span>
+          <strong>{session.user?.name || "已登录"}</strong>
+        </div>
+        <div>
+          <span>当前课程</span>
+          <strong>{session.currentSubject?.name || "暂无课程"}</strong>
+        </div>
+      </div>
+      <div className="summary-list">
+        <div>
+          <span>当前班级</span>
+          <strong>{session.currentClass?.name || "未识别"}</strong>
+        </div>
+        <div>
+          <span>当前学期</span>
+          <strong>{activeTerm?.name || "未识别"}</strong>
+        </div>
+        <div>
+          <span>可切换课程</span>
+          <strong>{courseCount ? `${courseCount} 门` : "暂无数据"}</strong>
+        </div>
+        <div>
+          <span>当前课程未交</span>
+          <strong>{pendingCount === undefined || pendingCount === null ? "暂无数据" : `${pendingCount} 项`}</strong>
+        </div>
+      </div>
+      <p>为了安全，这里不会显示登录令牌、会话文件路径、邮箱或其他技术字段。</p>
+    </div>
+  );
+}
+
 function App() {
   const [page, setPage] = useState("home");
   const [theme, setTheme] = useState(() => localStorage.getItem("bxb-theme") || "light");
   const [status, setStatus] = useState("Ready");
   const [session, setSession] = useState(null);
+  const [terms, setTerms] = useState([]);
+  const [courses, setCourses] = useState([]);
+  const [sessionMenuOpen, setSessionMenuOpen] = useState(false);
   const [appInfo, setAppInfo] = useState(null);
   const [messages, setMessages] = useState([]);
   const [steps, setSteps] = useState([]);
@@ -51,6 +114,8 @@ function App() {
     contextLength: 0,
     maxToolRounds: 6,
     maxMemoryTurns: 6,
+    systemPrompt: fallbackSystemPrompt,
+    defaultSystemPrompt: fallbackSystemPrompt,
   });
   const [modelResult, setModelResult] = useState(null);
   const chatEndRef = useRef(null);
@@ -132,6 +197,69 @@ function App() {
   async function browserLogin() {
     await callTool("login_in_browser", {});
     await refreshSession();
+  }
+
+  async function toggleSessionMenu() {
+    if (!session?.ready) {
+      setStatus("请先登录后再切换学期或课程");
+      return;
+    }
+    const nextOpen = !sessionMenuOpen;
+    setSessionMenuOpen(nextOpen);
+    if (nextOpen) {
+      await loadSessionChoices();
+    }
+  }
+
+  async function loadSessionChoices() {
+    const [termResult, courseResult] = await Promise.all([
+      callTool("list_terms", {}),
+      callTool("list_courses", {}),
+    ]);
+    const termRows = termResult?.terms || termResult?.items || termResult?.records || session?.availableTerms || [];
+    const courseRows = courseResult?.courses || courseResult?.items || courseResult?.records || session?.availableSubjects || [];
+    setTerms(Array.isArray(termRows) ? termRows : []);
+    setCourses(Array.isArray(courseRows) ? courseRows : []);
+  }
+
+  async function switchTerm(term) {
+    const termName = getTermName(term);
+    const termId = getTermId(term);
+    if (!termName && !termId) {
+      setStatus("无法识别学期名称或 ID");
+      return;
+    }
+    await callTool("set_current_term", termName ? { term_name: termName } : { term_id: termId });
+    const nextSession = await window.bxb.getSession();
+    setSession(nextSession);
+    const [termResult, courseResult] = await Promise.all([
+      callTool("list_terms", {}),
+      callTool("list_courses", {}),
+    ]);
+    const termRows = termResult?.terms || termResult?.items || termResult?.records || nextSession?.availableTerms || [];
+    const courseRows = courseResult?.courses || courseResult?.items || courseResult?.records || nextSession?.availableSubjects || [];
+    const currentTermId = nextSession?.currentTermId;
+    const currentTermName = nextSession?.currentTermName || nextSession?.availableTerms?.find((item) => item?.id === currentTermId)?.name;
+    setTerms(Array.isArray(termRows) ? termRows.map((item) => ({
+      ...item,
+      status: currentTermId ? getTermId(item) === currentTermId : getTermName(item) === currentTermName,
+    })) : []);
+    setCourses(Array.isArray(courseRows) ? courseRows : []);
+    setStatus(`已切换学期：${termName || termId}`);
+  }
+
+  async function switchCourse(course) {
+    const subjectName = course?.name || course?.subjectName || course?.courseName || course?.title;
+    const subjectId = course?.subject_id || course?.subjectId || course?.id;
+    const classId = course?.class_id || course?.classId;
+    if (!subjectName && !subjectId) {
+      setStatus("无法识别课程名称或 ID");
+      return;
+    }
+    setSessionMenuOpen(false);
+    await callTool("set_current_subject", subjectName ? { subject_name: subjectName, class_id: classId } : { subject_id: subjectId, class_id: classId });
+    await refreshSession();
+    setStatus(`已切换课程：${subjectName || subjectId}`);
   }
 
   async function loadTasks(listType = "all") {
@@ -216,6 +344,14 @@ function App() {
     setStatus("模型配置已清除");
   }
 
+  function restoreDefaultPrompt() {
+    setModelConfig((current) => ({
+      ...current,
+      systemPrompt: current.defaultSystemPrompt || fallbackSystemPrompt,
+    }));
+    setStatus("已恢复默认提示词，点击保存设置后生效");
+  }
+
   async function testConfig() {
     try {
       const result = await window.bxb.testModelConfig(modelConfig);
@@ -244,10 +380,54 @@ function App() {
             </button>
           ))}
         </nav>
-        <div className="sidebar-card">
-          <div className="eyebrow">Session</div>
-          <strong>{session?.ready ? session?.user?.name || "已登录" : "未登录"}</strong>
-          <span>{session?.currentSubject?.name || "暂无课程"}</span>
+        <div className="session-switcher">
+          {sessionMenuOpen && (
+            <div className="session-menu">
+              <div className="session-menu-section">
+                <div className="session-menu-title">切换学期</div>
+                {terms.length === 0 ? (
+                  <div className="session-empty">暂无学期数据</div>
+                ) : (
+                  terms.map((term, index) => {
+                    const name = getTermName(term) || `学期 ${index + 1}`;
+                    const id = getTermId(term);
+                    const currentTermId = session?.currentTermId;
+                    const currentTermName = session?.currentTermName || session?.availableTerms?.find((item) => getTermId(item) === currentTermId)?.name;
+                    const active = currentTermId ? id === currentTermId : name === currentTermName;
+                    return (
+                      <button key={`${id || name}-${index}`} className={active ? "session-menu-item active" : "session-menu-item"} onClick={() => switchTerm(term)}>
+                        <span>{name}</span>
+                        {active && <b>当前</b>}
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+              <div className="session-menu-section">
+                <div className="session-menu-title">切换课程</div>
+                {courses.length === 0 ? (
+                  <div className="session-empty">暂无课程数据</div>
+                ) : (
+                  courses.map((course, index) => {
+                    const name = course?.name || course?.subjectName || course?.courseName || course?.title || `课程 ${index + 1}`;
+                    const id = course?.id || course?.subject_id || course?.subjectId;
+                    const active = name === session?.currentSubject?.name || id === session?.currentSubject?.id;
+                    return (
+                      <button key={`${id || name}-${index}`} className={active ? "session-menu-item active" : "session-menu-item"} onClick={() => switchCourse(course)}>
+                        <span>{name}</span>
+                        {active && <b>当前</b>}
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          )}
+          <button className={sessionMenuOpen ? "sidebar-card open" : "sidebar-card"} onClick={toggleSessionMenu}>
+            <div className="eyebrow">Session</div>
+            <strong>{session?.ready ? session?.user?.name || "已登录" : "未登录"}</strong>
+            <span>{session?.currentSubject?.name || "暂无课程"}</span>
+          </button>
         </div>
       </aside>
 
@@ -269,7 +449,7 @@ function App() {
               </div>
               <div className="card">
                 <h2>当前会话</h2>
-                <JsonBlock data={session || {}} />
+                <SessionSummary session={session} />
               </div>
             </div>
           </section>
@@ -411,8 +591,16 @@ function App() {
               </label>
               <label>最大工具轮次<input value={modelConfig.maxToolRounds || 6} onChange={(event) => setModelConfig({ ...modelConfig, maxToolRounds: event.target.value })} /></label>
               <label>记忆对话轮数<input value={modelConfig.maxMemoryTurns || 6} onChange={(event) => setModelConfig({ ...modelConfig, maxMemoryTurns: event.target.value })} /></label>
+              <label>AI 系统提示词
+                <textarea
+                  value={modelConfig.systemPrompt || ""}
+                  onChange={(event) => setModelConfig({ ...modelConfig, systemPrompt: event.target.value })}
+                  rows={7}
+                />
+              </label>
               <div className="toolbar">
                 <button className="primary" onClick={saveConfig}>保存设置</button>
+                <button onClick={restoreDefaultPrompt}>恢复默认提示词</button>
                 <button onClick={() => window.open("https://github.com/GRAY-XY/BXB_tools")}>打开 GitHub</button>
               </div>
               <JsonBlock data={appInfo || {}} />

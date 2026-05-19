@@ -113,6 +113,7 @@ npm run tool:direct -- session_status
 
 如果你需要给上层模型一套更稳定的调用提示词，可直接参考 [PROMPTS.md](./PROMPTS.md)。
 如果你想查看从 `client` 分支拆出的独立 UI 壳层，可直接参考 [UI/README.md](./UI/README.md)。
+如果你要开发桌面前端，请先阅读 [前端接口文档](./docs/frontend-api.md) 和 [前端需求文档](./docs/frontend-requirements.md)。
 
 ## Login Flow
 

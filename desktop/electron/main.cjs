@@ -11,6 +11,8 @@ const payloadRoot = isDev ? repoRoot : path.join(process.resourcesPath, "payload
 const userDataRoot = app.getPath("userData");
 const dataRoot = path.join(userDataRoot, ".banxuebang");
 const modelConfigPath = path.join(userDataRoot, "model-config.json");
+const DEFAULT_SYSTEM_PROMPT =
+  "你是伴学邦桌面助手。需要真实数据时必须调用工具，不要猜测。不要上传、提交或删除任何内容。处理作业草稿时先调用 collect_task_submission_context；信息不足就说明缺什么；信息足够才调用 draft_task_submission 保存草稿等待用户审核。";
 
 let mainWindow = null;
 let toolRuntimePromise = null;
@@ -186,9 +188,13 @@ async function loadModelConfig() {
     contextLength: 0,
     maxToolRounds: 6,
     maxMemoryTurns: 6,
+    systemPrompt: DEFAULT_SYSTEM_PROMPT,
   });
   return {
+    systemPrompt: DEFAULT_SYSTEM_PROMPT,
     ...config,
+    systemPrompt: String(config.systemPrompt || "").trim() || DEFAULT_SYSTEM_PROMPT,
+    defaultSystemPrompt: DEFAULT_SYSTEM_PROMPT,
     apiKeyMasked: maskKey(config.apiKey),
     configPath: modelConfigPath,
   };
@@ -202,6 +208,7 @@ async function saveModelConfig(config) {
     contextLength: Number.parseInt(config?.contextLength || 0, 10) || 0,
     maxToolRounds: Math.max(1, Number.parseInt(config?.maxToolRounds || 6, 10) || 6),
     maxMemoryTurns: Math.max(1, Number.parseInt(config?.maxMemoryTurns || 6, 10) || 6),
+    systemPrompt: String(config?.systemPrompt || "").trim() || DEFAULT_SYSTEM_PROMPT,
   };
   await writeJson(modelConfigPath, normalized);
   return loadModelConfig();
@@ -353,8 +360,7 @@ async function runAgent({ text, requestId }) {
   const messages = [
     {
       role: "system",
-      content:
-        "你是伴学邦桌面助手。需要真实数据时必须调用工具，不要猜测。不要上传、提交或删除任何内容。处理作业草稿时先调用 collect_task_submission_context；信息不足就说明缺什么；信息足够才调用 draft_task_submission 保存草稿等待用户审核。",
+      content: String(config.systemPrompt || "").trim() || DEFAULT_SYSTEM_PROMPT,
     },
     ...turns.slice(-(maxMemoryTurns * 2)),
     { role: "user", content: text },
@@ -418,6 +424,7 @@ async function runAgent({ text, requestId }) {
 }
 
 function createWindow() {
+  app.applicationMenu = null;
   mainWindow = new BrowserWindow({
     width: 1480,
     height: 920,
@@ -431,6 +438,8 @@ function createWindow() {
       nodeIntegration: false,
     },
   });
+  mainWindow.setMenu(null);
+  mainWindow.setAutoHideMenuBar(true);
 
   if (isDev) {
     mainWindow.loadURL("http://127.0.0.1:5173");
