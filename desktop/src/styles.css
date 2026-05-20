@@ -1324,6 +1324,13 @@ footer {
   min-height: 0;
 }
 
+.draft-side {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
 .draft-list,
 .draft-preview-card {
   min-height: 0;
@@ -1331,6 +1338,7 @@ footer {
 }
 
 .draft-list {
+  flex: 1;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -1338,6 +1346,61 @@ footer {
 
 .draft-list h2 {
   margin: 0 0 6px;
+}
+
+.draft-create-card {
+  flex: 0 0 auto;
+}
+
+.draft-create-only {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: start center;
+  overflow: auto;
+}
+
+.draft-create-only .draft-create-card {
+  width: min(780px, 100%);
+}
+
+.draft-create-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.draft-create-head h2 {
+  margin: 0;
+}
+
+.draft-create-head-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.draft-create-head button,
+.draft-create-actions button {
+  min-height: 34px;
+  padding: 5px 10px;
+  white-space: nowrap;
+}
+
+.draft-create-text {
+  min-height: 130px;
+  max-height: 260px;
+}
+
+.draft-create-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.draft-create-hint {
+  color: #606060;
+  font-size: 12px;
 }
 
 .draft-list-item {
@@ -1634,6 +1697,90 @@ tbody tr:hover {
   font-weight: 650;
 }
 
+.settings-layout {
+  display: grid;
+  grid-template-columns: minmax(340px, 0.9fr) minmax(0, 1.1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.settings-card-wide {
+  grid-column: 1 / -1;
+}
+
+.update-card {
+  display: grid;
+  gap: 14px;
+}
+
+.update-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.update-head h2 {
+  margin: 0 0 4px;
+}
+
+.update-head p {
+  margin: 0;
+  color: #606060;
+}
+
+.update-version {
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: #e5f1fb;
+  color: #005a9e;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.update-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.update-facts > div {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #eeeeee;
+  border-radius: 8px;
+  background: #fafafa;
+}
+
+.update-facts span,
+.update-result span {
+  display: block;
+  color: #606060;
+  font-size: 12px;
+}
+
+.update-facts strong {
+  display: block;
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.update-result {
+  display: grid;
+  gap: 5px;
+  padding: 11px;
+  border: 1px solid #eeeeee;
+  border-radius: 8px;
+  background: #fafafa;
+}
+
+.update-result.available {
+  border-color: rgba(16, 124, 16, 0.24);
+  background: rgba(16, 124, 16, 0.08);
+}
+
 .model-picker {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -1703,6 +1850,8 @@ tbody tr:hover {
 :root[data-theme="dark"] .draft-facts > div,
 :root[data-theme="dark"] .draft-alert,
 :root[data-theme="dark"] .draft-evidence,
+:root[data-theme="dark"] .update-facts > div,
+:root[data-theme="dark"] .update-result,
 :root[data-theme="dark"] .message.assistant,
 :root[data-theme="dark"] .summary-main > div,
 :root[data-theme="dark"] .summary-list > div {
@@ -1746,7 +1895,11 @@ tbody tr:hover {
 :root[data-theme="dark"] .draft-alert span,
 :root[data-theme="dark"] .draft-evidence span,
 :root[data-theme="dark"] .draft-edit-hint,
+:root[data-theme="dark"] .draft-create-hint,
 :root[data-theme="dark"] .draft-empty,
+:root[data-theme="dark"] .update-head p,
+:root[data-theme="dark"] .update-facts span,
+:root[data-theme="dark"] .update-result span,
 :root[data-theme="dark"] .muted,
 :root[data-theme="dark"] .session-menu-title,
 :root[data-theme="dark"] .card p,
@@ -1845,4 +1998,9 @@ tbody tr:hover {
 
 :root[data-theme="dark"] .context-meter div {
   background: #3a3a3a;
+}
+
+:root[data-theme="dark"] .update-version {
+  background: #17324d;
+  color: #8fc7ff;
 }

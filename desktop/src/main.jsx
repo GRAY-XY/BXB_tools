@@ -9,8 +9,7 @@ const pages = [
   ["homework", "作业"],
   ["workspace", "工作区"],
   ["messages", "私信"],
-  ["review", "审核"],
-  ["model", "模型"],
+  ["drafts", "草稿"],
   ["settings", "设置"],
 ];
 
@@ -323,6 +322,27 @@ function isAllCourses(course) {
   return Boolean(course?.allSubjects || id === "__all_courses__" || name === allCoursesName);
 }
 
+function getCourseId(course) {
+  return course?.id || course?.subject_id || course?.subjectId;
+}
+
+function getCourseName(course) {
+  return course?.name || course?.subjectName || course?.courseName || course?.title;
+}
+
+function getCourseClassId(course) {
+  return course?.classId || course?.class_id;
+}
+
+function getCourseOptionKey(course, index = 0) {
+  return [
+    getCourseId(course) || "",
+    getCourseClassId(course) || "",
+    getCourseName(course) || "",
+    index,
+  ].join("::");
+}
+
 function SessionSummary({ session }) {
   if (!session?.ready) {
     return (
@@ -533,6 +553,14 @@ function App() {
   const [draftStatusFilter, setDraftStatusFilter] = useState("pending_review");
   const [draftEditText, setDraftEditText] = useState("");
   const [draftSaving, setDraftSaving] = useState(false);
+  const [draftCreateCourses, setDraftCreateCourses] = useState([]);
+  const [draftCreateCourseKey, setDraftCreateCourseKey] = useState("");
+  const [draftCreateTasks, setDraftCreateTasks] = useState([]);
+  const [draftCreateTaskId, setDraftCreateTaskId] = useState("");
+  const [draftCreateSummary, setDraftCreateSummary] = useState("");
+  const [draftCreateText, setDraftCreateText] = useState("");
+  const [draftCreateLoading, setDraftCreateLoading] = useState(false);
+  const [draftCreateOpen, setDraftCreateOpen] = useState(false);
   const [modelConfig, setModelConfig] = useState({
     apiKey: "",
     baseUrl: "",
@@ -545,6 +573,8 @@ function App() {
   const [modelResult, setModelResult] = useState(null);
   const [modelOptions, setModelOptions] = useState([]);
   const [modelOptionsLoading, setModelOptionsLoading] = useState(false);
+  const [updateResult, setUpdateResult] = useState(null);
+  const [updateLoading, setUpdateLoading] = useState(false);
   const chatEndRef = useRef(null);
   const stepsEndRef = useRef(null);
 
@@ -632,6 +662,14 @@ function App() {
   const contextMax = Number(modelConfig.contextLength || 0) || 1000000;
   const contextPercent = Math.min(100, Math.round((contextUsed / contextMax) * 100));
   const draftDirty = Boolean(selectedDraft && draftEditText !== (selectedDraft.draftText || ""));
+  const draftCreateCourse = useMemo(
+    () => draftCreateCourses.find((course, index) => getCourseOptionKey(course, index) === draftCreateCourseKey) || null,
+    [draftCreateCourses, draftCreateCourseKey],
+  );
+  const draftCreateTask = useMemo(
+    () => draftCreateTasks.find((task) => String(getTaskId(task) || "") === draftCreateTaskId) || null,
+    [draftCreateTasks, draftCreateTaskId],
+  );
 
   async function refreshSession() {
     try {
@@ -897,11 +935,148 @@ function App() {
     }
   }
 
+  async function loadDraftCreateTasks(course = draftCreateCourse, options = {}) {
+    if (!course) {
+      setDraftCreateTasks([]);
+      setDraftCreateTaskId("");
+      return;
+    }
+
+    if (!options.keepLoading) {
+      setDraftCreateLoading(true);
+    }
+
+    try {
+      const subjectName = getCourseName(course);
+      const subjectId = getCourseId(course);
+      const classId = getCourseClassId(course);
+      const args = {
+        list_type: "all",
+        page: 1,
+        size: 100,
+      };
+
+      if (subjectName) {
+        args.subject_name = subjectName;
+      } else if (subjectId) {
+        args.subject_id = subjectId;
+      }
+      if (classId) {
+        args.class_id = classId;
+      }
+
+      const result = await callTool("list_tasks", args);
+      const rows = extractTaskRows(result).filter((task) => getTaskId(task));
+      setDraftCreateTasks(rows);
+      setDraftCreateTaskId(rows.length ? String(getTaskId(rows[0]) || "") : "");
+      await refreshSession();
+      setStatus(rows.length ? `已加载 ${rows.length} 个 task` : "这个课程暂无 task");
+    } finally {
+      if (!options.keepLoading) {
+        setDraftCreateLoading(false);
+      }
+    }
+  }
+
+  async function loadDraftCreateCourses() {
+    setDraftCreateLoading(true);
+    try {
+      const result = await callTool("list_courses", {});
+      const rows = result?.courses || result?.items || result?.records || session?.availableSubjects || [];
+      const nextCourses = Array.isArray(rows) ? rows.filter((course) => !isAllCourses(course)) : [];
+      setDraftCreateCourses(nextCourses);
+
+      const currentCourse = nextCourses.find((course, index) => getCourseOptionKey(course, index) === draftCreateCourseKey);
+      const nextCourse = currentCourse || nextCourses[0] || null;
+      const nextIndex = nextCourse ? nextCourses.indexOf(nextCourse) : -1;
+      const nextKey = nextCourse ? getCourseOptionKey(nextCourse, nextIndex) : "";
+      setDraftCreateCourseKey(nextKey);
+      setDraftCreateTasks([]);
+      setDraftCreateTaskId("");
+
+      if (nextCourse) {
+        await loadDraftCreateTasks(nextCourse, { keepLoading: true });
+      } else {
+        setStatus("暂无可创建草稿的课程");
+      }
+    } finally {
+      setDraftCreateLoading(false);
+    }
+  }
+
+  async function handleDraftCreateCourseChange(nextKey) {
+    setDraftCreateCourseKey(nextKey);
+    setDraftCreateTasks([]);
+    setDraftCreateTaskId("");
+    const nextCourse = draftCreateCourses.find((course, index) => getCourseOptionKey(course, index) === nextKey);
+    if (nextCourse) {
+      await loadDraftCreateTasks(nextCourse);
+    }
+  }
+
+  async function openDraftCreator() {
+    setDraftCreateOpen(true);
+    try {
+      if (!draftCreateCourses.length) {
+        await loadDraftCreateCourses();
+      }
+    } catch (error) {
+      setStatus(error.message);
+    }
+  }
+
+  function closeDraftCreator() {
+    setDraftCreateOpen(false);
+  }
+
+  async function createManualDraft() {
+    const draftText = draftCreateText.trim();
+    if (!draftCreateCourse) {
+      setStatus("请先选择课程");
+      return;
+    }
+    if (!draftCreateTask) {
+      setStatus("请先选择 task");
+      return;
+    }
+    if (!draftText) {
+      setStatus("请先填写草稿正文");
+      return;
+    }
+
+    setDraftCreateLoading(true);
+    try {
+      const result = await callTool("draft_task_submission", {
+        task_id: String(getTaskId(draftCreateTask)),
+        subject_name: getCourseName(draftCreateCourse) || "",
+        task_title: getTaskTitle(draftCreateTask),
+        draft_text: draftText,
+        summary: draftCreateSummary.trim() || "用户手动创建草稿",
+        evidence: [],
+        warnings: [],
+        missing_info: [],
+        needs_user_input: false,
+      });
+      const createdDraft = result?.draft || result;
+      const createdDraftId = createdDraft?.draftId || result?.draftId;
+      setDraftCreateSummary("");
+      setDraftCreateText("");
+      setDraftCreateOpen(false);
+      await loadDrafts("pending_review");
+      if (createdDraftId) {
+        await openDraft(createdDraftId);
+      }
+      setStatus("草稿已创建，状态为待审核");
+    } finally {
+      setDraftCreateLoading(false);
+    }
+  }
+
   async function loadDrafts(statusFilter = "pending_review") {
     setDraftStatusFilter(statusFilter);
     const result = await callTool("list_submission_drafts", { status: statusFilter });
     setDrafts(result?.drafts || []);
-    setPage("review");
+    setPage("drafts");
   }
 
   async function openDraft(draftId) {
@@ -1108,16 +1283,58 @@ function App() {
       const result = await window.bxb.listModelOptions(modelConfig);
       const ids = Array.isArray(result?.modelIds) ? result.modelIds : [];
       setModelOptions(ids);
-      setModelResult(result);
+      setModelResult(null);
       if (!modelConfig.modelName && ids.length) {
         setModelConfig((current) => ({ ...current, modelName: ids[0] }));
       }
       setStatus(result.message || `已读取 ${ids.length} 个模型`);
     } catch (error) {
-      setModelResult({ ok: false, message: error.message });
       setStatus(error.message);
     } finally {
       setModelOptionsLoading(false);
+    }
+  }
+
+  async function checkUpdates() {
+    setUpdateLoading(true);
+    try {
+      const result = await window.bxb.checkForUpdates();
+      setUpdateResult(result);
+      setStatus(result.message || (result.hasUpdate ? "发现新版本" : "已是最新版本"));
+    } catch (error) {
+      const fallback = {
+        ok: false,
+        message: error.message,
+        releasesUrl: "https://github.com/GRAY-XY/BXB_tools/releases",
+      };
+      setUpdateResult(fallback);
+      setStatus(error.message);
+    } finally {
+      setUpdateLoading(false);
+    }
+  }
+
+  async function openUpdateLink(url) {
+    try {
+      await window.bxb.openUpdateUrl(url || updateResult?.releasesUrl || "https://github.com/GRAY-XY/BXB_tools/releases");
+      setStatus("已打开更新链接");
+    } catch (error) {
+      setStatus(error.message);
+    }
+  }
+
+  async function openPage(key) {
+    setPage(key);
+    if (key !== "drafts") {
+      return;
+    }
+
+    try {
+      if (!drafts.length) {
+        await loadDrafts(draftStatusFilter);
+      }
+    } catch (error) {
+      setStatus(error.message);
     }
   }
 
@@ -1133,7 +1350,7 @@ function App() {
         </div>
         <nav>
           {pages.map(([key, label]) => (
-            <button key={key} className={page === key ? "nav active" : "nav"} onClick={() => setPage(key)}>
+            <button key={key} className={page === key ? "nav active" : "nav"} onClick={() => openPage(key)}>
               {label}
             </button>
           ))}
@@ -1495,10 +1712,11 @@ function App() {
           </section>
         )}
 
-        {page === "review" && (
+        {page === "drafts" && (
           <section className="review-page">
-            <PageTitle title="草稿审核" subtitle="这里只审核本地草稿，不做上传提交。" />
+            <PageTitle title="草稿" subtitle="创建、查看和审核本地草稿；这里只保存本地内容，不做上传提交。" />
             <div className="card toolbar">
+              <button className="primary" onClick={openDraftCreator}>新建草稿</button>
               <button className="primary" onClick={() => loadDrafts("pending_review")}>刷新待审核</button>
               <button onClick={() => loadDrafts("all")}>全部草稿</button>
               <button onClick={saveDraftEdits} disabled={!draftDirty || draftSaving || !draftEditText.trim()}>
@@ -1508,30 +1726,113 @@ function App() {
               <button onClick={rejectDraft} disabled={!selectedDraft}>驳回</button>
               <button className="danger" onClick={deleteDraft} disabled={!selectedDraft}>删除草稿</button>
             </div>
-            <div className="review-layout">
-              <div className="card draft-list">
-                <h2>草稿列表</h2>
-                {!drafts.length && <div className="session-empty">暂无草稿。可以先让助手生成作业草稿，再回到这里审核。</div>}
-                {drafts.map((draft) => (
-                  <button
-                    key={draft.draftId}
-                    className={selectedDraft?.draftId === draft.draftId ? "draft-list-item active" : "draft-list-item"}
-                    onClick={() => openDraft(draft.draftId)}
-                  >
-                    <span className={`draft-status ${draftStatusClass(draft.status)}`}>{formatDraftStatus(draft.status)}</span>
-                    <strong>{draftTitle(draft)}</strong>
-                    <small>{draft.subjectName || "未知课程"} · {formatMessageTime(draft.updatedAt) || "无更新时间"}</small>
-                    {(draft.missingInfoCount > 0 || draft.warningCount > 0 || draft.needsUserInput) && (
-                      <em>
-                        {draft.needsUserInput ? "需要补充信息" : ""}
-                        {draft.missingInfoCount > 0 ? ` · 缺少 ${draft.missingInfoCount} 项` : ""}
-                        {draft.warningCount > 0 ? ` · 注意 ${draft.warningCount} 项` : ""}
-                      </em>
-                    )}
-                  </button>
-                ))}
+            {draftCreateOpen ? (
+              <div className="draft-create-only">
+                <div className="card draft-create-card form">
+                  <div className="draft-create-head">
+                    <h2>创建草稿</h2>
+                    <div className="draft-create-head-actions">
+                      <button type="button" onClick={loadDraftCreateCourses} disabled={draftCreateLoading}>
+                        {draftCreateLoading ? "加载中" : "刷新课程"}
+                      </button>
+                      <button type="button" onClick={closeDraftCreator} disabled={draftCreateLoading}>取消</button>
+                    </div>
+                  </div>
+                  <label>课程
+                    <select
+                      value={draftCreateCourseKey}
+                      onChange={(event) => handleDraftCreateCourseChange(event.target.value)}
+                      disabled={draftCreateLoading}
+                    >
+                      <option value="">选择课程</option>
+                      {draftCreateCourses.map((course, index) => {
+                        const key = getCourseOptionKey(course, index);
+                        return (
+                          <option key={key} value={key}>
+                            {getCourseName(course) || `课程 ${index + 1}`}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </label>
+                  <label>Task
+                    <select
+                      value={draftCreateTaskId}
+                      onChange={(event) => setDraftCreateTaskId(event.target.value)}
+                      disabled={draftCreateLoading || !draftCreateCourse}
+                    >
+                      <option value="">选择 task</option>
+                      {draftCreateTasks.map((task, index) => {
+                        const taskId = String(getTaskId(task) || "");
+                        return (
+                          <option key={`${taskId || "task"}-${index}`} value={taskId}>
+                            {getTaskTitle(task)} · {getTaskStatus(task)}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </label>
+                  <label>摘要
+                    <input
+                      value={draftCreateSummary}
+                      onChange={(event) => setDraftCreateSummary(event.target.value)}
+                      placeholder="可选，例如：手动整理的初稿"
+                    />
+                  </label>
+                  <label>草稿正文
+                    <textarea
+                      className="draft-create-text"
+                      value={draftCreateText}
+                      onChange={(event) => setDraftCreateText(event.target.value)}
+                      placeholder="输入要保存到本地草稿的正文..."
+                      spellCheck={false}
+                    />
+                  </label>
+                  <div className="draft-create-actions">
+                    <button
+                      type="button"
+                      onClick={() => loadDraftCreateTasks(draftCreateCourse)}
+                      disabled={draftCreateLoading || !draftCreateCourse}
+                    >
+                      刷新 task
+                    </button>
+                    <button
+                      type="button"
+                      className="primary"
+                      onClick={createManualDraft}
+                      disabled={draftCreateLoading || !draftCreateCourse || !draftCreateTask || !draftCreateText.trim()}
+                    >
+                      创建草稿
+                    </button>
+                  </div>
+                  <small className="draft-create-hint">新建草稿默认保存为待审核，只写入本地草稿库。创建完成后会回到草稿列表和详情。</small>
+                </div>
               </div>
-              <div className="card draft-preview-card">
+            ) : (
+              <div className="review-layout">
+                <div className="card draft-list">
+                  <h2>草稿列表</h2>
+                  {!drafts.length && <div className="session-empty">暂无草稿。可以让助手生成，也可以在上方手动创建。</div>}
+                  {drafts.map((draft) => (
+                    <button
+                      key={draft.draftId}
+                      className={selectedDraft?.draftId === draft.draftId ? "draft-list-item active" : "draft-list-item"}
+                      onClick={() => openDraft(draft.draftId)}
+                    >
+                      <span className={`draft-status ${draftStatusClass(draft.status)}`}>{formatDraftStatus(draft.status)}</span>
+                      <strong>{draftTitle(draft)}</strong>
+                      <small>{draft.subjectName || "未知课程"} · {formatMessageTime(draft.updatedAt) || "无更新时间"}</small>
+                      {(draft.missingInfoCount > 0 || draft.warningCount > 0 || draft.needsUserInput) && (
+                        <em>
+                          {draft.needsUserInput ? "需要补充信息" : ""}
+                          {draft.missingInfoCount > 0 ? ` · 缺少 ${draft.missingInfoCount} 项` : ""}
+                          {draft.warningCount > 0 ? ` · 注意 ${draft.warningCount} 项` : ""}
+                        </em>
+                      )}
+                    </button>
+                  ))}
+                </div>
+                <div className="card draft-preview-card">
                 <DraftPreview
                   draft={selectedDraft}
                   draftEditText={draftEditText}
@@ -1541,81 +1842,138 @@ function App() {
                   onSaveDraft={saveDraftEdits}
                   onResetDraft={() => setDraftEditText(selectedDraft?.draftText || "")}
                 />
-              </div>
-            </div>
-          </section>
-        )}
-
-        {page === "model" && (
-          <section>
-            <PageTitle title="模型配置" subtitle="OpenAI-compatible chat completions endpoint." />
-            <div className="card form">
-              <label>API Key<input type="password" value={modelConfig.apiKey || ""} onChange={(event) => setModelConfig({ ...modelConfig, apiKey: event.target.value })} /></label>
-              <label>调用链接<input value={modelConfig.baseUrl || ""} onChange={(event) => setModelConfig({ ...modelConfig, baseUrl: event.target.value })} placeholder="https://api.example.com/v1" /></label>
-              <label>模型名称
-                <div className="model-picker">
-                  <input
-                    value={modelConfig.modelName || ""}
-                    onChange={(event) => setModelConfig({ ...modelConfig, modelName: event.target.value })}
-                    placeholder="手动输入，或先读取模型列表后选择"
-                    list="model-options"
-                  />
-                  <button type="button" onClick={loadModelOptions} disabled={modelOptionsLoading || !modelConfig.baseUrl}>
-                    {modelOptionsLoading ? "读取中" : "读取模型"}
-                  </button>
                 </div>
-                <datalist id="model-options">
-                  {modelOptions.map((modelId) => (
-                    <option key={modelId} value={modelId} />
-                  ))}
-                </datalist>
-                {modelOptions.length > 0 && (
-                  <select
-                    value={modelOptions.includes(modelConfig.modelName) ? modelConfig.modelName : ""}
-                    onChange={(event) => setModelConfig({ ...modelConfig, modelName: event.target.value })}
-                  >
-                    <option value="">从 {modelOptions.length} 个可用模型中选择</option>
-                    {modelOptions.map((modelId) => (
-                      <option key={modelId} value={modelId}>{modelId}</option>
-                    ))}
-                  </select>
-                )}
-              </label>
-              <label>上下文长度<input value={modelConfig.contextLength || ""} onChange={(event) => setModelConfig({ ...modelConfig, contextLength: event.target.value })} /></label>
-              <div className="toolbar">
-                <button className="primary" onClick={saveConfig}>保存配置</button>
-                <button onClick={testConfig}>测试连通性</button>
-                <button onClick={clearConfig}>清除配置</button>
               </div>
-              <JsonBlock data={modelResult || { apiKeyMasked: modelConfig.apiKeyMasked, configPath: modelConfig.configPath }} />
-            </div>
+            )}
           </section>
         )}
 
         {page === "settings" && (
           <section>
-            <PageTitle title="设置" subtitle="界面、Agent 轮次和仓库信息。" />
-            <div className="card form">
-              <label>主题
-                <select value={theme} onChange={(event) => setTheme(event.target.value)}>
-                  <option value="light">浅色</option>
-                  <option value="dark">深色</option>
-                </select>
-              </label>
-              <label>最大工具轮次<input value={modelConfig.maxToolRounds || 6} onChange={(event) => setModelConfig({ ...modelConfig, maxToolRounds: event.target.value })} /></label>
-              <label>AI 系统提示词
-                <textarea
-                  value={modelConfig.systemPrompt || ""}
-                  onChange={(event) => setModelConfig({ ...modelConfig, systemPrompt: event.target.value })}
-                  rows={7}
-                />
-              </label>
-              <div className="toolbar">
-                <button className="primary" onClick={saveConfig}>保存设置</button>
-                <button onClick={restoreDefaultPrompt}>恢复默认提示词</button>
-                <button onClick={() => window.open("https://github.com/GRAY-XY/BXB_tools")}>打开 GitHub</button>
+            <PageTitle title="设置" subtitle="模型、界面、Agent 和软件更新。" />
+            <div className="settings-layout">
+              <div className="card form settings-card-wide">
+                <h2>模型配置</h2>
+                <label>API Key<input type="password" value={modelConfig.apiKey || ""} onChange={(event) => setModelConfig({ ...modelConfig, apiKey: event.target.value })} /></label>
+                <label>调用链接<input value={modelConfig.baseUrl || ""} onChange={(event) => setModelConfig({ ...modelConfig, baseUrl: event.target.value })} placeholder="https://api.example.com/v1" /></label>
+                <label>模型名称
+                  <div className="model-picker">
+                    {modelOptions.length > 0 ? (
+                      <select
+                        value={modelConfig.modelName || ""}
+                        onChange={(event) => setModelConfig({ ...modelConfig, modelName: event.target.value })}
+                      >
+                        <option value="">选择模型</option>
+                        {modelConfig.modelName && !modelOptions.includes(modelConfig.modelName) && (
+                          <option value={modelConfig.modelName}>{modelConfig.modelName}（当前）</option>
+                        )}
+                        {modelOptions.map((modelId) => (
+                          <option key={modelId} value={modelId}>{modelId}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        value={modelConfig.modelName || ""}
+                        onChange={(event) => setModelConfig({ ...modelConfig, modelName: event.target.value })}
+                        placeholder="手动输入，或先读取模型列表后选择"
+                      />
+                    )}
+                    <button type="button" onClick={loadModelOptions} disabled={modelOptionsLoading || !modelConfig.baseUrl}>
+                      {modelOptionsLoading ? "读取中" : "读取模型"}
+                    </button>
+                  </div>
+                </label>
+                <label>上下文长度<input value={modelConfig.contextLength || ""} onChange={(event) => setModelConfig({ ...modelConfig, contextLength: event.target.value })} /></label>
+                <div className="toolbar">
+                  <button className="primary" onClick={saveConfig}>保存配置</button>
+                  <button onClick={testConfig}>测试连通性</button>
+                  <button onClick={clearConfig}>清除配置</button>
+                </div>
+                {modelResult && <JsonBlock data={modelResult} />}
               </div>
-              <JsonBlock data={appInfo || {}} />
+              <div className="card update-card">
+                <div className="update-head">
+                  <div>
+                    <h2>软件更新</h2>
+                    <p>Windows 预览版</p>
+                  </div>
+                  <span className="update-version">v{appInfo?.version || "unknown"}</span>
+                </div>
+                <div className="update-facts">
+                  <div>
+                    <span>当前版本</span>
+                    <strong>{appInfo?.version || "读取中"}</strong>
+                  </div>
+                  <div>
+                    <span>最新版本</span>
+                    <strong>{updateResult?.latestVersion || "-"}</strong>
+                  </div>
+                  <div>
+                    <span>状态</span>
+                    <strong>
+                      {updateLoading
+                        ? "检查中"
+                        : updateResult?.hasUpdate
+                          ? "有新版本"
+                          : updateResult
+                            ? updateResult.ok
+                              ? "已是最新"
+                              : "检查失败"
+                            : "未检查"}
+                    </strong>
+                  </div>
+                </div>
+                {updateResult?.latestTitle && (
+                  <div className={updateResult.hasUpdate ? "update-result available" : "update-result"}>
+                    <strong>{updateResult.latestTitle}</strong>
+                    <span>{updateResult.publishedAt ? `发布时间：${formatMessageTime(updateResult.publishedAt)}` : ""}</span>
+                    {updateResult.installerAsset && (
+                      <span>
+                        安装包：{updateResult.installerAsset.name}
+                        {updateResult.installerAsset.size ? ` · ${formatFileSize(updateResult.installerAsset.size)}` : ""}
+                      </span>
+                    )}
+                  </div>
+                )}
+                {updateResult && !updateResult.ok && (
+                  <div className="status error">{updateResult.message || "暂时无法检查更新。"}</div>
+                )}
+                <div className="toolbar">
+                  <button className="primary" onClick={checkUpdates} disabled={updateLoading}>
+                    {updateLoading ? "检查中" : "检查更新"}
+                  </button>
+                  <button onClick={() => openUpdateLink(updateResult?.latestUrl || updateResult?.releasesUrl)}>
+                    打开 Release 页面
+                  </button>
+                  {updateResult?.installerAsset?.downloadUrl && (
+                    <button onClick={() => openUpdateLink(updateResult.installerAsset.downloadUrl)}>
+                      下载安装包
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="card form">
+                <label>主题
+                  <select value={theme} onChange={(event) => setTheme(event.target.value)}>
+                    <option value="light">浅色</option>
+                    <option value="dark">深色</option>
+                  </select>
+                </label>
+                <label>最大工具轮次<input value={modelConfig.maxToolRounds || 6} onChange={(event) => setModelConfig({ ...modelConfig, maxToolRounds: event.target.value })} /></label>
+                <label>AI 系统提示词
+                  <textarea
+                    value={modelConfig.systemPrompt || ""}
+                    onChange={(event) => setModelConfig({ ...modelConfig, systemPrompt: event.target.value })}
+                    rows={7}
+                  />
+                </label>
+                <div className="toolbar">
+                  <button className="primary" onClick={saveConfig}>保存设置</button>
+                  <button onClick={restoreDefaultPrompt}>恢复默认提示词</button>
+                  <button onClick={() => openUpdateLink("https://github.com/GRAY-XY/BXB_tools")}>打开 GitHub</button>
+                </div>
+                <JsonBlock data={appInfo || {}} />
+              </div>
             </div>
           </section>
         )}

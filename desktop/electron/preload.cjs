@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld("bxb", {
   importWorkspaceFiles: () => ipcRenderer.invoke("workspace:import"),
   openWorkspaceFolder: () => ipcRenderer.invoke("workspace:open"),
   getWorkspaceImageDataUrl: (filePath) => ipcRenderer.invoke("workspace:image-data-url", { filePath }),
+  checkForUpdates: () => ipcRenderer.invoke("update:check"),
+  openUpdateUrl: (url) => ipcRenderer.invoke("update:open-url", { url }),
   loadModelConfig: () => ipcRenderer.invoke("config:model:load"),
   saveModelConfig: (config) => ipcRenderer.invoke("config:model:save", config),
   clearModelConfig: () => ipcRenderer.invoke("config:model:clear"),

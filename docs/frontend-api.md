@@ -21,6 +21,8 @@ declare global {
       importWorkspaceFiles(): Promise<WorkspaceImportResult>;
       openWorkspaceFolder(): Promise<{ ok: true; workspaceDir: string }>;
       getWorkspaceImageDataUrl(filePath: string): Promise<WorkspaceImagePreview>;
+      checkForUpdates(): Promise<UpdateCheckResult>;
+      openUpdateUrl(url: string): Promise<{ ok: true; url: string }>;
       loadModelConfig(): Promise<ModelConfig>;
       saveModelConfig(config: ModelConfigInput): Promise<ModelConfig>;
       clearModelConfig(): Promise<ModelConfig>;
@@ -51,6 +53,9 @@ Returns runtime and data directory information.
 ```ts
 type AppInfo = {
   isPackaged: boolean;
+  version: string;
+  platform: string;
+  updateChannel: "Windows preview";
   userDataRoot: string;
   dataRoot: string;
   workspaceDir: string;
@@ -69,6 +74,44 @@ Frontend usage:
 
 - Display diagnostic state in Settings.
 - Do not show full paths on first-run screens unless the user asks for diagnostics.
+
+## Updates
+
+```ts
+window.bxb.checkForUpdates(): Promise<UpdateCheckResult>
+window.bxb.openUpdateUrl(url: string): Promise<{ ok: true; url: string }>
+```
+
+The first-stage updater checks GitHub Releases and lets the user open the release page or installer download in the system browser. It does not install updates automatically.
+
+Windows preview releases are identified by release title, not tag name:
+
+```text
+BXB Homework Win v<major>.<minor>.<patch>-pre
+```
+
+Historical titles such as `BXB Homework Win v1.1.0-pre.3` may still be parsed for compatibility, but new releases should increment `major.minor.patch` and keep `-pre` as the preview-channel marker.
+
+```ts
+type UpdateCheckResult = {
+  ok: boolean;
+  currentVersion: string;
+  currentChannel: "Windows preview";
+  hasUpdate: boolean;
+  latestVersion?: string;
+  latestTitle?: string;
+  latestTag?: string;
+  latestUrl?: string;
+  publishedAt?: string;
+  message: string;
+  releasesUrl: string;
+  installerAsset?: {
+    name: string;
+    size?: number;
+    downloadUrl: string;
+  } | null;
+};
+```
 
 ## Session
 
@@ -162,6 +205,13 @@ await window.bxb.callTool("read_web_page", { url: "https://example.com/article",
 await window.bxb.callTool("list_private_message_contacts", {});
 await window.bxb.callTool("get_private_message_thread", { contact, size: 30 });
 await window.bxb.callTool("send_private_message_text", { contact, content: "TEXT" });
+await window.bxb.callTool("draft_task_submission", {
+  task_id: "TASK_ID",
+  subject_name: "Course name",
+  task_title: "Task title",
+  draft_text: "Draft body...",
+  summary: "User-created draft",
+});
 await window.bxb.callTool("list_submission_drafts", { status: "pending_review" });
 await window.bxb.callTool("get_submission_draft", { draft_id: "DRAFT_ID" });
 await window.bxb.callTool("update_submission_draft", { draft_id: "DRAFT_ID", draft_text: "..." });
@@ -231,7 +281,7 @@ Frontend rule:
 
 - Never call them without explicit user confirmation in the same interaction.
 - Never expose them to autonomous Agent execution by default.
-- The review page may offer these actions later, but it must show the target task, files, text, and destination before calling either tool.
+- The draft page may offer these actions later, but it must show the target task, files, text, and destination before calling either tool.
 
 ### Autonomous Agent Tool Set
 
