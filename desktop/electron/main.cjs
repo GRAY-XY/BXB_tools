@@ -294,7 +294,11 @@ async function ensurePlaywrightBrowsers() {
   if (result.status !== 0) {
     throw new Error(`无法解压浏览器依赖：${result.stderr || result.stdout}`);
   }
-  return getBrowserDependencyStatus();
+  const status = getBrowserDependencyStatus();
+  if (!status.ready) {
+    throw new Error(`浏览器依赖已尝试解压，但没有找到 Chromium 可执行文件。解压目录：${browserRoot}`);
+  }
+  return status;
 }
 
 async function getToolRuntime() {
@@ -349,6 +353,25 @@ function normalizeSystemPrompt(value) {
   return prompt;
 }
 
+function extractModelIds(payload) {
+  const rows = Array.isArray(payload?.data)
+    ? payload.data
+    : Array.isArray(payload?.models)
+      ? payload.models
+      : Array.isArray(payload)
+        ? payload
+        : [];
+
+  return rows
+    .map((item) => {
+      if (typeof item === "string") {
+        return item;
+      }
+      return String(item?.id || item?.name || item?.model || "").trim();
+    })
+    .filter(Boolean);
+}
+
 async function loadModelConfig() {
   const config = await readJson(modelConfigPath, {
     apiKey: "",
@@ -387,28 +410,49 @@ async function testModelConfig(config) {
     throw new Error("请先填写 API Key、调用链接和模型名称。");
   }
 
-  const response = await fetch(deriveModelsUrl(candidate.baseUrl), {
-    headers: {
-      Authorization: `Bearer ${candidate.apiKey}`,
-      Accept: "application/json",
-    },
-  });
-  const text = await response.text();
-  if (!response.ok) {
-    throw new Error(`模型服务返回 HTTP ${response.status}: ${text.slice(0, 800)}`);
-  }
-  const payload = text ? JSON.parse(text) : {};
-  const models = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload) ? payload : [];
-  const modelIds = models.map((item) => String(item?.id || "")).filter(Boolean);
+  const listed = await listModelOptions(candidate);
+  const modelIds = listed.modelIds;
   return {
     ok: modelIds.includes(candidate.modelName),
-    modelsUrl: deriveModelsUrl(candidate.baseUrl),
+    modelsUrl: listed.modelsUrl,
     modelName: candidate.modelName,
     modelsCount: modelIds.length,
     sampleModels: modelIds.slice(0, 20),
     message: modelIds.includes(candidate.modelName)
       ? `连接成功，已找到模型 ${candidate.modelName}。`
       : `连接成功，但模型列表里没有找到 ${candidate.modelName}。`,
+  };
+}
+
+async function listModelOptions(config) {
+  const candidate = {
+    apiKey: String(config?.apiKey || "").trim(),
+    baseUrl: String(config?.baseUrl || "").trim(),
+  };
+  if (!candidate.baseUrl) {
+    throw new Error("请先填写调用链接。");
+  }
+
+  const headers = {
+    Accept: "application/json",
+  };
+  if (candidate.apiKey) {
+    headers.Authorization = `Bearer ${candidate.apiKey}`;
+  }
+
+  const response = await fetch(deriveModelsUrl(candidate.baseUrl), { headers });
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`模型服务返回 HTTP ${response.status}: ${text.slice(0, 800)}`);
+  }
+  const payload = text ? JSON.parse(text) : {};
+  const modelIds = extractModelIds(payload);
+  return {
+    modelsUrl: deriveModelsUrl(candidate.baseUrl),
+    modelsCount: modelIds.length,
+    modelIds,
+    sampleModels: modelIds.slice(0, 20),
+    message: modelIds.length ? `已读取 ${modelIds.length} 个模型。` : "连接成功，但没有读取到模型名称。",
   };
 }
 
@@ -919,6 +963,7 @@ ipcMain.handle("config:model:clear", async () => {
   await fs.rm(modelConfigPath, { force: true });
   return loadModelConfig();
 });
+ipcMain.handle("config:model:list", async (_event, config) => listModelOptions(config));
 ipcMain.handle("config:model:test", async (_event, config) => testModelConfig(config));
 ipcMain.handle("agent:chat", async (_event, payload) => runAgent(payload));
 ipcMain.handle("agent:compact", async (_event, payload = {}) => compactAgentContext(payload.conversationId));

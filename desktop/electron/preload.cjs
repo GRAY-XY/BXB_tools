@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld("bxb", {
   loadModelConfig: () => ipcRenderer.invoke("config:model:load"),
   saveModelConfig: (config) => ipcRenderer.invoke("config:model:save", config),
   clearModelConfig: () => ipcRenderer.invoke("config:model:clear"),
+  listModelOptions: (config) => ipcRenderer.invoke("config:model:list", config),
   testModelConfig: (config) => ipcRenderer.invoke("config:model:test", config),
   chat: (payload) => ipcRenderer.invoke("agent:chat", payload),
   compactChat: (payload = {}) => ipcRenderer.invoke("agent:compact", payload),
