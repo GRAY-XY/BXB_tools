@@ -663,7 +663,7 @@ export function createToolDefinitions(client) {
       description: "List locally archived submission drafts and their review status.",
       inputSchema: {
         status: z
-          .enum(["pending_review", "approved", "rejected", "submitted"])
+          .enum(["pending_review", "approved", "rejected", "submitted", "all"])
           .optional()
           .describe("Optional status filter."),
       },
@@ -676,6 +676,17 @@ export function createToolDefinitions(client) {
         draft_id: z.string().describe("Draft id returned by draft_task_submission."),
       },
       execute: async ({ draft_id: draftId }) => client.getSubmissionDraft(draftId),
+    },
+    {
+      name: "update_submission_draft",
+      description: "Update a locally saved submission draft after human editing. This does not upload or submit anything.",
+      inputSchema: {
+        draft_id: z.string().describe("Draft id returned by draft_task_submission."),
+        draft_text: z.string().describe("Updated draft text."),
+        summary: z.string().optional().describe("Optional updated draft summary."),
+      },
+      execute: async ({ draft_id: draftId, draft_text: draftText, summary }) =>
+        client.updateSubmissionDraft(draftId, { draftText, summary }),
     },
     {
       name: "approve_submission_draft",
@@ -696,6 +707,14 @@ export function createToolDefinitions(client) {
       },
       execute: async ({ draft_id: draftId, review_note: reviewNote }) =>
         client.rejectSubmissionDraft(draftId, { reviewNote }),
+    },
+    {
+      name: "delete_submission_draft",
+      description: "Delete a locally saved submission draft JSON file. This does not affect Banxuebang.",
+      inputSchema: {
+        draft_id: z.string().describe("Draft id returned by draft_task_submission."),
+      },
+      execute: async ({ draft_id: draftId }) => client.deleteSubmissionDraft(draftId),
     },
     {
       name: "upload_submission_file",

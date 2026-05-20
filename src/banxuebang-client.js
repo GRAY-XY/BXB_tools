@@ -2118,8 +2118,9 @@ export class BanxuebangClient {
   async listSubmissionDrafts({ status } = {}) {
     const drafts = await this.draftStore.list();
     const normalizedStatus = status ? String(status).trim() : null;
+    const statusFilter = normalizedStatus && normalizedStatus !== "all" ? normalizedStatus : null;
     const filtered = normalizedStatus
-      ? drafts.filter((item) => String(item.status || "") === normalizedStatus)
+      ? drafts.filter((item) => !statusFilter || String(item.status || "") === statusFilter)
       : drafts;
 
     return {
@@ -2150,6 +2151,34 @@ export class BanxuebangClient {
     return {
       draftDirectory: this.draftStore.draftDir,
       draft,
+    };
+  }
+
+  async updateSubmissionDraft(draftId, { draftText, summary } = {}) {
+    const normalizedDraftText = String(draftText || "").trim();
+    if (!normalizedDraftText) {
+      throw new Error("draft_text is required and cannot be empty.");
+    }
+
+    const updated = await this.draftStore.update(draftId, async (draft) => ({
+      ...draft,
+      draftText: normalizedDraftText,
+      summary: summary === undefined ? draft.summary : String(summary || "").trim(),
+      status: draft.status === "rejected" ? "pending_review" : draft.status,
+      reviewedAt: draft.status === "rejected" ? null : draft.reviewedAt,
+      reviewNote: draft.status === "rejected" ? null : draft.reviewNote,
+      updatedAt: new Date().toISOString(),
+    }));
+
+    if (!updated) {
+      throw new Error(`Draft ${draftId} was not found.`);
+    }
+
+    return {
+      draftId: updated.draftId,
+      status: updated.status,
+      updatedAt: updated.updatedAt,
+      draft: updated,
     };
   }
 
@@ -2194,6 +2223,22 @@ export class BanxuebangClient {
       reviewedAt: updated.reviewedAt,
       reviewNote: updated.reviewNote,
       draft: updated,
+    };
+  }
+
+  async deleteSubmissionDraft(draftId) {
+    const draft = await this.draftStore.get(draftId);
+    if (!draft) {
+      throw new Error(`Draft ${draftId} was not found.`);
+    }
+
+    await this.draftStore.clear(draftId);
+
+    return {
+      deleted: true,
+      draftId: draft.draftId,
+      taskId: draft.taskId,
+      taskTitle: draft.taskTitle,
     };
   }
 
