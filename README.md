@@ -1,158 +1,121 @@
-# Banxuebang Achievement MCP
+# BXB Homework
 
-这是一个面向 `https://student.banxuebang.com/achievement_list` 的 MCP 服务。
+BXB Homework is a local desktop assistant for the Banxuebang student portal. It brings homework, attachments, grades, private messages, workspace files, and an AI assistant into one desktop app.
 
-## Prerequisites
+The current primary client is the Electron + React app in `desktop/`. The local capability layer in `src/` handles Banxuebang login state, course and homework APIs, attachment reading, workspace file operations, browser-based web search, and MCP-compatible tool access.
 
-- Node.js >= 22
+Older UI experiments remain in the repository for reference, but they are not the active desktop baseline.
 
-设计目标不是“纯 DOM 自动化”，而是混合模式：
+## Features
 
-- 登录和首登确认通过浏览器完成
-- 数据读取优先走站点已有 HTTP API
-- 页面打开和截图校验由 Playwright 兜底
+- Browser-based Banxuebang login with local session persistence.
+- Term and course switching, including an `全部课程` context for aggregating homework across all current-term courses.
+- Homework center with pending/all task views and readable task details.
+- Task content and attachment reading, including PDF and DOCX text extraction.
+- Workspace file management for imported user files, downloaded attachments, and assistant-created files.
+- Built-in AI assistant that can call local Banxuebang tools, read workspace files, organize homework context, and create local submission drafts.
+- Local browser-based web search with Bing as the default search engine, without requiring users to configure a search API key.
+- Private messages page for reading contacts, opening message threads, and sending text messages.
+- Model settings page for OpenAI-compatible endpoints, including `/models` discovery and model selection.
+- Review page for approving or rejecting local AI-generated submission drafts.
 
-## Repo Layout
+## Safety Model
 
-```text
-src/
-  index.js                 MCP server entry
-  banxuebang-client.js     Banxuebang session + API client
-  session-store.js         local session persistence
-  tool-definitions.js      shared tool registry for MCP + direct CLI
-scripts/
-  call-tool.js             local CLI for calling MCP tools over stdio
-  direct-tool.js           local CLI that bypasses MCP and calls the client directly
-  publish-scan.js          pre-publish safety scan
-README.md
-PROMPTS.md
-UI/
-package.json
-```
+- Banxuebang sessions, model API keys, workspace files, and drafts stay local by default.
+- The autonomous assistant is not allowed to upload homework, submit homework, or send private messages by default.
+- Real account actions such as upload and submit must be confirmed by the user through the UI.
+- User-facing screens should avoid showing raw JSON, tokens, API keys, internal paths, or stack traces.
 
-本地运行产生的会话、附件、截图和调试输出统一放在这些目录，并且默认被忽略：
+## Local Development
 
-- `.banxuebang/`
-- `.playwright-cli/`
-- `artifacts/`
+BXB Homework requires Node.js 22 or newer.
 
-## Current Tools
+Install root dependencies:
 
-当前 MCP 暴露的工具包括：
-
-- `session_status`
-- `interactive_login`
-- `login_in_browser`
-- `login_with_credentials`
-- `import_browser_storage`
-- `refresh_context`
-- `list_terms`
-- `set_current_term`
-- `list_courses`
-- `set_current_subject`
-- `list_homework`
-- `list_tasks`
-- `get_achievement_overview`
-- `get_current_subject_gpa`
-- `open_task`
-- `read_task_content`
-- `download_task_attachment`
-- `read_task_attachment`
-- `list_workspace_files`
-- `read_workspace_file`
-- `rename_workspace_file`
-- `write_workspace_text_file`
-- `extract_pdf_text`
-- `extract_docx_text`
-- `run_python_snippet`
-- `web_search`
-- `read_web_page`
-- `list_private_message_contacts`
-- `get_private_message_thread`
-- `send_private_message_text`
-- `upload_submission_file`
-- `submit_task_result`
-- `browser_capture_achievement_page`
-- `clear_session`
-
-## Install
-
-```bash
-git clone <repository-url>
-cd BXB_tools
+```powershell
 npm install
 ```
 
-如果要使用浏览器登录、自动登录或截图能力，还需要准备 Chromium：
+Install desktop dependencies:
 
-```bash
-npx playwright install chromium
+```powershell
+cd desktop
+npm install
 ```
 
-如果你的 MCP 客户端或本机环境提示缺少 `modelcontextprotocol`，请按该客户端的要求额外安装它。
-部分 macOS 环境下，可能需要这一步后才能正常启动本服务。
+Start the desktop development app:
 
-启动 MCP：
+```powershell
+cd desktop
+npm run start
+```
 
-```bash
+Build the desktop frontend:
+
+```powershell
+cd desktop
+npm run build
+```
+
+Package the Windows desktop app:
+
+```powershell
+cd desktop
+npm run dist
+```
+
+The packaged Windows app is generated under `dist-electron-app/`.
+
+## Local Tool Layer
+
+The root package can also be used directly as a local Banxuebang tool layer or MCP server.
+
+Start the MCP server:
+
+```powershell
 npm start
 ```
 
-通过 MCP over stdio 调试某个工具：
+Call tools through MCP stdio:
 
-```bash
-node scripts/call-tool.js session_status
-node scripts/call-tool.js set_current_subject subject_name= COURSE_NAME
-```
-
-如果当前 AI 或终端已经直接在仓库目录里运行，不想额外经过 MCP，也可以直接调用本地 CLI：
-
-```bash
-node scripts/direct-tool.js session_status
-node scripts/direct-tool.js set_current_subject subject_name= COURSE_NAME
-```
-
-等价的 npm script：
-
-```bash
+```powershell
 npm run tool:mcp -- session_status
+npm run tool:mcp -- list_courses
+```
+
+Call tools directly without MCP:
+
+```powershell
 npm run tool:direct -- session_status
+npm run tool:direct -- list_tasks list_type=pending
 ```
 
-## Usage
+First-time use usually requires browser login:
 
-**首次使用前必须先登录**，登录后才能使用 `session_status`、`list_terms`、`list_courses` 等工具。
-
-如果你需要给上层模型一套更稳定的调用提示词，可直接参考 [PROMPTS.md](./PROMPTS.md)。
-如果你想查看从 `client` 分支拆出的独立 UI 壳层，可直接参考 [UI/README.md](./UI/README.md)。
-如果你要开发桌面前端，请先阅读 [前端接口文档](./docs/frontend-api.md) 和 [前端需求文档](./docs/frontend-requirements.md)。
-
-## Login Flow
-
-推荐首登方式有两种：
-
-1. 手动浏览器登录
-
-```bash
-node scripts/call-tool.js login_in_browser
-node scripts/direct-tool.js login_in_browser
+```powershell
+npm run tool:direct -- login_in_browser
 ```
 
-2. 浏览器填表自动登录
+## Main Tool Capabilities
 
-```bash
-node scripts/call-tool.js login_with_credentials '{"username":"your-account","password":"your-password","headless":false}'
-node scripts/direct-tool.js login_with_credentials '{"username":"your-account","password":"your-password","headless":false}'
-```
+The local tool layer includes:
 
-登录成功后，建议立刻执行：
+- Login and session tools: `session_status`, `login_in_browser`, `login_with_credentials`, `refresh_context`
+- Term and course tools: `list_terms`, `set_current_term`, `list_courses`, `set_current_subject`
+- Homework tools: `list_tasks`, `open_task`, `read_task_content`
+- Grade tools: `get_current_subject_gpa`, `get_achievement_overview`
+- Attachment and document tools: `download_task_attachment`, `read_task_attachment`, `extract_pdf_text`, `extract_docx_text`
+- Workspace tools: `list_workspace_files`, `read_workspace_file`, `rename_workspace_file`, `write_workspace_text_file`
+- Web tools: `web_search`, `read_web_page`
+- Private message tools: `list_private_message_contacts`, `get_private_message_thread`, `send_private_message_text`
+- Draft review tools: `collect_task_submission_context`, `draft_task_submission`, `list_submission_drafts`, `get_submission_draft`, `approve_submission_draft`, `reject_submission_draft`
+- Submission tools: `upload_submission_file`, `submit_task_result`
 
-```bash
-node scripts/call-tool.js session_status
-node scripts/call-tool.js list_terms
-node scripts/call-tool.js list_courses
-node scripts/direct-tool.js session_status
-node scripts/direct-tool.js list_terms
-node scripts/direct-tool.js list_courses
-```
+`upload_submission_file` and `submit_task_result` affect real Banxuebang account data and must not be exposed as default autonomous assistant actions.
 
+## Maintainer Notes
+
+- Desktop UI work should usually happen in `desktop/`.
+- Shared Banxuebang capability work should usually happen in `src/`.
+- New renderer-facing capabilities should be exposed through `window.bxb` and Electron IPC, not direct Node access from the renderer.
+- Do not commit local sessions, model configs, attachments, drafts, build outputs, or browser caches.
