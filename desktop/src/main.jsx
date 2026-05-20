@@ -25,6 +25,7 @@ const fallbackSystemPrompt =
   "你是伴学邦桌面助手。需要真实数据时必须调用工具，不要猜测。需要联网资料时先调用 web_search；需要阅读某个搜索结果时再调用 read_web_page。用户提到工作区文件时，先调用 list_workspace_files 定位文件，再按需调用 read_workspace_file；需要整理文件名时可调用 rename_workspace_file。不要上传、提交或删除任何内容。处理作业草稿时先调用 collect_task_submission_context；信息不足就说明缺什么；信息足够才调用 draft_task_submission 保存草稿等待用户审核。";
 
 const allCoursesName = "全部课程";
+const imageAttachmentExtensions = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".avif"]);
 
 function md(text) {
   return { __html: marked.parse(text || "", { breaks: true, gfm: true }) };
@@ -122,6 +123,200 @@ function getDetailStatus(detail) {
   return "-";
 }
 
+function getAttachmentKey(attachment, index = 0) {
+  return String(attachment?.fileId || attachment?.fileName || attachment?.name || `attachment-${index}`);
+}
+
+function getAttachmentExtension(attachment) {
+  const explicit = attachment?.fileExt || attachment?.ext || attachment?.extension;
+  if (explicit) {
+    const normalized = String(explicit).trim().toLowerCase();
+    return normalized.startsWith(".") ? normalized : `.${normalized}`;
+  }
+  const fileName = String(attachment?.fileName || attachment?.name || "");
+  const match = fileName.match(/\.[^.]+$/);
+  return match ? match[0].toLowerCase() : "";
+}
+
+function isImageAttachment(attachment) {
+  const extension = getAttachmentExtension(attachment);
+  const type = String(attachment?.fileType || attachment?.contentType || attachment?.mimeType || "").toLowerCase();
+  const category = String(attachment?.category || "").toLowerCase();
+  return category === "1" || category === "image" || category === "图片" || type.startsWith("image/") || imageAttachmentExtensions.has(extension);
+}
+
+function isWorkspaceImageFile(file) {
+  return isImageAttachment(file);
+}
+
+function formatDraftStatus(status) {
+  const normalized = String(status || "").trim();
+  if (normalized === "pending_review") return "待审核";
+  if (normalized === "approved") return "已通过";
+  if (normalized === "rejected") return "已驳回";
+  return normalized || "未知状态";
+}
+
+function draftStatusClass(status) {
+  const normalized = String(status || "").trim();
+  if (normalized === "approved") return "approved";
+  if (normalized === "rejected") return "rejected";
+  if (normalized === "pending_review") return "pending";
+  return "unknown";
+}
+
+function draftTitle(draft) {
+  return draft?.taskTitle || (draft?.taskId ? `任务 ${draft.taskId}` : "未命名草稿");
+}
+
+function normalizeList(value) {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item) => item !== null && item !== undefined && String(item).trim() !== "");
+}
+
+function renderDraftListItem(item, index) {
+  if (typeof item === "string" || typeof item === "number") {
+    return <span>{String(item)}</span>;
+  }
+  if (item && typeof item === "object") {
+    const title = item.title || item.name || item.fileName || item.source || item.type || `条目 ${index + 1}`;
+    const text = item.text || item.content || item.snippet || item.summary || item.value || "";
+    return (
+      <>
+        <strong>{String(title)}</strong>
+        {text && <span>{String(text)}</span>}
+      </>
+    );
+  }
+  return <span>{String(item)}</span>;
+}
+
+function DraftPreview({
+  draft,
+  draftEditText = "",
+  draftDirty = false,
+  draftSaving = false,
+  onDraftTextChange,
+  onSaveDraft,
+  onResetDraft,
+}) {
+  if (!draft) {
+    return (
+      <div className="draft-empty">
+        <strong>选择一个草稿查看预览</strong>
+        <span>这里会显示任务、课程、待提交正文、风险提示和参考证据。</span>
+      </div>
+    );
+  }
+
+  const missingInfo = normalizeList(draft.missingInfo);
+  const warnings = normalizeList(draft.warnings);
+  const evidence = normalizeList(draft.evidence);
+  const hasReview = draft.reviewedAt || draft.reviewNote;
+
+  return (
+    <div className="draft-preview">
+      <div className="draft-preview-head">
+        <div>
+          <span className={`draft-status ${draftStatusClass(draft.status)}`}>{formatDraftStatus(draft.status)}</span>
+          <h2>{draftTitle(draft)}</h2>
+        </div>
+        <div className="draft-meta">
+          <span>{draft.subjectName || "未知课程"}</span>
+          <span>ID: {draft.taskId || "-"}</span>
+        </div>
+      </div>
+
+      <div className="draft-facts">
+        <div>
+          <span>创建时间</span>
+          <strong>{formatMessageTime(draft.createdAt) || "-"}</strong>
+        </div>
+        <div>
+          <span>更新时间</span>
+          <strong>{formatMessageTime(draft.updatedAt) || "-"}</strong>
+        </div>
+        <div>
+          <span>需要补充</span>
+          <strong>{draft.needsUserInput || missingInfo.length ? "是" : "否"}</strong>
+        </div>
+      </div>
+
+      {draft.summary && (
+        <section className="draft-section">
+          <h3>草稿摘要</h3>
+          <p>{draft.summary}</p>
+        </section>
+      )}
+
+      <section className="draft-section primary">
+        <div className="draft-section-head">
+          <h3>待提交正文</h3>
+          <div className="draft-edit-actions">
+            <button type="button" onClick={onResetDraft} disabled={!draftDirty || draftSaving}>还原</button>
+            <button type="button" className="primary" onClick={onSaveDraft} disabled={!draftDirty || draftSaving || !draftEditText.trim()}>
+              {draftSaving ? "保存中" : "保存"}
+            </button>
+          </div>
+        </div>
+        <textarea
+          className="draft-editor"
+          value={draftEditText}
+          onChange={(event) => onDraftTextChange?.(event.target.value)}
+          placeholder="编辑待提交正文..."
+          spellCheck={false}
+        />
+        <small className="draft-edit-hint">
+          {draftDirty ? "有未保存修改。保存只会更新本地草稿，不会上传或提交。" : "保存只会更新本地草稿，不会上传或提交。"}
+        </small>
+      </section>
+
+      {(missingInfo.length > 0 || warnings.length > 0) && (
+        <section className="draft-section">
+          <h3>提交前检查</h3>
+          <div className="draft-alerts">
+            {missingInfo.map((item, index) => (
+              <div key={`missing-${index}`} className="draft-alert missing">
+                <strong>缺少信息</strong>
+                {renderDraftListItem(item, index)}
+              </div>
+            ))}
+            {warnings.map((item, index) => (
+              <div key={`warning-${index}`} className="draft-alert warning">
+                <strong>注意</strong>
+                {renderDraftListItem(item, index)}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {evidence.length > 0 && (
+        <section className="draft-section">
+          <h3>参考依据</h3>
+          <div className="draft-evidence-list">
+            {evidence.map((item, index) => (
+              <div key={index} className="draft-evidence">
+                {renderDraftListItem(item, index)}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {hasReview && (
+        <section className="draft-section">
+          <h3>审核记录</h3>
+          <p>
+            {draft.reviewedAt ? `审核时间：${formatMessageTime(draft.reviewedAt)}` : ""}
+            {draft.reviewNote ? `\n备注：${draft.reviewNote}` : ""}
+          </p>
+        </section>
+      )}
+    </div>
+  );
+}
+
 function isAllCourses(course) {
   const id = course?.id || course?.subject_id || course?.subjectId;
   const name = course?.name || course?.subjectName || course?.courseName || course?.title;
@@ -182,7 +377,39 @@ function SessionSummary({ session }) {
   );
 }
 
-function TaskDetailView({ detail }) {
+function AttachmentCard({ attachment, index, preview, previewState, onRetryImagePreview }) {
+  const title = attachment.fileName || attachment.name || `附件 ${index + 1}`;
+  const image = isImageAttachment(attachment);
+  const meta = [
+    image ? "图片" : attachment.category || attachment.fileExt || "文件",
+    attachment.fileSize ? formatFileSize(attachment.fileSize) : "",
+    attachment.source || "",
+  ].filter(Boolean).join(" · ");
+
+  return (
+    <div className={image ? "task-attachment image" : "task-attachment"}>
+      <div className="task-attachment-main">
+        <strong title={title}>{title}</strong>
+        <span>{meta}</span>
+        {attachment.fileId && <small>ID: {attachment.fileId}</small>}
+      </div>
+      {image && (
+        <div className="task-image-preview">
+          {previewState?.loading && <div className="task-image-placeholder">正在加载图片...</div>}
+          {preview?.dataUrl && <img src={preview.dataUrl} alt={title} loading="lazy" />}
+          {previewState?.error && (
+            <div className="task-image-error">
+              <span>{previewState.error}</span>
+              <button type="button" onClick={() => onRetryImagePreview?.(attachment, index)}>重试</button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TaskDetailView({ detail, imagePreviews = {}, imagePreviewStates = {}, onRetryImagePreview }) {
   if (!detail) {
     return (
       <div className="task-detail-empty">
@@ -247,15 +474,14 @@ function TaskDetailView({ detail }) {
         {attachments.length ? (
           <div className="task-attachments">
             {attachments.map((attachment, index) => (
-              <div key={`${attachment.fileId || attachment.name}-${index}`} className="task-attachment">
-                <strong>{attachment.fileName || attachment.name || `附件 ${index + 1}`}</strong>
-                <span>
-                  {attachment.category || attachment.fileExt || "文件"}
-                  {attachment.fileSize ? ` · ${formatFileSize(attachment.fileSize)}` : ""}
-                  {attachment.source ? ` · ${attachment.source}` : ""}
-                </span>
-                {attachment.fileId && <small>ID: {attachment.fileId}</small>}
-              </div>
+              <AttachmentCard
+                key={`${attachment.fileId || attachment.name}-${index}`}
+                attachment={attachment}
+                index={index}
+                preview={imagePreviews[getAttachmentKey(attachment, index)]}
+                previewState={imagePreviewStates[getAttachmentKey(attachment, index)]}
+                onRetryImagePreview={onRetryImagePreview}
+              />
             ))}
           </div>
         ) : (
@@ -287,8 +513,11 @@ function App() {
   const [startedAt, setStartedAt] = useState(0);
   const [elapsed, setElapsed] = useState("0.0s");
   const [usage, setUsage] = useState(null);
+  const [usageCache, setUsageCache] = useState({});
   const [tasks, setTasks] = useState([]);
   const [taskDetail, setTaskDetail] = useState(null);
+  const [taskImagePreviews, setTaskImagePreviews] = useState({});
+  const [taskImagePreviewStates, setTaskImagePreviewStates] = useState({});
   const [workspaceFiles, setWorkspaceFiles] = useState([]);
   const [selectedWorkspaceFile, setSelectedWorkspaceFile] = useState(null);
   const [workspacePreview, setWorkspacePreview] = useState(null);
@@ -301,6 +530,9 @@ function App() {
   const [privateLoading, setPrivateLoading] = useState(false);
   const [drafts, setDrafts] = useState([]);
   const [selectedDraft, setSelectedDraft] = useState(null);
+  const [draftStatusFilter, setDraftStatusFilter] = useState("pending_review");
+  const [draftEditText, setDraftEditText] = useState("");
+  const [draftSaving, setDraftSaving] = useState(false);
   const [modelConfig, setModelConfig] = useState({
     apiKey: "",
     baseUrl: "",
@@ -362,8 +594,32 @@ function App() {
     }
   }, [page]);
 
+  useEffect(() => {
+    const attachments = Array.isArray(taskDetail?.attachments) ? taskDetail.attachments : [];
+    const imageAttachments = attachments
+      .map((attachment, index) => ({ attachment, index }))
+      .filter(({ attachment }) => isImageAttachment(attachment));
+
+    setTaskImagePreviews({});
+    setTaskImagePreviewStates({});
+
+    if (!taskDetail?.taskId || !imageAttachments.length) {
+      return undefined;
+    }
+
+    let canceled = false;
+    for (const { attachment, index } of imageAttachments) {
+      loadTaskImagePreview(attachment, index, { silent: true, isCanceled: () => canceled });
+    }
+
+    return () => {
+      canceled = true;
+    };
+  }, [taskDetail?.taskId]);
+
   const contextUsed = useMemo(() => {
-    const promptTokens = usage?.prompt_tokens || usage?.promptTokens || 0;
+    const cachedUsage = activeConversationId ? usageCache[activeConversationId] : null;
+    const promptTokens = usage?.prompt_tokens || usage?.promptTokens || cachedUsage?.prompt_tokens || cachedUsage?.promptTokens || 0;
     if (promptTokens) {
       return promptTokens;
     }
@@ -371,10 +627,11 @@ function App() {
       .map((item) => item.text)
       .join("\n");
     return Math.ceil(text.length / 4);
-  }, [messages, usage]);
+  }, [activeConversationId, messages, usage, usageCache]);
 
   const contextMax = Number(modelConfig.contextLength || 0) || 1000000;
   const contextPercent = Math.min(100, Math.round((contextUsed / contextMax) * 100));
+  const draftDirty = Boolean(selectedDraft && draftEditText !== (selectedDraft.draftText || ""));
 
   async function refreshSession() {
     try {
@@ -400,7 +657,8 @@ function App() {
 
   function applyConversationState(state) {
     setConversations(state?.conversations || []);
-    setActiveConversationId(state?.activeId || "");
+    const nextActiveId = state?.activeId || "";
+    setActiveConversationId(nextActiveId);
     setMessages(state?.activeConversation?.messages || []);
   }
 
@@ -497,6 +755,38 @@ function App() {
     setTaskDetail(result);
   }
 
+  async function loadTaskImagePreview(attachment, index = 0, options = {}) {
+    const fileId = attachment?.fileId;
+    const taskId = taskDetail?.taskId;
+    const key = getAttachmentKey(attachment, index);
+    if (!fileId || !taskId) return;
+
+    setTaskImagePreviewStates((current) => ({
+      ...current,
+      [key]: { loading: true, error: "" },
+    }));
+
+    try {
+      const downloaded = await window.bxb.callTool("download_task_attachment", {
+        task_id: String(taskId),
+        file_id: String(fileId),
+      });
+      const preview = await window.bxb.getWorkspaceImageDataUrl(downloaded.path);
+      if (options.isCanceled?.()) return;
+      setTaskImagePreviews((current) => ({ ...current, [key]: preview }));
+      setTaskImagePreviewStates((current) => ({ ...current, [key]: { loading: false, error: "" } }));
+      if (!options.silent) {
+        setStatus(`已加载图片：${preview.fileName}`);
+      }
+    } catch (error) {
+      if (options.isCanceled?.()) return;
+      setTaskImagePreviewStates((current) => ({
+        ...current,
+        [key]: { loading: false, error: error.message || String(error) },
+      }));
+    }
+  }
+
   async function loadWorkspaceFiles(query = workspaceQuery) {
     setWorkspaceLoading(true);
     try {
@@ -527,6 +817,12 @@ function App() {
     setSelectedWorkspaceFile(file);
     setWorkspacePreview({ loading: true, file });
     try {
+      if (isWorkspaceImageFile(file)) {
+        const image = await window.bxb.getWorkspaceImageDataUrl(file.path);
+        setWorkspacePreview({ file, image });
+        setStatus(`已预览图片：${image.fileName}`);
+        return;
+      }
       const result = await callTool("read_workspace_file", {
         file: file.relativePath || file.name,
         max_chars: 8000,
@@ -602,6 +898,7 @@ function App() {
   }
 
   async function loadDrafts(statusFilter = "pending_review") {
+    setDraftStatusFilter(statusFilter);
     const result = await callTool("list_submission_drafts", { status: statusFilter });
     setDrafts(result?.drafts || []);
     setPage("review");
@@ -609,19 +906,54 @@ function App() {
 
   async function openDraft(draftId) {
     const result = await callTool("get_submission_draft", { draft_id: draftId });
-    setSelectedDraft(result?.draft || result);
+    const draft = result?.draft || result;
+    setSelectedDraft(draft);
+    setDraftEditText(draft?.draftText || "");
+  }
+
+  async function saveDraftEdits() {
+    if (!selectedDraft?.draftId || !draftEditText.trim()) return;
+    setDraftSaving(true);
+    try {
+      const result = await callTool("update_submission_draft", {
+        draft_id: selectedDraft.draftId,
+        draft_text: draftEditText,
+      });
+      const updated = result?.draft || result;
+      setSelectedDraft(updated);
+      setDraftEditText(updated?.draftText || "");
+      await loadDrafts(draftStatusFilter);
+      setStatus("草稿已保存");
+    } finally {
+      setDraftSaving(false);
+    }
   }
 
   async function approveDraft() {
     if (!selectedDraft?.draftId) return;
     await callTool("approve_submission_draft", { draft_id: selectedDraft.draftId, review_note: "UI approved" });
+    setSelectedDraft(null);
+    setDraftEditText("");
     await loadDrafts("pending_review");
   }
 
   async function rejectDraft() {
     if (!selectedDraft?.draftId) return;
     await callTool("reject_submission_draft", { draft_id: selectedDraft.draftId, review_note: "UI rejected" });
+    setSelectedDraft(null);
+    setDraftEditText("");
     await loadDrafts("pending_review");
+  }
+
+  async function deleteDraft() {
+    if (!selectedDraft?.draftId) return;
+    const confirmed = confirm(`删除草稿“${draftTitle(selectedDraft)}”？这只会删除本地草稿文件，不会影响伴学邦。`);
+    if (!confirmed) return;
+    await callTool("delete_submission_draft", { draft_id: selectedDraft.draftId });
+    setSelectedDraft(null);
+    setDraftEditText("");
+    await loadDrafts(draftStatusFilter);
+    setStatus("草稿已删除");
   }
 
   async function sendAgent(text = input) {
@@ -643,6 +975,9 @@ function App() {
       setMessages((current) => [...current, { role: "assistant", text: result.message }]);
       setSteps(result.steps || []);
       setUsage(result.usage || null);
+      if (result.usage && activeConversationId) {
+        setUsageCache((current) => ({ ...current, [activeConversationId]: result.usage }));
+      }
       if (result.conversation) {
         await loadConversations();
       }
@@ -669,7 +1004,7 @@ function App() {
     applyConversationState(await window.bxb.selectConversation(conversationId));
     setConversationMenuOpen(false);
     setSteps([]);
-    setUsage(null);
+    setUsage(usageCache[conversationId] || null);
     setElapsed("0.0s");
     setStatus("已切换对话");
   }
@@ -721,6 +1056,9 @@ function App() {
       ].join("\n");
       setMessages([{ role: "assistant", text: summaryText }]);
       setUsage(result.usage || null);
+      if (result.usage && activeConversationId) {
+        setUsageCache((current) => ({ ...current, [activeConversationId]: result.usage }));
+      }
       await loadConversations();
       setStatus(`上下文已压缩：${result.previousTurns} 条历史 -> ${result.keptTurns} 条`);
     } catch (error) {
@@ -1012,7 +1350,12 @@ function App() {
                 </table>
               </div>
               <div className="card task-detail-card">
-                <TaskDetailView detail={taskDetail} />
+                <TaskDetailView
+                  detail={taskDetail}
+                  imagePreviews={taskImagePreviews}
+                  imagePreviewStates={taskImagePreviewStates}
+                  onRetryImagePreview={loadTaskImagePreview}
+                />
               </div>
             </div>
           </section>
@@ -1060,10 +1403,16 @@ function App() {
                 {workspacePreview?.loading && <div className="session-empty">正在读取文件...</div>}
                 {workspacePreview?.error && <div className="status error">{workspacePreview.error}</div>}
                 {!workspacePreview && <div className="session-empty">选择一个文件查看可读取文本。助手也可以通过文件名读取和重命名工作区文件。</div>}
+                {workspacePreview?.image?.dataUrl && (
+                  <div className="workspace-image-preview">
+                    <img src={workspacePreview.image.dataUrl} alt={workspacePreview.image.fileName || selectedWorkspaceFile?.name || "工作区图片"} />
+                    <small>{workspacePreview.image.fileName} · {formatFileSize(workspacePreview.image.sizeBytes)}</small>
+                  </div>
+                )}
                 {workspacePreview?.file?.text && (
                   <pre className="workspace-text">{workspacePreview.file.text}</pre>
                 )}
-                {workspacePreview?.file && !workspacePreview.file.text && !workspacePreview.loading && !workspacePreview.error && (
+                {workspacePreview?.file && !workspacePreview.image && !workspacePreview.file.text && !workspacePreview.loading && !workspacePreview.error && (
                   <JsonBlock data={workspacePreview.file} />
                 )}
               </div>
@@ -1147,26 +1496,51 @@ function App() {
         )}
 
         {page === "review" && (
-          <section>
+          <section className="review-page">
             <PageTitle title="草稿审核" subtitle="这里只审核本地草稿，不做上传提交。" />
             <div className="card toolbar">
               <button className="primary" onClick={() => loadDrafts("pending_review")}>刷新待审核</button>
               <button onClick={() => loadDrafts("all")}>全部草稿</button>
+              <button onClick={saveDraftEdits} disabled={!draftDirty || draftSaving || !draftEditText.trim()}>
+                {draftSaving ? "保存中" : "保存修改"}
+              </button>
               <button onClick={approveDraft} disabled={!selectedDraft}>通过</button>
               <button onClick={rejectDraft} disabled={!selectedDraft}>驳回</button>
+              <button className="danger" onClick={deleteDraft} disabled={!selectedDraft}>删除草稿</button>
             </div>
-            <div className="grid two">
-              <div className="card list">
+            <div className="review-layout">
+              <div className="card draft-list">
+                <h2>草稿列表</h2>
+                {!drafts.length && <div className="session-empty">暂无草稿。可以先让助手生成作业草稿，再回到这里审核。</div>}
                 {drafts.map((draft) => (
-                  <button key={draft.draftId} onClick={() => openDraft(draft.draftId)}>
-                    <strong>{draft.taskTitle || draft.taskId}</strong>
-                    <span>{draft.subjectName || "未知课程"} · {draft.status}</span>
+                  <button
+                    key={draft.draftId}
+                    className={selectedDraft?.draftId === draft.draftId ? "draft-list-item active" : "draft-list-item"}
+                    onClick={() => openDraft(draft.draftId)}
+                  >
+                    <span className={`draft-status ${draftStatusClass(draft.status)}`}>{formatDraftStatus(draft.status)}</span>
+                    <strong>{draftTitle(draft)}</strong>
+                    <small>{draft.subjectName || "未知课程"} · {formatMessageTime(draft.updatedAt) || "无更新时间"}</small>
+                    {(draft.missingInfoCount > 0 || draft.warningCount > 0 || draft.needsUserInput) && (
+                      <em>
+                        {draft.needsUserInput ? "需要补充信息" : ""}
+                        {draft.missingInfoCount > 0 ? ` · 缺少 ${draft.missingInfoCount} 项` : ""}
+                        {draft.warningCount > 0 ? ` · 注意 ${draft.warningCount} 项` : ""}
+                      </em>
+                    )}
                   </button>
                 ))}
               </div>
-              <div className="card">
-                <h2>草稿详情</h2>
-                <JsonBlock data={selectedDraft || {}} />
+              <div className="card draft-preview-card">
+                <DraftPreview
+                  draft={selectedDraft}
+                  draftEditText={draftEditText}
+                  draftDirty={draftDirty}
+                  draftSaving={draftSaving}
+                  onDraftTextChange={setDraftEditText}
+                  onSaveDraft={saveDraftEdits}
+                  onResetDraft={() => setDraftEditText(selectedDraft?.draftText || "")}
+                />
               </div>
             </div>
           </section>

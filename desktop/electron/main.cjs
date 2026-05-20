@@ -11,8 +11,19 @@ const payloadRoot = isDev ? repoRoot : path.join(process.resourcesPath, "payload
 const userDataRoot = app.getPath("userData");
 const dataRoot = path.join(userDataRoot, ".banxuebang");
 const workspaceDir = path.join(dataRoot, "workspace");
+const draftDir = path.join(dataRoot, "drafts");
 const modelConfigPath = path.join(userDataRoot, "model-config.json");
 const conversationsPath = path.join(userDataRoot, "agent-conversations.json");
+const IMAGE_MIME_BY_EXTENSION = new Map([
+  [".png", "image/png"],
+  [".jpg", "image/jpeg"],
+  [".jpeg", "image/jpeg"],
+  [".gif", "image/gif"],
+  [".webp", "image/webp"],
+  [".bmp", "image/bmp"],
+  [".avif", "image/avif"],
+]);
+const MAX_INLINE_IMAGE_BYTES = 25 * 1024 * 1024;
 const DEFAULT_SYSTEM_PROMPT =
   "你是伴学邦桌面助手。需要真实数据时必须调用工具，不要猜测。需要联网资料时先调用 web_search；需要阅读某个搜索结果时再调用 read_web_page。用户提到工作区文件时，先调用 list_workspace_files 定位文件，再按需调用 read_workspace_file；需要整理文件名时可调用 rename_workspace_file。不要上传、提交或删除任何内容。处理作业草稿时先调用 collect_task_submission_context；信息不足就说明缺什么；信息足够才调用 draft_task_submission 保存草稿等待用户审核。";
 const LEGACY_DEFAULT_SYSTEM_PROMPTS = new Set([
@@ -310,7 +321,7 @@ async function getToolRuntime() {
     await fs.mkdir(dataRoot, { recursive: true });
     await fs.mkdir(workspaceDir, { recursive: true });
     process.env.BANXUEBANG_SESSION_FILE = path.join(dataRoot, "session.json");
-    process.env.BANXUEBANG_DRAFT_DIR = path.join(dataRoot, "drafts");
+    process.env.BANXUEBANG_DRAFT_DIR = draftDir;
     process.env.BANXUEBANG_WORKSPACE_DIR = workspaceDir;
 
     const srcRoot = path.join(payloadRoot, "src");
@@ -915,6 +926,42 @@ async function importWorkspaceFiles() {
   };
 }
 
+function assertWorkspacePath(filePath) {
+  const workspaceRoot = path.resolve(workspaceDir);
+  const resolved = path.resolve(String(filePath || ""));
+  const relative = path.relative(workspaceRoot, resolved);
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error("Only workspace image files can be previewed.");
+  }
+  return resolved;
+}
+
+async function getWorkspaceImageDataUrl(filePath) {
+  const resolved = assertWorkspacePath(filePath);
+  const extension = path.extname(resolved).toLowerCase();
+  const mimeType = IMAGE_MIME_BY_EXTENSION.get(extension);
+  if (!mimeType) {
+    throw new Error("This file type is not supported for image preview.");
+  }
+
+  const fileStat = await fs.stat(resolved);
+  if (!fileStat.isFile()) {
+    throw new Error("Image preview target is not a file.");
+  }
+  if (fileStat.size > MAX_INLINE_IMAGE_BYTES) {
+    throw new Error("Image is too large to preview inline.");
+  }
+
+  const buffer = await fs.readFile(resolved);
+  return {
+    fileName: path.basename(resolved),
+    path: resolved,
+    mimeType,
+    sizeBytes: buffer.byteLength,
+    dataUrl: `data:${mimeType};base64,${buffer.toString("base64")}`,
+  };
+}
+
 function createWindow() {
   app.applicationMenu = null;
   mainWindow = new BrowserWindow({
@@ -945,6 +992,7 @@ ipcMain.handle("app:info", async () => ({
   userDataRoot,
   dataRoot,
   workspaceDir,
+  draftDir,
   payloadRoot,
   browserDependency: getBrowserDependencyStatus(),
 }));
@@ -957,6 +1005,7 @@ ipcMain.handle("workspace:open", async () => {
   await shell.openPath(workspaceDir);
   return { ok: true, workspaceDir };
 });
+ipcMain.handle("workspace:image-data-url", async (_event, { filePath } = {}) => getWorkspaceImageDataUrl(filePath));
 ipcMain.handle("config:model:load", async () => loadModelConfig());
 ipcMain.handle("config:model:save", async (_event, config) => saveModelConfig(config));
 ipcMain.handle("config:model:clear", async () => {

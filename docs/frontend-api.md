@@ -20,6 +20,7 @@ declare global {
       callTool<T = unknown>(name: string, args?: Record<string, unknown>): Promise<T>;
       importWorkspaceFiles(): Promise<WorkspaceImportResult>;
       openWorkspaceFolder(): Promise<{ ok: true; workspaceDir: string }>;
+      getWorkspaceImageDataUrl(filePath: string): Promise<WorkspaceImagePreview>;
       loadModelConfig(): Promise<ModelConfig>;
       saveModelConfig(config: ModelConfigInput): Promise<ModelConfig>;
       clearModelConfig(): Promise<ModelConfig>;
@@ -53,6 +54,7 @@ type AppInfo = {
   userDataRoot: string;
   dataRoot: string;
   workspaceDir: string;
+  draftDir: string;
   payloadRoot: string;
   browserDependency: {
     ready: boolean;
@@ -162,8 +164,10 @@ await window.bxb.callTool("get_private_message_thread", { contact, size: 30 });
 await window.bxb.callTool("send_private_message_text", { contact, content: "TEXT" });
 await window.bxb.callTool("list_submission_drafts", { status: "pending_review" });
 await window.bxb.callTool("get_submission_draft", { draft_id: "DRAFT_ID" });
+await window.bxb.callTool("update_submission_draft", { draft_id: "DRAFT_ID", draft_text: "..." });
 await window.bxb.callTool("approve_submission_draft", { draft_id: "DRAFT_ID", review_note: "UI approved" });
 await window.bxb.callTool("reject_submission_draft", { draft_id: "DRAFT_ID", review_note: "UI rejected" });
+await window.bxb.callTool("delete_submission_draft", { draft_id: "DRAFT_ID" });
 ```
 
 ### Tool Results
@@ -201,6 +205,20 @@ type WorkspaceImportResult = {
 ```
 
 The renderer must not read arbitrary local files directly. Use `importWorkspaceFiles()` to let the user pick files and copy them into the managed workspace. The Agent should reference workspace files by `relativePath` or filename.
+
+Image previews:
+
+```ts
+type WorkspaceImagePreview = {
+  fileName: string;
+  path: string;
+  mimeType: string;
+  sizeBytes: number;
+  dataUrl: string;
+};
+```
+
+`getWorkspaceImageDataUrl(filePath)` only accepts files inside the managed workspace and is intended for UI previews after imports or attachment downloads. It rejects unsupported image types and oversized files.
 
 ### Upload And Submit Safety
 
@@ -407,6 +425,7 @@ Renderer API to IPC channel mapping:
 | `callTool(name, args)` | `bxb:tool` |
 | `importWorkspaceFiles()` | `workspace:import` |
 | `openWorkspaceFolder()` | `workspace:open` |
+| `getWorkspaceImageDataUrl(filePath)` | `workspace:image-data-url` |
 | `loadModelConfig()` | `config:model:load` |
 | `saveModelConfig(config)` | `config:model:save` |
 | `clearModelConfig()` | `config:model:clear` |

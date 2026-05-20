@@ -145,7 +145,8 @@ Table columns:
 Implementation notes:
 
 - Task result fields vary. Use tolerant extraction for `task_id`, `taskId`, `id`, or `activityId`.
-- The detail panel may use diagnostic JSON for now, but should move toward a user-facing task reader.
+- The detail panel should show readable task facts, content, reference text, and attachments instead of raw diagnostic JSON.
+- Image attachments should render inline in the detail panel. Download them to the managed workspace first, then preview them through the workspace image-preview IPC instead of reading arbitrary local paths in the renderer.
 
 ## Review Page
 
@@ -154,14 +155,23 @@ Purpose:
 - Review local AI-generated submission drafts.
 - Approve or reject local drafts.
 - Do not submit to Banxuebang automatically.
+- Show drafts as readable review cards with task context, draft text, missing information, warnings, evidence, and review history instead of raw JSON.
 
 Required actions:
 
 - List pending drafts: `list_submission_drafts({ status: "pending_review" })`
 - List all drafts: `list_submission_drafts({ status: "all" })`
 - Open draft: `get_submission_draft({ draft_id })`
+- Save edited draft text: `update_submission_draft({ draft_id, draft_text })`
 - Approve draft: `approve_submission_draft({ draft_id, review_note })`
 - Reject draft: `reject_submission_draft({ draft_id, review_note })`
+- Delete local draft: `delete_submission_draft({ draft_id })`
+
+UI requirements:
+
+- The draft body preview must be editable.
+- Saving edits updates only the local draft JSON file and must not upload or submit anything.
+- Deleting a draft must ask for confirmation and delete only the local draft JSON file.
 
 Future upload/submit requirement:
 
@@ -188,7 +198,7 @@ UI requirements:
 - Page has buttons for importing files, refreshing files, and opening the workspace folder.
 - File import uses Electron IPC to copy selected files into the managed workspace directory; the renderer must not read arbitrary paths directly.
 - File list shows name, relative path, size, modified time, and type.
-- Preview panel shows readable text for supported files and a diagnostic summary for unsupported files.
+- Preview panel shows images inline, readable text for supported text-like files, and a diagnostic summary for unsupported files.
 - Task attachment downloads should default to the workspace so files created by assistant actions are visible there.
 
 ## Private Messages Page
