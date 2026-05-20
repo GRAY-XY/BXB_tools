@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, net, shell } = require("electron");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const { existsSync } = require("node:fs");
@@ -24,6 +24,9 @@ const IMAGE_MIME_BY_EXTENSION = new Map([
   [".avif", "image/avif"],
 ]);
 const MAX_INLINE_IMAGE_BYTES = 25 * 1024 * 1024;
+const RELEASES_API_URL = "https://api.github.com/repos/GRAY-XY/BXB_tools/releases?per_page=30";
+const RELEASES_PAGE_URL = "https://github.com/GRAY-XY/BXB_tools/releases";
+const WINDOWS_PREVIEW_TITLE_PREFIX = "BXB Homework Win v";
 const DEFAULT_SYSTEM_PROMPT =
   "你是伴学邦桌面助手。需要真实数据时必须调用工具，不要猜测。需要联网资料时先调用 web_search；需要阅读某个搜索结果时再调用 read_web_page。用户提到工作区文件时，先调用 list_workspace_files 定位文件，再按需调用 read_workspace_file；需要整理文件名时可调用 rename_workspace_file。不要上传、提交或删除任何内容。处理作业草稿时先调用 collect_task_submission_context；信息不足就说明缺什么；信息足够才调用 draft_task_submission 保存草稿等待用户审核。";
 const LEGACY_DEFAULT_SYSTEM_PROMPTS = new Set([
@@ -40,6 +43,72 @@ function safeError(error) {
     message: error?.message || String(error),
     stack: error?.stack || "",
   };
+}
+
+function parseAppVersion(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/^(\d+)\.(\d+)\.(\d+)(?:-pre(?:\.(\d+))?)?$/);
+  if (!match) {
+    return null;
+  }
+  return {
+    raw: text,
+    major: Number.parseInt(match[1], 10),
+    minor: Number.parseInt(match[2], 10),
+    patch: Number.parseInt(match[3], 10),
+    preview: text.includes("-pre"),
+    preNumber: match[4] ? Number.parseInt(match[4], 10) : 0,
+  };
+}
+
+function compareAppVersions(left, right) {
+  const leftParsed = typeof left === "string" ? parseAppVersion(left) : left;
+  const rightParsed = typeof right === "string" ? parseAppVersion(right) : right;
+  if (!leftParsed || !rightParsed) {
+    return 0;
+  }
+
+  for (const key of ["major", "minor", "patch"]) {
+    if (leftParsed[key] !== rightParsed[key]) {
+      return leftParsed[key] > rightParsed[key] ? 1 : -1;
+    }
+  }
+
+  if (leftParsed.preview !== rightParsed.preview) {
+    return leftParsed.preview ? -1 : 1;
+  }
+
+  if (leftParsed.preNumber !== rightParsed.preNumber) {
+    return leftParsed.preNumber > rightParsed.preNumber ? 1 : -1;
+  }
+
+  return 0;
+}
+
+function extractWindowsPreviewVersion(release) {
+  const title = String(release?.name || "").trim();
+  if (!title.startsWith(WINDOWS_PREVIEW_TITLE_PREFIX)) {
+    return null;
+  }
+  const version = title.slice(WINDOWS_PREVIEW_TITLE_PREFIX.length).trim();
+  return parseAppVersion(version);
+}
+
+function chooseWindowsInstallerAsset(release, version) {
+  const assets = Array.isArray(release?.assets) ? release.assets : [];
+  const installers = assets.filter((asset) => {
+    const name = String(asset?.name || "").toLowerCase();
+    return name.endsWith(".exe") && !name.endsWith(".blockmap");
+  });
+  if (!installers.length) {
+    return null;
+  }
+
+  const normalizedVersion = String(version || "").toLowerCase();
+  return (
+    installers.find((asset) => String(asset?.name || "").toLowerCase().includes(normalizedVersion)) ||
+    installers[0]
+  );
 }
 
 async function readJson(filePath, fallback) {
@@ -962,6 +1031,94 @@ async function getWorkspaceImageDataUrl(filePath) {
   };
 }
 
+async function checkForUpdates() {
+  const currentVersion = app.getVersion();
+  const currentParsed = parseAppVersion(currentVersion);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+
+  try {
+    const response = await net.fetch(RELEASES_API_URL, {
+      headers: {
+        Accept: "application/vnd.github+json",
+        "User-Agent": "BXB-Homework",
+      },
+      signal: controller.signal,
+    });
+    const text = await response.text();
+    if (!response.ok) {
+      throw new Error(`GitHub returned HTTP ${response.status}: ${text.slice(0, 500)}`);
+    }
+
+    const releases = text ? JSON.parse(text) : [];
+    const candidates = (Array.isArray(releases) ? releases : [])
+      .filter((release) => !release?.draft && release?.prerelease)
+      .map((release) => ({ release, version: extractWindowsPreviewVersion(release) }))
+      .filter((item) => item.version)
+      .sort((left, right) => compareAppVersions(right.version, left.version));
+    const latest = candidates[0] || null;
+
+    if (!latest) {
+      return {
+        ok: true,
+        currentVersion,
+        currentChannel: "Windows preview",
+        hasUpdate: false,
+        message: "No Windows preview release was found.",
+        releasesUrl: RELEASES_PAGE_URL,
+      };
+    }
+
+    const latestVersion = latest.version.raw;
+    const asset = chooseWindowsInstallerAsset(latest.release, latestVersion);
+    const hasUpdate = currentParsed
+      ? compareAppVersions(latest.version, currentParsed) > 0
+      : latestVersion !== currentVersion;
+
+    return {
+      ok: true,
+      currentVersion,
+      currentChannel: "Windows preview",
+      latestVersion,
+      latestTitle: latest.release.name,
+      latestTag: latest.release.tag_name,
+      latestUrl: latest.release.html_url,
+      publishedAt: latest.release.published_at,
+      hasUpdate,
+      installerAsset: asset
+        ? {
+            name: asset.name,
+            size: asset.size,
+            downloadUrl: asset.browser_download_url,
+          }
+        : null,
+      releasesUrl: RELEASES_PAGE_URL,
+      message: hasUpdate ? `Found ${latest.release.name}.` : "Already on the latest Windows preview version.",
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      currentVersion,
+      currentChannel: "Windows preview",
+      hasUpdate: false,
+      message: error?.name === "AbortError" ? "Update check timed out." : error.message,
+      releasesUrl: RELEASES_PAGE_URL,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function openExternalHttpUrl(url) {
+  const target = String(url || RELEASES_PAGE_URL).trim() || RELEASES_PAGE_URL;
+  const parsed = new URL(target);
+  if (!["https:", "http:"].includes(parsed.protocol)) {
+    throw new Error("Only http(s) update links can be opened.");
+  }
+  await shell.openExternal(parsed.toString());
+  return { ok: true, url: parsed.toString() };
+}
+
 function createWindow() {
   app.applicationMenu = null;
   mainWindow = new BrowserWindow({
@@ -989,6 +1146,9 @@ function createWindow() {
 
 ipcMain.handle("app:info", async () => ({
   isPackaged: app.isPackaged,
+  version: app.getVersion(),
+  platform: process.platform,
+  updateChannel: "Windows preview",
   userDataRoot,
   dataRoot,
   workspaceDir,
@@ -1006,6 +1166,8 @@ ipcMain.handle("workspace:open", async () => {
   return { ok: true, workspaceDir };
 });
 ipcMain.handle("workspace:image-data-url", async (_event, { filePath } = {}) => getWorkspaceImageDataUrl(filePath));
+ipcMain.handle("update:check", async () => checkForUpdates());
+ipcMain.handle("update:open-url", async (_event, { url } = {}) => openExternalHttpUrl(url));
 ipcMain.handle("config:model:load", async () => loadModelConfig());
 ipcMain.handle("config:model:save", async (_event, config) => saveModelConfig(config));
 ipcMain.handle("config:model:clear", async () => {

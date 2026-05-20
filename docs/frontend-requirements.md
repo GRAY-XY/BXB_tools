@@ -20,8 +20,7 @@ The left sidebar should contain:
 - `作业`
 - `工作区`
 - `私信`
-- `审核`
-- `模型`
+- `草稿`
 - `设置`
 
 The bottom-left `Session` card is interactive:
@@ -148,17 +147,21 @@ Implementation notes:
 - The detail panel should show readable task facts, content, reference text, and attachments instead of raw diagnostic JSON.
 - Image attachments should render inline in the detail panel. Download them to the managed workspace first, then preview them through the workspace image-preview IPC instead of reading arbitrary local paths in the renderer.
 
-## Review Page
+## Draft Page
 
 Purpose:
 
-- Review local AI-generated submission drafts.
+- Create local submission drafts manually without raw JSON editing.
+- Review local AI-generated or user-created submission drafts.
 - Approve or reject local drafts.
 - Do not submit to Banxuebang automatically.
 - Show drafts as readable review cards with task context, draft text, missing information, warnings, evidence, and review history instead of raw JSON.
 
 Required actions:
 
+- Load courses for manual draft creation: `list_courses({})`
+- Load tasks for the selected course: `list_tasks({ subject_name, class_id, list_type: "all", page: 1, size })`
+- Create draft: `draft_task_submission({ task_id, subject_name, task_title, draft_text, summary })`
 - List pending drafts: `list_submission_drafts({ status: "pending_review" })`
 - List all drafts: `list_submission_drafts({ status: "all" })`
 - Open draft: `get_submission_draft({ draft_id })`
@@ -169,6 +172,11 @@ Required actions:
 
 UI requirements:
 
+- The sidebar label should be `草稿`.
+- Manual draft creation must use normal form controls for course, task, summary, and draft body; do not ask users to write JSON.
+- Manual draft creation should be closed by default and opened from an explicit `新建草稿` button.
+- While the manual draft form is open, hide the draft list and detail preview. Return to the list/detail layout after successful creation or cancellation.
+- User-created drafts must default to `pending_review`.
 - The draft body preview must be editable.
 - Saving edits updates only the local draft JSON file and must not upload or submit anything.
 - Deleting a draft must ask for confirmation and delete only the local draft JSON file.
@@ -220,7 +228,9 @@ Initial constraints:
 - Image and attachment messages may render as `[图片]` or `[附件]` placeholders.
 - Do not send any test message during automated verification.
 
-## Model Page
+## Model Settings
+
+Model configuration lives inside the `设置` page, not in a separate sidebar page.
 
 Fields:
 
@@ -253,12 +263,30 @@ Security requirements:
 
 Required controls:
 
+- Model settings:
+  - API Key.
+  - Base URL.
+  - Model name.
+  - Model picker should render as one control: a manual text field before loading available models, then one dropdown after models are loaded.
+  - Reading available models should only update the dropdown and status text; do not render the model-list JSON in the page.
+  - Context length.
+  - Save config.
+  - Read available models.
+  - Test connectivity.
+  - Clear config.
 - Theme: light/dark.
 - Max tool rounds.
 - AI system prompt textarea.
 - Restore default system prompt.
 - Save settings.
 - GitHub repository link or copyable URL.
+- Update card for the Windows preview channel:
+  - Show the current app version from Electron.
+  - Check GitHub Releases for non-draft prereleases whose title starts with `BXB Homework Win v`.
+  - Treat new Windows preview release titles as `BXB Homework Win v<major>.<minor>.<patch>-pre`.
+  - Keep parsing older titles such as `BXB Homework Win v1.1.0-pre.3` for compatibility.
+  - Let the user open the release page or installer download in the system browser.
+  - Do not automatically install or restart the app in the first-stage updater.
 
 Default system prompt:
 
