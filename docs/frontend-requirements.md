@@ -222,8 +222,15 @@ Fields:
 Actions:
 
 - Save config.
+- Read available models from the configured OpenAI-compatible `/models` endpoint.
 - Test connectivity.
 - Clear config.
+
+Model name field:
+
+- Allow manual text entry.
+- After reading available models, show a dropdown so the user can choose a returned model id.
+- Do not require a model name before reading the model list; only the base URL is required, with API Key included when provided.
 
 Security requirements:
 

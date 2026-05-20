@@ -784,6 +784,127 @@ footer {
   overflow: auto;
 }
 
+.task-detail-card {
+  max-height: calc(100vh - 180px);
+  overflow: auto;
+}
+
+.task-detail-empty {
+  min-height: 220px;
+  display: grid;
+  align-content: center;
+  gap: 8px;
+  color: #606060;
+}
+
+.task-detail-empty strong {
+  color: #1f1f1f;
+  font-size: 17px;
+}
+
+.task-detail-readable {
+  display: grid;
+  gap: 16px;
+}
+
+.task-detail-head span {
+  display: block;
+  color: #606060;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 6px;
+}
+
+.task-detail-head h2 {
+  margin: 0;
+  line-height: 1.3;
+}
+
+.task-detail-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.task-detail-facts > div {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #e9e9e9;
+  border-radius: 8px;
+  background: #fafafa;
+}
+
+.task-detail-facts span {
+  display: block;
+  color: #606060;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.task-detail-facts strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-readable-section {
+  display: grid;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid #eeeeee;
+}
+
+.task-readable-section h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.task-readable-section p {
+  margin: 0;
+  color: inherit;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.65;
+}
+
+.task-readable-section em,
+.task-muted {
+  color: #606060;
+  font-size: 13px;
+  font-style: normal;
+}
+
+.task-attachments {
+  display: grid;
+  gap: 8px;
+}
+
+.task-attachment {
+  display: grid;
+  gap: 3px;
+  padding: 10px;
+  border: 1px solid #e9e9e9;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.task-attachment strong,
+.task-attachment span,
+.task-attachment small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-attachment span,
+.task-attachment small {
+  color: #606060;
+  font-size: 12px;
+}
+
 .workspace-page {
   height: calc(100vh - 80px);
   display: flex;
@@ -1163,6 +1284,17 @@ tbody tr:hover {
   font-weight: 650;
 }
 
+.model-picker {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.model-picker button {
+  white-space: nowrap;
+}
+
 :root[data-theme="dark"] {
   color-scheme: dark;
 }
@@ -1207,6 +1339,8 @@ tbody tr:hover {
 :root[data-theme="dark"] .conversation-menu,
 :root[data-theme="dark"] .card,
 :root[data-theme="dark"] .private-message,
+:root[data-theme="dark"] .task-detail-facts > div,
+:root[data-theme="dark"] .task-attachment,
 :root[data-theme="dark"] .message.assistant,
 :root[data-theme="dark"] .summary-main > div,
 :root[data-theme="dark"] .summary-list > div {
@@ -1234,6 +1368,13 @@ tbody tr:hover {
 :root[data-theme="dark"] .metric span,
 :root[data-theme="dark"] .sidebar-card span,
 :root[data-theme="dark"] .session-empty,
+:root[data-theme="dark"] .task-detail-empty,
+:root[data-theme="dark"] .task-detail-head span,
+:root[data-theme="dark"] .task-detail-facts span,
+:root[data-theme="dark"] .task-readable-section em,
+:root[data-theme="dark"] .task-muted,
+:root[data-theme="dark"] .task-attachment span,
+:root[data-theme="dark"] .task-attachment small,
 :root[data-theme="dark"] .muted,
 :root[data-theme="dark"] .session-menu-title,
 :root[data-theme="dark"] .card p,
@@ -1270,6 +1411,7 @@ tbody tr:hover {
 :root[data-theme="dark"] .session-menu-section + .session-menu-section,
 :root[data-theme="dark"] .private-thread-head,
 :root[data-theme="dark"] .workspace-preview-head,
+:root[data-theme="dark"] .task-readable-section,
 :root[data-theme="dark"] .private-composer,
 :root[data-theme="dark"] .composer {
   border-color: #3a3a3a;

@@ -106,6 +106,22 @@ function getTaskStatus(task) {
   return task?.__statusText || task?.score || task?.level || task?.scoreLevel || task?.scoreTypeName || "-";
 }
 
+function getDetailTitle(detail) {
+  return detail?.taskSummary?.activityName || detail?.taskSummary?.title || detail?.taskSummary?.name || `任务 ${detail?.taskId || ""}`;
+}
+
+function getDetailCourse(detail) {
+  return detail?.taskSummary?.courseName || detail?.context?.currentSubject?.name || "-";
+}
+
+function getDetailStatus(detail) {
+  const summary = detail?.taskSummary || {};
+  if (summary.scoreTypeName) return summary.scoreTypeName;
+  if (summary.correction) return "订正中";
+  if (summary.isParticipate === false) return "未参与";
+  return "-";
+}
+
 function isAllCourses(course) {
   const id = course?.id || course?.subject_id || course?.subjectId;
   const name = course?.name || course?.subjectName || course?.courseName || course?.title;
@@ -166,6 +182,90 @@ function SessionSummary({ session }) {
   );
 }
 
+function TaskDetailView({ detail }) {
+  if (!detail) {
+    return (
+      <div className="task-detail-empty">
+        <strong>选择左侧作业查看详情</strong>
+        <span>这里会显示作业标题、课程、截止时间、正文、参考内容和附件。</span>
+      </div>
+    );
+  }
+
+  const attachments = Array.isArray(detail.attachments) ? detail.attachments : [];
+  const content = String(detail.content || "").trim();
+  const answer = String(detail.answer || "").trim();
+
+  return (
+    <div className="task-detail-readable">
+      <div className="task-detail-head">
+        <span>任务详情</span>
+        <h2>{getDetailTitle(detail)}</h2>
+      </div>
+
+      <div className="task-detail-facts">
+        <div>
+          <span>任务 ID</span>
+          <strong>{detail.taskId || "-"}</strong>
+        </div>
+        <div>
+          <span>课程</span>
+          <strong>{getDetailCourse(detail)}</strong>
+        </div>
+        <div>
+          <span>截止时间</span>
+          <strong>{detail.taskSummary?.endTime || "-"}</strong>
+        </div>
+        <div>
+          <span>状态/评分项</span>
+          <strong>{getDetailStatus(detail)}</strong>
+        </div>
+      </div>
+
+      <section className="task-readable-section">
+        <h3>作业正文</h3>
+        {content ? (
+          <>
+            <p>{content}</p>
+            {detail.contentTruncated && <em>正文较长，当前只显示前 {detail.content?.length || 0} 个字符。</em>}
+          </>
+        ) : (
+          <div className="task-muted">暂无可读取正文。</div>
+        )}
+      </section>
+
+      {answer && (
+        <section className="task-readable-section">
+          <h3>参考内容</h3>
+          <p>{answer}</p>
+          {detail.answerTruncated && <em>参考内容较长，当前只显示前 {detail.answer?.length || 0} 个字符。</em>}
+        </section>
+      )}
+
+      <section className="task-readable-section">
+        <h3>附件</h3>
+        {attachments.length ? (
+          <div className="task-attachments">
+            {attachments.map((attachment, index) => (
+              <div key={`${attachment.fileId || attachment.name}-${index}`} className="task-attachment">
+                <strong>{attachment.fileName || attachment.name || `附件 ${index + 1}`}</strong>
+                <span>
+                  {attachment.category || attachment.fileExt || "文件"}
+                  {attachment.fileSize ? ` · ${formatFileSize(attachment.fileSize)}` : ""}
+                  {attachment.source ? ` · ${attachment.source}` : ""}
+                </span>
+                {attachment.fileId && <small>ID: {attachment.fileId}</small>}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="task-muted">没有附件。</div>
+        )}
+      </section>
+    </div>
+  );
+}
+
 function App() {
   const [page, setPage] = useState("home");
   const [theme, setTheme] = useState(() => localStorage.getItem("bxb-theme") || "light");
@@ -211,6 +311,8 @@ function App() {
     defaultSystemPrompt: fallbackSystemPrompt,
   });
   const [modelResult, setModelResult] = useState(null);
+  const [modelOptions, setModelOptions] = useState([]);
+  const [modelOptionsLoading, setModelOptionsLoading] = useState(false);
   const chatEndRef = useRef(null);
   const stepsEndRef = useRef(null);
 
@@ -639,6 +741,7 @@ function App() {
     const cleared = await window.bxb.clearModelConfig();
     setModelConfig(cleared);
     setModelResult(null);
+    setModelOptions([]);
     setStatus("模型配置已清除");
   }
 
@@ -658,6 +761,25 @@ function App() {
     } catch (error) {
       setModelResult({ ok: false, message: error.message });
       setStatus(error.message);
+    }
+  }
+
+  async function loadModelOptions() {
+    setModelOptionsLoading(true);
+    try {
+      const result = await window.bxb.listModelOptions(modelConfig);
+      const ids = Array.isArray(result?.modelIds) ? result.modelIds : [];
+      setModelOptions(ids);
+      setModelResult(result);
+      if (!modelConfig.modelName && ids.length) {
+        setModelConfig((current) => ({ ...current, modelName: ids[0] }));
+      }
+      setStatus(result.message || `已读取 ${ids.length} 个模型`);
+    } catch (error) {
+      setModelResult({ ok: false, message: error.message });
+      setStatus(error.message);
+    } finally {
+      setModelOptionsLoading(false);
     }
   }
 
@@ -889,9 +1011,8 @@ function App() {
                   </tbody>
                 </table>
               </div>
-              <div className="card">
-                <h2>任务详情</h2>
-                <JsonBlock data={taskDetail || {}} />
+              <div className="card task-detail-card">
+                <TaskDetailView detail={taskDetail} />
               </div>
             </div>
           </section>
@@ -1057,7 +1178,35 @@ function App() {
             <div className="card form">
               <label>API Key<input type="password" value={modelConfig.apiKey || ""} onChange={(event) => setModelConfig({ ...modelConfig, apiKey: event.target.value })} /></label>
               <label>调用链接<input value={modelConfig.baseUrl || ""} onChange={(event) => setModelConfig({ ...modelConfig, baseUrl: event.target.value })} placeholder="https://api.example.com/v1" /></label>
-              <label>模型名称<input value={modelConfig.modelName || ""} onChange={(event) => setModelConfig({ ...modelConfig, modelName: event.target.value })} /></label>
+              <label>模型名称
+                <div className="model-picker">
+                  <input
+                    value={modelConfig.modelName || ""}
+                    onChange={(event) => setModelConfig({ ...modelConfig, modelName: event.target.value })}
+                    placeholder="手动输入，或先读取模型列表后选择"
+                    list="model-options"
+                  />
+                  <button type="button" onClick={loadModelOptions} disabled={modelOptionsLoading || !modelConfig.baseUrl}>
+                    {modelOptionsLoading ? "读取中" : "读取模型"}
+                  </button>
+                </div>
+                <datalist id="model-options">
+                  {modelOptions.map((modelId) => (
+                    <option key={modelId} value={modelId} />
+                  ))}
+                </datalist>
+                {modelOptions.length > 0 && (
+                  <select
+                    value={modelOptions.includes(modelConfig.modelName) ? modelConfig.modelName : ""}
+                    onChange={(event) => setModelConfig({ ...modelConfig, modelName: event.target.value })}
+                  >
+                    <option value="">从 {modelOptions.length} 个可用模型中选择</option>
+                    {modelOptions.map((modelId) => (
+                      <option key={modelId} value={modelId}>{modelId}</option>
+                    ))}
+                  </select>
+                )}
+              </label>
               <label>上下文长度<input value={modelConfig.contextLength || ""} onChange={(event) => setModelConfig({ ...modelConfig, contextLength: event.target.value })} /></label>
               <div className="toolbar">
                 <button className="primary" onClick={saveConfig}>保存配置</button>

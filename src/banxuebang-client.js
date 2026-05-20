@@ -1,4 +1,5 @@
 import { mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { chromium } from "playwright";
@@ -263,14 +264,30 @@ function computeCountdown(endTime) {
 }
 
 async function launchBrowser(headless) {
+  const browserRootCandidates = [
+    process.env.PLAYWRIGHT_BROWSERS_PATH,
+    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "ms-playwright") : null,
+    process.env.USERPROFILE ? path.join(process.env.USERPROFILE, "AppData", "Local", "ms-playwright") : null,
+  ].filter(Boolean);
+  const executableCandidates = browserRootCandidates.flatMap((browserRoot) => [
+    path.join(browserRoot, "chromium-1217", "chrome-win64", "chrome.exe"),
+    path.join(browserRoot, "chromium-1217", "chrome-win", "chrome.exe"),
+  ]);
+  const executablePath = executableCandidates.find((candidate) => existsSync(candidate));
+
   try {
-    return await chromium.launch({
+    const launchOptions = {
       headless,
-      channel: "chromium",
-    });
+    };
+    if (executablePath) {
+      launchOptions.executablePath = executablePath;
+    } else {
+      launchOptions.channel = "chromium";
+    }
+    return await chromium.launch(launchOptions);
   } catch (error) {
     throw new Error(
-      `Failed to launch Playwright Chromium. Install the browser payload or extract chrome-win64.zip to the Playwright cache. Original error: ${error.message}`,
+      `Failed to launch Playwright Chromium. Install the browser payload or extract ms-playwright-browsers.zip to the Playwright cache. Checked: ${executableCandidates.join(", ")}. Original error: ${error.message}`,
     );
   }
 }

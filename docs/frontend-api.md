@@ -23,6 +23,7 @@ declare global {
       loadModelConfig(): Promise<ModelConfig>;
       saveModelConfig(config: ModelConfigInput): Promise<ModelConfig>;
       clearModelConfig(): Promise<ModelConfig>;
+      listModelOptions(config: ModelConfigInput): Promise<ModelListResult>;
       testModelConfig(config: ModelConfigInput): Promise<ModelTestResult>;
       chat(payload: AgentChatInput): Promise<AgentChatResult>;
       compactChat(): Promise<AgentCompactResult>;
@@ -262,6 +263,7 @@ Private-message send safety:
 window.bxb.loadModelConfig(): Promise<ModelConfig>
 window.bxb.saveModelConfig(config: ModelConfigInput): Promise<ModelConfig>
 window.bxb.clearModelConfig(): Promise<ModelConfig>
+window.bxb.listModelOptions(config: ModelConfigInput): Promise<ModelListResult>
 window.bxb.testModelConfig(config: ModelConfigInput): Promise<ModelTestResult>
 ```
 
@@ -279,6 +281,14 @@ type ModelConfig = ModelConfigInput & {
   defaultSystemPrompt: string;
   apiKeyMasked: string;
   configPath: string;
+};
+
+type ModelListResult = {
+  modelsUrl: string;
+  modelsCount: number;
+  modelIds: string[];
+  sampleModels: string[];
+  message: string;
 };
 
 type ModelTestResult = {
@@ -400,6 +410,7 @@ Renderer API to IPC channel mapping:
 | `loadModelConfig()` | `config:model:load` |
 | `saveModelConfig(config)` | `config:model:save` |
 | `clearModelConfig()` | `config:model:clear` |
+| `listModelOptions(config)` | `config:model:list` |
 | `testModelConfig(config)` | `config:model:test` |
 | `chat(payload)` | `agent:chat` |
 | `compactChat()` | `agent:compact` |
