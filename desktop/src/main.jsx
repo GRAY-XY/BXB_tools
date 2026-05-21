@@ -15,9 +15,9 @@ const pages = [
 
 const quickPrompts = [
   "列出课程",
-  "列出当前课程作业",
-  "列出未提交作业",
-  "查看当前课程GPA",
+  "列出所有课程作业",
+  "列出待处理作业",
+  "查看成绩概览",
 ];
 
 const fallbackSystemPrompt =
@@ -343,6 +343,97 @@ function getCourseOptionKey(course, index = 0) {
   ].join("::");
 }
 
+function courseTaskArgs(course, listType = "all") {
+  const args = {
+    list_type: listType,
+    page: 1,
+    size: 30,
+  };
+  if (!course || isAllCourses(course)) {
+    args.subject_name = allCoursesName;
+    return args;
+  }
+
+  const subjectName = getCourseName(course);
+  const subjectId = getCourseId(course);
+  const classId = getCourseClassId(course);
+  if (subjectName) {
+    args.subject_name = subjectName;
+  } else if (subjectId) {
+    args.subject_id = subjectId;
+  }
+  if (classId) {
+    args.class_id = classId;
+  }
+  return args;
+}
+
+function pendingTaskCount(session) {
+  const subjects = Array.isArray(session?.availableSubjects) ? session.availableSubjects : [];
+  const counts = subjects
+    .map((subject) => Number(subject?.unSubmitCount))
+    .filter((count) => Number.isFinite(count));
+  if (counts.length) {
+    return counts.reduce((sum, count) => sum + count, 0);
+  }
+  const current = Number(session?.currentSubject?.unSubmitCount);
+  return Number.isFinite(current) ? current : null;
+}
+
+function appPathRows(appInfo) {
+  if (!appInfo) return [];
+  return [
+    {
+      key: "userDataRoot",
+      title: "应用数据目录",
+      description: "保存模型配置、助手对话记录和本应用的本地状态。",
+      path: appInfo.userDataRoot,
+    },
+    {
+      key: "dataRoot",
+      title: "伴学邦数据目录",
+      description: "保存伴学邦会话、工作区和草稿等业务数据。",
+      path: appInfo.dataRoot,
+    },
+    {
+      key: "workspaceDir",
+      title: "工作区",
+      description: "保存用户导入文件、下载的作业附件和助手生成的本地文件。",
+      path: appInfo.workspaceDir,
+    },
+    {
+      key: "draftDir",
+      title: "草稿库",
+      description: "保存待审核、已通过和已驳回的本地作业草稿。",
+      path: appInfo.draftDir,
+    },
+    {
+      key: "modelConfigPath",
+      title: "模型配置文件",
+      description: "保存 API Key、调用链接、模型名、Temperature 和系统提示词。",
+      path: appInfo.modelConfigPath,
+    },
+    {
+      key: "conversationsPath",
+      title: "助手对话记录",
+      description: "保存本地助手会话、标题和上下文压缩后的历史。",
+      path: appInfo.conversationsPath,
+    },
+    {
+      key: "payloadRoot",
+      title: "程序负载目录",
+      description: "保存打包随附的工具代码和运行依赖，通常不需要手动修改。",
+      path: appInfo.payloadRoot,
+    },
+    {
+      key: "browserRoot",
+      title: "浏览器依赖目录",
+      description: "保存 Playwright/Chromium 依赖，供登录、网页搜索和页面读取使用。",
+      path: appInfo.browserDependency?.browserRoot,
+    },
+  ].filter((item) => item.path);
+}
+
 function SessionSummary({ session }) {
   if (!session?.ready) {
     return (
@@ -355,12 +446,10 @@ function SessionSummary({ session }) {
 
   const activeTerm = session.availableTerms?.find((term) => term.status) || session.availableTerms?.find((term) => term.id === session.currentTermId);
   const courseCount = Array.isArray(session.availableSubjects) ? session.availableSubjects.length : 0;
-  const pendingCount = session.currentSubject?.unSubmitCount;
-  const pendingLabel = session.currentSubject?.allSubjects
-    ? "按课程查看"
-    : pendingCount === undefined || pendingCount === null
-      ? "暂无数据"
-      : `${pendingCount} 项`;
+  const pendingCount = pendingTaskCount(session);
+  const pendingLabel = pendingCount === undefined || pendingCount === null
+    ? "暂无数据"
+    : `${pendingCount} 项`;
 
   return (
     <div className="session-summary">
@@ -370,8 +459,8 @@ function SessionSummary({ session }) {
           <strong>{session.user?.name || "已登录"}</strong>
         </div>
         <div>
-          <span>当前课程</span>
-          <strong>{session.currentSubject?.name || "暂无课程"}</strong>
+          <span>待处理作业</span>
+          <strong>{pendingLabel}</strong>
         </div>
       </div>
       <div className="summary-list">
@@ -384,12 +473,12 @@ function SessionSummary({ session }) {
           <strong>{activeTerm?.name || "未识别"}</strong>
         </div>
         <div>
-          <span>可切换课程</span>
+          <span>本学期课程</span>
           <strong>{courseCount ? `${courseCount} 门` : "暂无数据"}</strong>
         </div>
         <div>
-          <span>当前课程未交</span>
-          <strong>{pendingLabel}</strong>
+          <span>作业筛选</span>
+          <strong>在作业页选择</strong>
         </div>
       </div>
       <p>为了安全，这里不会显示登录令牌、会话文件路径、邮箱或其他技术字段。</p>
@@ -518,7 +607,6 @@ function App() {
   const [status, setStatus] = useState("Ready");
   const [session, setSession] = useState(null);
   const [terms, setTerms] = useState([]);
-  const [courses, setCourses] = useState([]);
   const [sessionMenuOpen, setSessionMenuOpen] = useState(false);
   const [appInfo, setAppInfo] = useState(null);
   const [conversations, setConversations] = useState([]);
@@ -538,6 +626,10 @@ function App() {
   const [taskDetail, setTaskDetail] = useState(null);
   const [taskImagePreviews, setTaskImagePreviews] = useState({});
   const [taskImagePreviewStates, setTaskImagePreviewStates] = useState({});
+  const [homeworkCourses, setHomeworkCourses] = useState([]);
+  const [homeworkCourseKey, setHomeworkCourseKey] = useState("");
+  const [homeworkListType, setHomeworkListType] = useState("all");
+  const [homeworkCourseLoading, setHomeworkCourseLoading] = useState(false);
   const [workspaceFiles, setWorkspaceFiles] = useState([]);
   const [selectedWorkspaceFile, setSelectedWorkspaceFile] = useState(null);
   const [workspacePreview, setWorkspacePreview] = useState(null);
@@ -566,6 +658,8 @@ function App() {
     baseUrl: "",
     modelName: "",
     contextLength: 0,
+    chatTemperature: 0.2,
+    compactTemperature: 0.1,
     maxToolRounds: 6,
     systemPrompt: fallbackSystemPrompt,
     defaultSystemPrompt: fallbackSystemPrompt,
@@ -670,6 +764,10 @@ function App() {
     () => draftCreateTasks.find((task) => String(getTaskId(task) || "") === draftCreateTaskId) || null,
     [draftCreateTasks, draftCreateTaskId],
   );
+  const homeworkCourse = useMemo(
+    () => homeworkCourses.find((course, index) => getCourseOptionKey(course, index) === homeworkCourseKey) || null,
+    [homeworkCourses, homeworkCourseKey],
+  );
 
   async function refreshSession() {
     try {
@@ -715,7 +813,7 @@ function App() {
 
   async function toggleSessionMenu() {
     if (!session?.ready) {
-      setStatus("请先登录后再切换学期或课程");
+      setStatus("请先登录后再切换学期");
       return;
     }
     const nextOpen = !sessionMenuOpen;
@@ -726,14 +824,9 @@ function App() {
   }
 
   async function loadSessionChoices() {
-    const [termResult, courseResult] = await Promise.all([
-      callTool("list_terms", {}),
-      callTool("list_courses", {}),
-    ]);
+    const termResult = await callTool("list_terms", {});
     const termRows = termResult?.terms || termResult?.items || termResult?.records || session?.availableTerms || [];
-    const courseRows = courseResult?.courses || courseResult?.items || courseResult?.records || session?.availableSubjects || [];
     setTerms(Array.isArray(termRows) ? termRows : []);
-    setCourses(Array.isArray(courseRows) ? courseRows : []);
   }
 
   async function switchTerm(term) {
@@ -746,45 +839,66 @@ function App() {
     await callTool("set_current_term", termName ? { term_name: termName } : { term_id: termId });
     const nextSession = await window.bxb.getSession();
     setSession(nextSession);
-    const [termResult, courseResult] = await Promise.all([
-      callTool("list_terms", {}),
-      callTool("list_courses", {}),
-    ]);
+    const termResult = await callTool("list_terms", {});
     const termRows = termResult?.terms || termResult?.items || termResult?.records || nextSession?.availableTerms || [];
-    const courseRows = courseResult?.courses || courseResult?.items || courseResult?.records || nextSession?.availableSubjects || [];
     const currentTermId = nextSession?.currentTermId;
     const currentTermName = nextSession?.currentTermName || nextSession?.availableTerms?.find((item) => item?.id === currentTermId)?.name;
     setTerms(Array.isArray(termRows) ? termRows.map((item) => ({
       ...item,
       status: currentTermId ? getTermId(item) === currentTermId : getTermName(item) === currentTermName,
     })) : []);
-    setCourses(Array.isArray(courseRows) ? courseRows : []);
+    setHomeworkCourses([]);
+    setHomeworkCourseKey("");
+    setTasks([]);
+    setTaskDetail(null);
     setStatus(`已切换学期：${termName || termId}`);
   }
 
-  async function switchCourse(course) {
-    const subjectName = course?.name || course?.subjectName || course?.courseName || course?.title;
-    const subjectId = course?.subject_id || course?.subjectId || course?.id;
-    const classId = course?.class_id || course?.classId;
-    if (!subjectName && !subjectId) {
-      setStatus("无法识别课程名称或 ID");
-      return;
+  async function loadHomeworkCourses(options = {}) {
+    if (!options.keepLoading) {
+      setHomeworkCourseLoading(true);
     }
-    setSessionMenuOpen(false);
-    const args = isAllCourses(course)
-      ? { subject_name: allCoursesName }
-      : subjectName
-        ? { subject_name: subjectName, class_id: classId }
-        : { subject_id: subjectId, class_id: classId };
-    await callTool("set_current_subject", args);
-    await refreshSession();
-    setStatus(`已切换课程：${subjectName || subjectId}`);
+    try {
+      const result = await callTool("list_courses", {});
+      const rows = result?.courses || result?.items || result?.records || session?.availableSubjects || [];
+      const nextCourses = Array.isArray(rows) ? rows : [];
+      const allIndex = nextCourses.findIndex((course) => isAllCourses(course));
+      const withAll = allIndex >= 0
+        ? nextCourses
+        : [{ id: "__all_courses__", name: allCoursesName, allSubjects: true }, ...nextCourses];
+      const currentCourse = withAll.find((course, index) => getCourseOptionKey(course, index) === homeworkCourseKey);
+      const nextCourse = currentCourse || withAll.find((course) => isAllCourses(course)) || withAll[0] || null;
+      const nextIndex = nextCourse ? withAll.indexOf(nextCourse) : -1;
+      const nextKey = nextCourse ? getCourseOptionKey(nextCourse, nextIndex) : "";
+      setHomeworkCourses(withAll);
+      setHomeworkCourseKey(nextKey);
+      return { courses: withAll, course: nextCourse, key: nextKey };
+    } finally {
+      if (!options.keepLoading) {
+        setHomeworkCourseLoading(false);
+      }
+    }
   }
 
-  async function loadTasks(listType = "all") {
-    const result = await callTool("list_tasks", { list_type: listType, page: 1, size: 30 });
+  async function loadTasks(listType = "all", course = homeworkCourse) {
+    setHomeworkListType(listType);
+    let targetCourse = course;
+    if (!targetCourse && !homeworkCourses.length) {
+      const loaded = await loadHomeworkCourses({ keepLoading: true });
+      targetCourse = loaded.course;
+    }
+    const result = await callTool("list_tasks", courseTaskArgs(targetCourse, listType));
     setTasks(extractTaskRows(result));
+    setTaskDetail(null);
+    await refreshSession();
     setPage("homework");
+  }
+
+  async function handleHomeworkCourseChange(nextKey) {
+    setHomeworkCourseKey(nextKey);
+    setTaskDetail(null);
+    const nextCourse = homeworkCourses.find((course, index) => getCourseOptionKey(course, index) === nextKey);
+    await loadTasks(homeworkListType, nextCourse);
   }
 
   async function openTask(taskId) {
@@ -887,6 +1001,15 @@ function App() {
   async function openWorkspaceFolder() {
     try {
       await window.bxb.openWorkspaceFolder();
+    } catch (error) {
+      setStatus(error.message);
+    }
+  }
+
+  async function openAppPath(key) {
+    try {
+      await window.bxb.openAppPath(key);
+      setStatus("已打开路径");
     } catch (error) {
       setStatus(error.message);
     }
@@ -1325,6 +1448,16 @@ function App() {
 
   async function openPage(key) {
     setPage(key);
+    if (key === "homework") {
+      try {
+        if (!homeworkCourses.length) {
+          await loadHomeworkCourses();
+        }
+      } catch (error) {
+        setStatus(error.message);
+      }
+      return;
+    }
     if (key !== "drafts") {
       return;
     }
@@ -1378,30 +1511,12 @@ function App() {
                   })
                 )}
               </div>
-              <div className="session-menu-section">
-                <div className="session-menu-title">切换课程</div>
-                {courses.length === 0 ? (
-                  <div className="session-empty">暂无课程数据</div>
-                ) : (
-                  courses.map((course, index) => {
-                    const name = course?.name || course?.subjectName || course?.courseName || course?.title || `课程 ${index + 1}`;
-                    const id = course?.id || course?.subject_id || course?.subjectId;
-                    const active = name === session?.currentSubject?.name || id === session?.currentSubject?.id;
-                    return (
-                      <button key={`${id || name}-${index}`} className={active ? "session-menu-item active" : "session-menu-item"} onClick={() => switchCourse(course)}>
-                        <span>{name}</span>
-                        {active && <b>当前</b>}
-                      </button>
-                    );
-                  })
-                )}
-              </div>
             </div>
           )}
           <button className={sessionMenuOpen ? "sidebar-card open" : "sidebar-card"} onClick={toggleSessionMenu}>
             <div className="eyebrow">Session</div>
             <strong>{session?.ready ? session?.user?.name || "已登录" : "未登录"}</strong>
-            <span>{session?.currentSubject?.name || "暂无课程"}</span>
+            <span>{session?.currentTermName || "选择学期"}</span>
           </button>
         </div>
       </aside>
@@ -1536,10 +1651,30 @@ function App() {
 
         {page === "homework" && (
           <section>
-            <PageTitle title="作业中心" subtitle="直接调用本地 list_tasks / read_task_content 工具。" />
-            <div className="card toolbar">
+            <PageTitle title="作业中心" subtitle="选择科目后查看作业；不会要求用户切换全局当前科目。" />
+            <div className="card toolbar homework-toolbar">
+              <label>科目
+                <select
+                  value={homeworkCourseKey}
+                  onChange={(event) => handleHomeworkCourseChange(event.target.value)}
+                  disabled={homeworkCourseLoading}
+                >
+                  {!homeworkCourses.length && <option value="">选择科目</option>}
+                  {homeworkCourses.map((course, index) => {
+                    const key = getCourseOptionKey(course, index);
+                    return (
+                      <option key={key} value={key}>
+                        {isAllCourses(course) ? allCoursesName : getCourseName(course) || `课程 ${index + 1}`}
+                      </option>
+                    );
+                  })}
+                </select>
+              </label>
+              <button onClick={() => loadHomeworkCourses()} disabled={homeworkCourseLoading}>
+                {homeworkCourseLoading ? "加载中" : "刷新科目"}
+              </button>
               <button className="primary" onClick={() => loadTasks("all")}>刷新作业</button>
-              <button onClick={() => loadTasks("pending")}>未提交作业</button>
+              <button onClick={() => loadTasks("pending")}>待处理作业</button>
             </div>
             <div className="grid two wide-left">
               <div className="card table-card">
@@ -1548,7 +1683,7 @@ function App() {
                   <tbody>
                     {!tasks.length && (
                       <tr>
-                        <td colSpan="5" className="empty-cell">暂无作业数据，点击上方刷新作业或未提交作业。</td>
+                        <td colSpan="5" className="empty-cell">暂无作业数据，选择科目后点击刷新作业或待处理作业。</td>
                       </tr>
                     )}
                     {tasks.map((task, index) => {
@@ -1884,6 +2019,28 @@ function App() {
                   </div>
                 </label>
                 <label>上下文长度<input value={modelConfig.contextLength || ""} onChange={(event) => setModelConfig({ ...modelConfig, contextLength: event.target.value })} /></label>
+                <div className="temperature-grid">
+                  <label>助手对话 Temperature
+                    <input
+                      type="number"
+                      min="0"
+                      max="2"
+                      step="0.1"
+                      value={modelConfig.chatTemperature ?? 0.2}
+                      onChange={(event) => setModelConfig({ ...modelConfig, chatTemperature: event.target.value })}
+                    />
+                  </label>
+                  <label>压缩上下文 Temperature
+                    <input
+                      type="number"
+                      min="0"
+                      max="2"
+                      step="0.1"
+                      value={modelConfig.compactTemperature ?? 0.1}
+                      onChange={(event) => setModelConfig({ ...modelConfig, compactTemperature: event.target.value })}
+                    />
+                  </label>
+                </div>
                 <div className="toolbar">
                   <button className="primary" onClick={saveConfig}>保存配置</button>
                   <button onClick={testConfig}>测试连通性</button>
@@ -1972,7 +2129,22 @@ function App() {
                   <button onClick={restoreDefaultPrompt}>恢复默认提示词</button>
                   <button onClick={() => openUpdateLink("https://github.com/GRAY-XY/BXB_tools")}>打开 GitHub</button>
                 </div>
-                <JsonBlock data={appInfo || {}} />
+              </div>
+              <div className="card path-card settings-card-wide">
+                <h2>路径</h2>
+                <div className="path-list">
+                  {appPathRows(appInfo).map((item) => (
+                    <div key={item.key} className="path-item">
+                      <div>
+                        <strong>{item.title}</strong>
+                        <span>{item.description}</span>
+                        <code>{item.path}</code>
+                      </div>
+                      <button type="button" onClick={() => openAppPath(item.key)}>打开路径</button>
+                    </div>
+                  ))}
+                  {!appInfo && <div className="session-empty">路径信息加载中。</div>}
+                </div>
               </div>
             </div>
           </section>

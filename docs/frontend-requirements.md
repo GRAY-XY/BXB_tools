@@ -44,41 +44,30 @@ Required cards:
   - Account name.
   - Class name.
   - Current term.
-  - Current course.
   - Number of available courses.
-  - Current course pending count.
+  - Pending task count across available courses when available.
 
 Do not render raw `session_status` JSON in normal UI.
 
-## Session And Course Switching
+## Session And Term Switching
 
 When the Session card opens:
 
 1. Call `list_terms`.
-2. Call `list_courses`.
-3. Render `切换学期` and `切换课程` sections.
+2. Render `切换学期`.
+3. Do not ask the user to choose a global current subject here.
 
 When the user selects a term:
 
 1. Call `set_current_term` with `term_name` or `term_id`.
 2. Refresh `getSession`.
 3. Refresh `list_terms`.
-4. Refresh `list_courses`.
+4. Clear homework-page course/task state so the next homework refresh reloads current-term courses.
 5. Recompute selected state from `session.currentTermId`, not stale `term.status`.
-
-When the user selects a course:
-
-1. Call `set_current_subject` with `subject_name` or `subject_id` and optional `class_id`.
-2. If the user selects `全部课程`, call `set_current_subject({ subject_name: "全部课程" })` without `class_id`.
-3. Refresh `getSession`.
-4. Close the menu.
 
 Acceptance criteria:
 
-- Switching terms updates the course list.
 - The previous term does not remain highlighted after switching.
-- Switching courses updates the sidebar current course.
-- The course menu includes `全部课程`; when selected, task lists aggregate all current-term courses and keep course names visible in rows.
 - The menu opens upward and remains usable on small desktop windows.
 
 ## Agent Page
@@ -127,11 +116,12 @@ Context meter:
 
 Required actions:
 
-- Refresh all tasks: `list_tasks({ list_type: "all", page: 1, size: 30 })`
-- Refresh pending tasks: `list_tasks({ list_type: "pending", page: 1, size: 30 })`
+- Load course filter choices: `list_courses({})`
+- Refresh all tasks for selected course: `list_tasks({ subject_name, class_id, list_type: "all", page: 1, size: 30 })`
+- Refresh pending tasks for selected course: `list_tasks({ subject_name, class_id, list_type: "pending", page: 1, size: 30 })`
 - Open task detail: `read_task_content({ task_id, max_chars: 6000 })`
 
-When current course is `全部课程`, the page must keep the Course column visible and read course names from each row, not from the global session course.
+The homework page must own subject selection with a dropdown that includes `全部课程`; users should not need to switch a global current subject to browse homework. When `全部课程` is selected, task lists aggregate all current-term courses and keep course names visible in rows.
 
 Table columns:
 
@@ -270,6 +260,8 @@ Required controls:
   - Model picker should render as one control: a manual text field before loading available models, then one dropdown after models are loaded.
   - Reading available models should only update the dropdown and status text; do not render the model-list JSON in the page.
   - Context length.
+  - Assistant chat Temperature.
+  - Context-compaction Temperature.
   - Save config.
   - Read available models.
   - Test connectivity.
@@ -280,6 +272,10 @@ Required controls:
 - Restore default system prompt.
 - Save settings.
 - GitHub repository link or copyable URL.
+- Path card:
+  - Do not render raw `appInfo` JSON.
+  - Show app data, Banxuebang data, workspace, draft store, model config, conversation store, payload, and browser dependency paths as readable rows.
+  - Each row should explain what is stored there and include an `打开路径` action.
 - Update card for the Windows preview channel:
   - Show the current app version from Electron.
   - Check GitHub Releases for non-draft prereleases whose title starts with `BXB Homework Win v`.

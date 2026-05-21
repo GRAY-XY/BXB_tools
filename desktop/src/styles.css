@@ -448,6 +448,13 @@ footer {
   margin-bottom: 14px;
 }
 
+.homework-toolbar label {
+  min-width: min(360px, 100%);
+  display: grid;
+  gap: 5px;
+  font-weight: 650;
+}
+
 .muted {
   color: #606060;
   font-size: 13px;
@@ -1792,6 +1799,62 @@ tbody tr:hover {
   white-space: nowrap;
 }
 
+.temperature-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.path-card {
+  display: grid;
+  gap: 14px;
+}
+
+.path-card h2 {
+  margin: 0;
+}
+
+.path-list {
+  display: grid;
+  gap: 10px;
+}
+
+.path-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #eeeeee;
+  border-radius: 8px;
+  background: #fafafa;
+}
+
+.path-item > div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.path-item span {
+  color: #606060;
+  font-size: 13px;
+}
+
+.path-item code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #404040;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 12px;
+}
+
+.path-item button {
+  white-space: nowrap;
+}
+
 :root[data-theme="dark"] {
   color-scheme: dark;
 }
@@ -1852,6 +1915,7 @@ tbody tr:hover {
 :root[data-theme="dark"] .draft-evidence,
 :root[data-theme="dark"] .update-facts > div,
 :root[data-theme="dark"] .update-result,
+:root[data-theme="dark"] .path-item,
 :root[data-theme="dark"] .message.assistant,
 :root[data-theme="dark"] .summary-main > div,
 :root[data-theme="dark"] .summary-list > div {
@@ -1900,6 +1964,7 @@ tbody tr:hover {
 :root[data-theme="dark"] .update-head p,
 :root[data-theme="dark"] .update-facts span,
 :root[data-theme="dark"] .update-result span,
+:root[data-theme="dark"] .path-item span,
 :root[data-theme="dark"] .muted,
 :root[data-theme="dark"] .session-menu-title,
 :root[data-theme="dark"] .card p,
@@ -1925,6 +1990,7 @@ tbody tr:hover {
 :root[data-theme="dark"] .steps pre,
 :root[data-theme="dark"] .message-body pre,
 :root[data-theme="dark"] .workspace-path,
+:root[data-theme="dark"] .path-item code,
 :root[data-theme="dark"] .workspace-text,
 :root[data-theme="dark"] .draft-editor {
   background: #202020;
