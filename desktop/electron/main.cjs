@@ -348,6 +348,52 @@ function getBrowserDependencyStatus() {
   };
 }
 
+function appPathTargets() {
+  const browserDependency = getBrowserDependencyStatus();
+  return {
+    userDataRoot: { path: userDataRoot, kind: "directory", ensure: true },
+    dataRoot: { path: dataRoot, kind: "directory", ensure: true },
+    workspaceDir: { path: workspaceDir, kind: "directory", ensure: true },
+    draftDir: { path: draftDir, kind: "directory", ensure: true },
+    modelConfigPath: { path: modelConfigPath, kind: "file", ensureParent: true },
+    conversationsPath: { path: conversationsPath, kind: "file", ensureParent: true },
+    payloadRoot: { path: payloadRoot, kind: "directory", ensure: false },
+    browserRoot: { path: browserDependency.browserRoot, kind: "directory", ensure: false },
+  };
+}
+
+async function openAppPath(key) {
+  const target = appPathTargets()[String(key || "")];
+  if (!target?.path) {
+    throw new Error("未知路径。");
+  }
+
+  if (target.kind === "file") {
+    const parent = path.dirname(target.path);
+    if (target.ensureParent) {
+      await fs.mkdir(parent, { recursive: true });
+    }
+    if (existsSync(target.path)) {
+      shell.showItemInFolder(target.path);
+      return { ok: true, key, path: target.path };
+    }
+    const error = await shell.openPath(parent);
+    if (error) {
+      throw new Error(error);
+    }
+    return { ok: true, key, path: parent };
+  }
+
+  if (target.ensure) {
+    await fs.mkdir(target.path, { recursive: true });
+  }
+  const error = await shell.openPath(target.path);
+  if (error) {
+    throw new Error(error);
+  }
+  return { ok: true, key, path: target.path };
+}
+
 async function ensurePlaywrightBrowsers() {
   const existingRoot = findExistingBrowserRoot();
   if (existingRoot) {
@@ -452,18 +498,40 @@ function extractModelIds(payload) {
     .filter(Boolean);
 }
 
+function modelRequiresTemperatureOne(config) {
+  const baseUrl = String(config?.baseUrl || "").toLowerCase();
+  const modelName = String(config?.modelName || "").toLowerCase();
+  return baseUrl.includes("moonshot.cn") || modelName.startsWith("kimi-");
+}
+
+function chatTemperature(config, fallback) {
+  return modelRequiresTemperatureOne(config) ? 1 : fallback;
+}
+
+function normalizeTemperature(value, fallback) {
+  const temperature = Number.parseFloat(value);
+  if (!Number.isFinite(temperature)) {
+    return fallback;
+  }
+  return Math.min(2, Math.max(0, temperature));
+}
+
 async function loadModelConfig() {
   const config = await readJson(modelConfigPath, {
     apiKey: "",
     baseUrl: "",
     modelName: "",
     contextLength: 0,
+    chatTemperature: 0.2,
+    compactTemperature: 0.1,
     maxToolRounds: 6,
     systemPrompt: DEFAULT_SYSTEM_PROMPT,
   });
   return {
     systemPrompt: DEFAULT_SYSTEM_PROMPT,
     ...config,
+    chatTemperature: normalizeTemperature(config.chatTemperature, 0.2),
+    compactTemperature: normalizeTemperature(config.compactTemperature, 0.1),
     systemPrompt: normalizeSystemPrompt(config.systemPrompt),
     defaultSystemPrompt: DEFAULT_SYSTEM_PROMPT,
     apiKeyMasked: maskKey(config.apiKey),
@@ -477,6 +545,8 @@ async function saveModelConfig(config) {
     baseUrl: String(config?.baseUrl || "").trim(),
     modelName: String(config?.modelName || "").trim(),
     contextLength: Number.parseInt(config?.contextLength || 0, 10) || 0,
+    chatTemperature: normalizeTemperature(config?.chatTemperature, 0.2),
+    compactTemperature: normalizeTemperature(config?.compactTemperature, 0.1),
     maxToolRounds: Math.max(1, Number.parseInt(config?.maxToolRounds || 6, 10) || 6),
     systemPrompt: normalizeSystemPrompt(config?.systemPrompt),
   };
@@ -814,7 +884,7 @@ async function runAgent({ text, requestId, conversationId }) {
         messages,
         tools: toolSchemas(),
         tool_choice: "auto",
-        temperature: 0.2,
+        temperature: chatTemperature(config, normalizeTemperature(config.chatTemperature, 0.2)),
       }),
     });
     const raw = await response.text();
@@ -914,7 +984,7 @@ async function compactAgentContext(conversationId) {
     body: JSON.stringify({
       model: config.modelName,
       messages,
-      temperature: 0.1,
+      temperature: chatTemperature(config, normalizeTemperature(config.compactTemperature, 0.1)),
     }),
   });
   const raw = await response.text();
@@ -1153,10 +1223,13 @@ ipcMain.handle("app:info", async () => ({
   dataRoot,
   workspaceDir,
   draftDir,
+  modelConfigPath,
+  conversationsPath,
   payloadRoot,
   browserDependency: getBrowserDependencyStatus(),
 }));
 
+ipcMain.handle("app:open-path", async (_event, { key } = {}) => openAppPath(key));
 ipcMain.handle("bxb:session", async () => callTool("session_status"));
 ipcMain.handle("bxb:tool", async (_event, { name, args }) => callTool(name, args));
 ipcMain.handle("workspace:import", async () => importWorkspaceFiles());

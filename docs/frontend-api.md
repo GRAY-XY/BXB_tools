@@ -46,6 +46,7 @@ declare global {
 
 ```ts
 window.bxb.getAppInfo(): Promise<AppInfo>
+window.bxb.openAppPath(key: string): Promise<{ ok: true; key: string; path: string }>
 ```
 
 Returns runtime and data directory information.
@@ -60,6 +61,8 @@ type AppInfo = {
   dataRoot: string;
   workspaceDir: string;
   draftDir: string;
+  modelConfigPath: string;
+  conversationsPath: string;
   payloadRoot: string;
   browserDependency: {
     ready: boolean;
@@ -72,8 +75,8 @@ type AppInfo = {
 
 Frontend usage:
 
-- Display diagnostic state in Settings.
-- Do not show full paths on first-run screens unless the user asks for diagnostics.
+- Display these paths in a dedicated Settings path card with short descriptions and open buttons.
+- Do not render the raw `AppInfo` JSON in normal Settings UI.
 
 ## Updates
 
@@ -168,9 +171,8 @@ Recommended summary fields:
 - Account name: `session.user.name`
 - Class name: `session.currentClass.name`
 - Current term: active term by `session.currentTermId`
-- Current course: `session.currentSubject.name`
 - Number of courses: `session.availableSubjects.length`
-- Pending count: `session.currentSubject.unSubmitCount`
+- Pending count: sum `unSubmitCount` from `session.availableSubjects` when available.
 
 ## Generic Tool Call
 
@@ -187,9 +189,8 @@ await window.bxb.callTool("login_in_browser", {});
 await window.bxb.callTool("list_terms", {});
 await window.bxb.callTool("set_current_term", { term_name: "2025-2026下学期" });
 await window.bxb.callTool("list_courses", {});
-await window.bxb.callTool("set_current_subject", { subject_name: "AP宏观经济学" });
-await window.bxb.callTool("set_current_subject", { subject_name: "全部课程" });
-await window.bxb.callTool("list_tasks", { list_type: "pending", page: 1, size: 30 });
+await window.bxb.callTool("list_tasks", { subject_name: "全部课程", list_type: "pending", page: 1, size: 30 });
+await window.bxb.callTool("list_tasks", { subject_name: "AP宏观经济学", class_id: "CLASS_ID", list_type: "all", page: 1, size: 30 });
 await window.bxb.callTool("read_task_content", { task_id: "TASK_ID", max_chars: 6000 });
 await window.bxb.callTool("download_task_attachment", { task_id: "TASK_ID", file_id: "FILE_ID" });
 await window.bxb.callTool("read_task_attachment", { task_id: "TASK_ID", file_id: "FILE_ID", max_chars: 6000 });
@@ -233,11 +234,12 @@ const rows =
   [];
 ```
 
-Course switching:
+Homework course filtering:
 
 - `list_courses` includes a synthetic first option named `全部课程`.
-- Selecting `全部课程` should call `set_current_subject({ subject_name: "全部课程" })`.
-- When `session.currentSubject.allSubjects` is true, `list_tasks` aggregates current-term tasks across all courses.
+- The homework page should use selected course values as `list_tasks` arguments instead of requiring the user to change global current subject.
+- Selecting `全部课程` should call `list_tasks({ subject_name: "全部课程", ... })`.
+- When `subject_name` is `全部课程`, `list_tasks` aggregates current-term tasks across all courses.
 - Achievement/GPA tools still require a concrete course; prompt the user to select one first.
 
 ### Workspace Import
@@ -341,6 +343,8 @@ type ModelConfigInput = {
   baseUrl?: string;
   modelName?: string;
   contextLength?: number | string;
+  chatTemperature?: number | string;
+  compactTemperature?: number | string;
   maxToolRounds?: number | string;
   systemPrompt?: string;
 };
