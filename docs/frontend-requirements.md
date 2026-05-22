@@ -274,15 +274,18 @@ Required controls:
 - GitHub repository link or copyable URL.
 - Path card:
   - Do not render raw `appInfo` JSON.
-  - Show app data, Banxuebang data, workspace, draft store, model config, conversation store, payload, and browser dependency paths as readable rows.
+  - Show app data, Banxuebang data, workspace, draft store, update cache, model config, conversation store, payload, and browser dependency paths as readable rows.
   - Each row should explain what is stored there and include an `打开路径` action.
 - Update card for the Windows preview channel:
   - Show the current app version from Electron.
   - Check GitHub Releases for non-draft prereleases whose title starts with `BXB Homework Win v`.
   - Treat new Windows preview release titles as `BXB Homework Win v<major>.<minor>.<patch>-pre`.
   - Keep parsing older titles such as `BXB Homework Win v1.1.0-pre.3` for compatibility.
-  - Let the user open the release page or installer download in the system browser.
-  - Do not automatically install or restart the app in the first-stage updater.
+  - Show the latest version, installer size, publish time, and release notes when an update is found.
+  - Let the user download and install inside the app only when the release includes both the `.exe` installer and the matching `.sha256` asset.
+  - Download to the local update cache, show progress, verify file size and SHA256, then show `现在重启安装` and `稍后`.
+  - On `现在重启安装`, launch the verified installer and quit the app. The NSIS installer should reopen the new version after installation.
+  - Keep the Release page button as the manual fallback.
 
 Default system prompt:
 

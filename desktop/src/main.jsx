@@ -380,6 +380,18 @@ function pendingTaskCount(session) {
   return Number.isFinite(current) ? current : null;
 }
 
+function formatUpdateStatus(state, result, loading) {
+  if (state?.status === "downloading") return "下载中";
+  if (state?.status === "verifying") return "校验中";
+  if (state?.status === "ready_to_install") return "等待安装";
+  if (state?.status === "installing") return "安装中";
+  if (state?.status === "error") return "出错";
+  if (loading || state?.status === "checking") return "检查中";
+  if (result?.hasUpdate) return "有新版本";
+  if (result) return result.ok ? "已是最新" : "检查失败";
+  return "未检查";
+}
+
 function appPathRows(appInfo) {
   if (!appInfo) return [];
   return [
@@ -406,6 +418,12 @@ function appPathRows(appInfo) {
       title: "草稿库",
       description: "保存待审核、已通过和已驳回的本地作业草稿。",
       path: appInfo.draftDir,
+    },
+    {
+      key: "updateDir",
+      title: "更新缓存",
+      description: "保存应用内下载的安装器、校验信息和待安装状态。",
+      path: appInfo.updateDir,
     },
     {
       key: "modelConfigPath",
@@ -668,6 +686,7 @@ function App() {
   const [modelOptions, setModelOptions] = useState([]);
   const [modelOptionsLoading, setModelOptionsLoading] = useState(false);
   const [updateResult, setUpdateResult] = useState(null);
+  const [updateState, setUpdateState] = useState({ status: "idle", percent: 0, message: "" });
   const [updateLoading, setUpdateLoading] = useState(false);
   const chatEndRef = useRef(null);
   const stepsEndRef = useRef(null);
@@ -687,6 +706,14 @@ function App() {
   useEffect(() => {
     const off = window.bxb.onAgentProgress(({ step }) => {
       setSteps((current) => [...current, step]);
+    });
+    return off;
+  }, []);
+
+  useEffect(() => {
+    window.bxb.getUpdateStatus?.().then(setUpdateState).catch(() => {});
+    const off = window.bxb.onUpdateProgress?.((state) => {
+      setUpdateState(state);
     });
     return off;
   }, []);
@@ -1423,6 +1450,7 @@ function App() {
     try {
       const result = await window.bxb.checkForUpdates();
       setUpdateResult(result);
+      setUpdateState(await window.bxb.getUpdateStatus());
       setStatus(result.message || (result.hasUpdate ? "发现新版本" : "已是最新版本"));
     } catch (error) {
       const fallback = {
@@ -1441,6 +1469,39 @@ function App() {
     try {
       await window.bxb.openUpdateUrl(url || updateResult?.releasesUrl || "https://github.com/GRAY-XY/BXB_tools/releases");
       setStatus("已打开更新链接");
+    } catch (error) {
+      setStatus(error.message);
+    }
+  }
+
+  async function downloadAndInstallUpdate() {
+    setUpdateLoading(true);
+    try {
+      const state = await window.bxb.downloadUpdate();
+      setUpdateState(state);
+      setStatus(state.message || "更新已下载");
+    } catch (error) {
+      setStatus(error.message);
+    } finally {
+      setUpdateLoading(false);
+    }
+  }
+
+  async function cancelUpdateDownload() {
+    try {
+      const state = await window.bxb.cancelUpdateDownload();
+      setUpdateState(state);
+      setStatus(state.message || "下载已取消");
+    } catch (error) {
+      setStatus(error.message);
+    }
+  }
+
+  async function installDownloadedUpdate() {
+    try {
+      const state = await window.bxb.installUpdate();
+      setUpdateState(state);
+      setStatus(state.message || "正在启动安装器");
     } catch (error) {
       setStatus(error.message);
     }
@@ -1470,6 +1531,18 @@ function App() {
       setStatus(error.message);
     }
   }
+
+  const updateStatusLabel = formatUpdateStatus(updateState, updateResult, updateLoading);
+  const updateBusy = ["checking", "downloading", "verifying", "installing"].includes(updateState?.status) || updateLoading;
+  const updateDownloadBusy = ["downloading", "verifying"].includes(updateState?.status);
+  const updateCanDownload = Boolean(
+    updateResult?.hasUpdate &&
+    updateResult?.installerAsset?.downloadUrl &&
+    updateResult?.sha256Asset?.downloadUrl &&
+    !updateBusy
+  );
+  const updateReadyToInstall = updateState?.status === "ready_to_install";
+  const updateProgress = Number.isFinite(Number(updateState?.percent)) ? Number(updateState.percent) : 0;
 
   return (
     <div className="app-shell">
@@ -2067,17 +2140,7 @@ function App() {
                   </div>
                   <div>
                     <span>状态</span>
-                    <strong>
-                      {updateLoading
-                        ? "检查中"
-                        : updateResult?.hasUpdate
-                          ? "有新版本"
-                          : updateResult
-                            ? updateResult.ok
-                              ? "已是最新"
-                              : "检查失败"
-                            : "未检查"}
-                    </strong>
+                    <strong>{updateStatusLabel}</strong>
                   </div>
                 </div>
                 {updateResult?.latestTitle && (
@@ -2090,21 +2153,63 @@ function App() {
                         {updateResult.installerAsset.size ? ` · ${formatFileSize(updateResult.installerAsset.size)}` : ""}
                       </span>
                     )}
+                    {updateResult.sha256Asset && <span>校验文件：{updateResult.sha256Asset.name}</span>}
+                    {updateResult.latestNotes && <p>{updateResult.latestNotes}</p>}
                   </div>
+                )}
+                {updateDownloadBusy && (
+                  <div className="update-progress">
+                    <div>
+                      <span>{updateState?.message || "正在下载安装包..."}</span>
+                      <strong>{Math.max(0, Math.min(100, Math.round(updateProgress)))}%</strong>
+                    </div>
+                    <progress value={Math.max(0, Math.min(100, updateProgress))} max="100" />
+                    <span>
+                      {formatFileSize(updateState?.downloadedBytes || 0)}
+                      {updateState?.totalBytes ? ` / ${formatFileSize(updateState.totalBytes)}` : ""}
+                    </span>
+                  </div>
+                )}
+                {updateReadyToInstall && (
+                  <div className="update-ready">
+                    <strong>更新已下载并通过校验</strong>
+                    <span>现在重启会启动安装器，安装完成后会重新打开新版本。</span>
+                  </div>
+                )}
+                {updateResult?.hasUpdate && updateResult.installerAsset && !updateResult.sha256Asset && (
+                  <div className="status error">Release 缺少 SHA256 校验文件，不能在应用内下载并安装。可以先打开 Release 页面手动下载。</div>
                 )}
                 {updateResult && !updateResult.ok && (
                   <div className="status error">{updateResult.message || "暂时无法检查更新。"}</div>
                 )}
+                {updateState?.status === "error" && (
+                  <div className="status error">{updateState.message || "更新失败，请重试。"}</div>
+                )}
                 <div className="toolbar">
-                  <button className="primary" onClick={checkUpdates} disabled={updateLoading}>
-                    {updateLoading ? "检查中" : "检查更新"}
+                  <button className="primary" onClick={checkUpdates} disabled={updateBusy}>
+                    {updateState?.status === "checking" || updateLoading ? "检查中" : "检查更新"}
                   </button>
                   <button onClick={() => openUpdateLink(updateResult?.latestUrl || updateResult?.releasesUrl)}>
                     打开 Release 页面
                   </button>
-                  {updateResult?.installerAsset?.downloadUrl && (
-                    <button onClick={() => openUpdateLink(updateResult.installerAsset.downloadUrl)}>
-                      下载安装包
+                  {updateCanDownload && !updateReadyToInstall && (
+                    <button onClick={downloadAndInstallUpdate}>
+                      下载并安装
+                    </button>
+                  )}
+                  {updateDownloadBusy && (
+                    <button onClick={cancelUpdateDownload}>
+                      取消下载
+                    </button>
+                  )}
+                  {updateReadyToInstall && (
+                    <button className="primary" onClick={installDownloadedUpdate}>
+                      现在重启安装
+                    </button>
+                  )}
+                  {updateReadyToInstall && (
+                    <button onClick={() => setStatus("已保留安装包，可稍后在设置中安装。")}>
+                      稍后
                     </button>
                   )}
                 </div>

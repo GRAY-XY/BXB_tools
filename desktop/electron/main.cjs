@@ -1,8 +1,9 @@
 const { app, BrowserWindow, dialog, ipcMain, net, shell } = require("electron");
 const fs = require("node:fs/promises");
 const path = require("node:path");
-const { existsSync } = require("node:fs");
-const { spawnSync } = require("node:child_process");
+const { createReadStream, createWriteStream, existsSync } = require("node:fs");
+const crypto = require("node:crypto");
+const { spawn, spawnSync } = require("node:child_process");
 const { pathToFileURL } = require("node:url");
 
 const isDev = !app.isPackaged;
@@ -12,6 +13,8 @@ const userDataRoot = app.getPath("userData");
 const dataRoot = path.join(userDataRoot, ".banxuebang");
 const workspaceDir = path.join(dataRoot, "workspace");
 const draftDir = path.join(dataRoot, "drafts");
+const updateDir = path.join(userDataRoot, "updates");
+const pendingUpdatePath = path.join(updateDir, "pending-update.json");
 const modelConfigPath = path.join(userDataRoot, "model-config.json");
 const conversationsPath = path.join(userDataRoot, "agent-conversations.json");
 const IMAGE_MIME_BY_EXTENSION = new Map([
@@ -37,6 +40,16 @@ const LEGACY_DEFAULT_SYSTEM_PROMPTS = new Set([
 let mainWindow = null;
 let toolRuntimePromise = null;
 let conversationStatePromise = null;
+let updateDownloadController = null;
+let updateState = {
+  status: "idle",
+  update: null,
+  downloadedBytes: 0,
+  totalBytes: 0,
+  percent: 0,
+  filePath: null,
+  message: "",
+};
 
 function safeError(error) {
   return {
@@ -111,6 +124,62 @@ function chooseWindowsInstallerAsset(release, version) {
   );
 }
 
+function chooseWindowsSha256Asset(release, installerAsset) {
+  const assets = Array.isArray(release?.assets) ? release.assets : [];
+  const installerName = String(installerAsset?.name || "").toLowerCase();
+  const expectedName = installerName ? `${installerName}.sha256` : "";
+  return (
+    assets.find((asset) => String(asset?.name || "").toLowerCase() === expectedName) ||
+    assets.find((asset) => String(asset?.name || "").toLowerCase().endsWith(".sha256")) ||
+    null
+  );
+}
+
+function sanitizeFileName(value) {
+  return String(value || "download.exe").replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_");
+}
+
+function publicUpdateState() {
+  return {
+    ...updateState,
+    update: updateState.update ? { ...updateState.update } : null,
+  };
+}
+
+function setUpdateState(patch) {
+  updateState = {
+    ...updateState,
+    ...patch,
+  };
+  if (mainWindow) {
+    mainWindow.webContents.send("update:progress", publicUpdateState());
+  }
+  return publicUpdateState();
+}
+
+function resetUpdateProgress(patch = {}) {
+  return setUpdateState({
+    downloadedBytes: 0,
+    totalBytes: 0,
+    percent: 0,
+    filePath: null,
+    message: "",
+    ...patch,
+  });
+}
+
+function assertUpdateCacheFile(filePath) {
+  const resolved = path.resolve(String(filePath || ""));
+  const root = path.resolve(updateDir);
+  if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) {
+    throw new Error("更新文件不在应用更新缓存目录中。");
+  }
+  if (path.extname(resolved).toLowerCase() !== ".exe") {
+    throw new Error("更新安装器必须是 .exe 文件。");
+  }
+  return resolved;
+}
+
 async function readJson(filePath, fallback) {
   try {
     return JSON.parse(await fs.readFile(filePath, "utf8"));
@@ -126,6 +195,74 @@ async function writeJson(filePath, payload) {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   await fs.writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
   return payload;
+}
+
+async function sha256File(filePath) {
+  const hash = crypto.createHash("sha256");
+  const stream = createReadStream(filePath);
+  for await (const chunk of stream) {
+    hash.update(chunk);
+  }
+  return hash.digest("hex");
+}
+
+async function readSha256Asset(downloadUrl) {
+  if (!downloadUrl) {
+    throw new Error("Release 缺少 SHA256 校验文件。");
+  }
+  const response = await net.fetch(downloadUrl, {
+    headers: { "User-Agent": "BXB-Homework" },
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`SHA256 校验文件下载失败 HTTP ${response.status}: ${text.slice(0, 300)}`);
+  }
+  const match = text.match(/[a-fA-F0-9]{64}/);
+  if (!match) {
+    throw new Error("SHA256 校验文件格式无效。");
+  }
+  return match[0].toLowerCase();
+}
+
+async function writeResponseBodyToFile(response, filePath, totalBytes) {
+  if (!response.body?.getReader) {
+    const buffer = Buffer.from(await response.arrayBuffer());
+    await fs.writeFile(filePath, buffer);
+    setUpdateState({
+      downloadedBytes: buffer.byteLength,
+      totalBytes: totalBytes || buffer.byteLength,
+      percent: 100,
+    });
+    return buffer.byteLength;
+  }
+
+  const reader = response.body.getReader();
+  const output = createWriteStream(filePath);
+  let downloadedBytes = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = Buffer.from(value);
+      downloadedBytes += chunk.byteLength;
+      if (!output.write(chunk)) {
+        await new Promise((resolve, reject) => {
+          output.once("drain", resolve);
+          output.once("error", reject);
+        });
+      }
+      setUpdateState({
+        downloadedBytes,
+        totalBytes,
+        percent: totalBytes ? Math.min(100, Math.round((downloadedBytes / totalBytes) * 100)) : 0,
+      });
+    }
+  } finally {
+    await new Promise((resolve, reject) => {
+      output.end((error) => (error ? reject(error) : resolve()));
+    });
+  }
+  return downloadedBytes;
 }
 
 function nowIso() {
@@ -355,6 +492,7 @@ function appPathTargets() {
     dataRoot: { path: dataRoot, kind: "directory", ensure: true },
     workspaceDir: { path: workspaceDir, kind: "directory", ensure: true },
     draftDir: { path: draftDir, kind: "directory", ensure: true },
+    updateDir: { path: updateDir, kind: "directory", ensure: true },
     modelConfigPath: { path: modelConfigPath, kind: "file", ensureParent: true },
     conversationsPath: { path: conversationsPath, kind: "file", ensureParent: true },
     payloadRoot: { path: payloadRoot, kind: "directory", ensure: false },
@@ -1141,6 +1279,7 @@ async function checkForUpdates() {
 
     const latestVersion = latest.version.raw;
     const asset = chooseWindowsInstallerAsset(latest.release, latestVersion);
+    const sha256Asset = asset ? chooseWindowsSha256Asset(latest.release, asset) : null;
     const hasUpdate = currentParsed
       ? compareAppVersions(latest.version, currentParsed) > 0
       : latestVersion !== currentVersion;
@@ -1153,6 +1292,7 @@ async function checkForUpdates() {
       latestTitle: latest.release.name,
       latestTag: latest.release.tag_name,
       latestUrl: latest.release.html_url,
+      latestNotes: String(latest.release.body || "").slice(0, 4000),
       publishedAt: latest.release.published_at,
       hasUpdate,
       installerAsset: asset
@@ -1160,6 +1300,13 @@ async function checkForUpdates() {
             name: asset.name,
             size: asset.size,
             downloadUrl: asset.browser_download_url,
+          }
+        : null,
+      sha256Asset: sha256Asset
+        ? {
+            name: sha256Asset.name,
+            size: sha256Asset.size,
+            downloadUrl: sha256Asset.browser_download_url,
           }
         : null,
       releasesUrl: RELEASES_PAGE_URL,
@@ -1177,6 +1324,182 @@ async function checkForUpdates() {
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function checkForUpdatesWithState() {
+  resetUpdateProgress({ status: "checking", update: null, message: "正在检查更新..." });
+  const result = await checkForUpdates();
+  setUpdateState({
+    status: result.ok && result.hasUpdate ? "available" : result.ok ? "idle" : "error",
+    update: result.ok && result.hasUpdate ? result : null,
+    totalBytes: result.installerAsset?.size || 0,
+    message: result.message,
+  });
+  return result;
+}
+
+async function loadPendingUpdateState() {
+  if (["checking", "downloading", "verifying", "installing"].includes(updateState.status)) {
+    return publicUpdateState();
+  }
+  if (updateState.status === "ready_to_install" && updateState.filePath && existsSync(updateState.filePath)) {
+    return publicUpdateState();
+  }
+
+  const pending = await readJson(pendingUpdatePath, null);
+  if (!pending?.filePath) {
+    return publicUpdateState();
+  }
+
+  let installerPath;
+  try {
+    installerPath = assertUpdateCacheFile(pending.filePath);
+  } catch (error) {
+    await fs.rm(pendingUpdatePath, { force: true });
+    return resetUpdateProgress({ status: "error", update: null, message: error.message });
+  }
+  if (!existsSync(installerPath)) {
+    await fs.rm(pendingUpdatePath, { force: true });
+    return resetUpdateProgress({ status: "idle", update: null, message: "" });
+  }
+
+  if (pending.version && compareAppVersions(pending.version, app.getVersion()) <= 0) {
+    await fs.rm(pendingUpdatePath, { force: true });
+    return resetUpdateProgress({ status: "idle", update: null, message: "当前已是已下载更新版本。" });
+  }
+
+  return setUpdateState({
+    status: "ready_to_install",
+    update: pending.update || null,
+    downloadedBytes: pending.size || 0,
+    totalBytes: pending.size || 0,
+    percent: 100,
+    filePath: installerPath,
+    message: "更新已下载并通过校验。",
+  });
+}
+
+async function downloadUpdate() {
+  if (updateState.status === "downloading") {
+    return publicUpdateState();
+  }
+
+  let update = updateState.update;
+  if (!update?.hasUpdate) {
+    const checked = await checkForUpdatesWithState();
+    if (!checked?.hasUpdate) {
+      return publicUpdateState();
+    }
+    update = checked;
+  }
+
+  if (!update.installerAsset?.downloadUrl || !update.installerAsset?.name) {
+    throw new Error("Release 中没有可下载的 Windows 安装包。");
+  }
+  if (!update.sha256Asset?.downloadUrl) {
+    throw new Error("Release 缺少 SHA256 校验文件，不能执行应用内安装。");
+  }
+
+  await fs.mkdir(updateDir, { recursive: true });
+  const fileName = sanitizeFileName(update.installerAsset.name);
+  const finalPath = path.join(updateDir, fileName);
+  const tempPath = `${finalPath}.download`;
+  const metaPath = `${finalPath}.meta.json`;
+  const totalBytes = Number(update.installerAsset.size || 0);
+  updateDownloadController = new AbortController();
+
+  try {
+    await fs.rm(tempPath, { force: true });
+    resetUpdateProgress({
+      status: "downloading",
+      update,
+      totalBytes,
+      filePath: finalPath,
+      message: "正在下载安装包...",
+    });
+    const response = await net.fetch(update.installerAsset.downloadUrl, {
+      headers: { "User-Agent": "BXB-Homework" },
+      signal: updateDownloadController.signal,
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`安装包下载失败 HTTP ${response.status}: ${text.slice(0, 300)}`);
+    }
+
+    const downloadedBytes = await writeResponseBodyToFile(response, tempPath, totalBytes);
+    if (totalBytes && downloadedBytes !== totalBytes) {
+      throw new Error(`安装包大小不匹配：已下载 ${downloadedBytes} 字节，预期 ${totalBytes} 字节。`);
+    }
+
+    setUpdateState({ status: "verifying", message: "正在校验安装包..." });
+    const [expectedSha256, actualSha256] = await Promise.all([
+      readSha256Asset(update.sha256Asset.downloadUrl),
+      sha256File(tempPath),
+    ]);
+    if (actualSha256 !== expectedSha256) {
+      throw new Error("安装包 SHA256 校验失败。");
+    }
+
+    await fs.rm(finalPath, { force: true });
+    await fs.rename(tempPath, finalPath);
+    const pendingUpdate = {
+      version: update.latestVersion,
+      releaseTitle: update.latestTitle,
+      releaseTag: update.latestTag,
+      update,
+      assetName: update.installerAsset.name,
+      size: totalBytes || downloadedBytes,
+      sha256: actualSha256,
+      downloadedAt: new Date().toISOString(),
+      filePath: finalPath,
+    };
+    await writeJson(metaPath, pendingUpdate);
+    await writeJson(pendingUpdatePath, pendingUpdate);
+
+    return setUpdateState({
+      status: "ready_to_install",
+      downloadedBytes: downloadedBytes,
+      totalBytes: totalBytes || downloadedBytes,
+      percent: 100,
+      filePath: finalPath,
+      message: "更新已下载并通过校验。",
+    });
+  } catch (error) {
+    await fs.rm(tempPath, { force: true }).catch(() => {});
+    return setUpdateState({
+      status: "error",
+      message: error?.name === "AbortError" ? "下载已取消。" : error.message,
+    });
+  } finally {
+    updateDownloadController = null;
+  }
+}
+
+async function cancelUpdateDownload() {
+  if (updateDownloadController) {
+    updateDownloadController.abort();
+  }
+  return setUpdateState({ status: "idle", message: "下载已取消。" });
+}
+
+async function installUpdate() {
+  if (updateState.status !== "ready_to_install" || !updateState.filePath) {
+    throw new Error("没有已下载并通过校验的更新安装包。");
+  }
+  const installerPath = assertUpdateCacheFile(updateState.filePath);
+  if (!existsSync(installerPath)) {
+    throw new Error("更新安装包不存在，请重新下载。");
+  }
+
+  setUpdateState({ status: "installing", message: "正在启动安装器，应用即将退出..." });
+  const child = spawn(installerPath, [], {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: false,
+  });
+  child.unref();
+  setTimeout(() => app.quit(), 500);
+  return publicUpdateState();
 }
 
 async function openExternalHttpUrl(url) {
@@ -1223,6 +1546,7 @@ ipcMain.handle("app:info", async () => ({
   dataRoot,
   workspaceDir,
   draftDir,
+  updateDir,
   modelConfigPath,
   conversationsPath,
   payloadRoot,
@@ -1239,7 +1563,11 @@ ipcMain.handle("workspace:open", async () => {
   return { ok: true, workspaceDir };
 });
 ipcMain.handle("workspace:image-data-url", async (_event, { filePath } = {}) => getWorkspaceImageDataUrl(filePath));
-ipcMain.handle("update:check", async () => checkForUpdates());
+ipcMain.handle("update:check", async () => checkForUpdatesWithState());
+ipcMain.handle("update:download", async () => downloadUpdate());
+ipcMain.handle("update:install", async () => installUpdate());
+ipcMain.handle("update:cancel", async () => cancelUpdateDownload());
+ipcMain.handle("update:status", async () => loadPendingUpdateState());
 ipcMain.handle("update:open-url", async (_event, { url } = {}) => openExternalHttpUrl(url));
 ipcMain.handle("config:model:load", async () => loadModelConfig());
 ipcMain.handle("config:model:save", async (_event, config) => saveModelConfig(config));
