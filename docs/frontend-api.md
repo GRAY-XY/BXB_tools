@@ -22,6 +22,10 @@ declare global {
       openWorkspaceFolder(): Promise<{ ok: true; workspaceDir: string }>;
       getWorkspaceImageDataUrl(filePath: string): Promise<WorkspaceImagePreview>;
       checkForUpdates(): Promise<UpdateCheckResult>;
+      downloadUpdate(): Promise<UpdateState>;
+      installUpdate(): Promise<UpdateState>;
+      cancelUpdateDownload(): Promise<UpdateState>;
+      getUpdateStatus(): Promise<UpdateState>;
       openUpdateUrl(url: string): Promise<{ ok: true; url: string }>;
       loadModelConfig(): Promise<ModelConfig>;
       saveModelConfig(config: ModelConfigInput): Promise<ModelConfig>;
@@ -36,6 +40,7 @@ declare global {
       renameConversation(conversationId: string, title: string): Promise<AgentConversationState>;
       deleteConversation(conversationId: string): Promise<AgentConversationState>;
       resetChat(): Promise<{ ok: true }>;
+      onUpdateProgress(callback: (payload: UpdateState) => void): () => void;
       onAgentProgress(callback: (payload: AgentProgressPayload) => void): () => void;
     };
   }
@@ -61,6 +66,7 @@ type AppInfo = {
   dataRoot: string;
   workspaceDir: string;
   draftDir: string;
+  updateDir: string;
   modelConfigPath: string;
   conversationsPath: string;
   payloadRoot: string;
@@ -82,10 +88,15 @@ Frontend usage:
 
 ```ts
 window.bxb.checkForUpdates(): Promise<UpdateCheckResult>
+window.bxb.downloadUpdate(): Promise<UpdateState>
+window.bxb.installUpdate(): Promise<UpdateState>
+window.bxb.cancelUpdateDownload(): Promise<UpdateState>
+window.bxb.getUpdateStatus(): Promise<UpdateState>
+window.bxb.onUpdateProgress(callback: (payload: UpdateState) => void): () => void
 window.bxb.openUpdateUrl(url: string): Promise<{ ok: true; url: string }>
 ```
 
-The first-stage updater checks GitHub Releases and lets the user open the release page or installer download in the system browser. It does not install updates automatically.
+The Windows updater checks GitHub Releases, downloads the matched installer into the local update cache, verifies file size and SHA256, then lets the user restart into the installer from inside the app. Keep the release page link as a manual fallback.
 
 Windows preview releases are identified by release title, not tag name:
 
@@ -106,6 +117,7 @@ type UpdateCheckResult = {
   latestTag?: string;
   latestUrl?: string;
   publishedAt?: string;
+  latestNotes?: string;
   message: string;
   releasesUrl: string;
   installerAsset?: {
@@ -113,8 +125,33 @@ type UpdateCheckResult = {
     size?: number;
     downloadUrl: string;
   } | null;
+  sha256Asset?: {
+    name: string;
+    size?: number;
+    downloadUrl: string;
+  } | null;
+};
+
+type UpdateState = {
+  status:
+    | "idle"
+    | "checking"
+    | "available"
+    | "downloading"
+    | "verifying"
+    | "ready_to_install"
+    | "installing"
+    | "error";
+  update?: UpdateCheckResult | null;
+  downloadedBytes?: number;
+  totalBytes?: number;
+  percent?: number;
+  filePath?: string | null;
+  message?: string;
 };
 ```
+
+Application-internal installation requires the release to include a SHA256 asset named like the installer plus `.sha256`, for example `BXB Homework Setup 1.1.3-pre.exe.sha256`.
 
 ## Session
 

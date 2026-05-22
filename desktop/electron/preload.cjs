@@ -9,6 +9,10 @@ contextBridge.exposeInMainWorld("bxb", {
   openWorkspaceFolder: () => ipcRenderer.invoke("workspace:open"),
   getWorkspaceImageDataUrl: (filePath) => ipcRenderer.invoke("workspace:image-data-url", { filePath }),
   checkForUpdates: () => ipcRenderer.invoke("update:check"),
+  downloadUpdate: () => ipcRenderer.invoke("update:download"),
+  installUpdate: () => ipcRenderer.invoke("update:install"),
+  cancelUpdateDownload: () => ipcRenderer.invoke("update:cancel"),
+  getUpdateStatus: () => ipcRenderer.invoke("update:status"),
   openUpdateUrl: (url) => ipcRenderer.invoke("update:open-url", { url }),
   loadModelConfig: () => ipcRenderer.invoke("config:model:load"),
   saveModelConfig: (config) => ipcRenderer.invoke("config:model:save", config),
@@ -27,5 +31,10 @@ contextBridge.exposeInMainWorld("bxb", {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on("agent:progress", listener);
     return () => ipcRenderer.removeListener("agent:progress", listener);
+  },
+  onUpdateProgress: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("update:progress", listener);
+    return () => ipcRenderer.removeListener("update:progress", listener);
   },
 });
