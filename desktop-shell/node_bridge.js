@@ -121,7 +121,7 @@ async function buildDashboardPayload() {
     };
   }
 
-  const [termsResult, homeworkAggregate, gpaResult, scheduleResult, noticesResult, unreadResult] =
+  const [termsResult, homeworkAggregate, gpaResult] =
     await Promise.all([
       client.listTerms().catch(() => ({ terms: [] })),
       buildHomeworkAcrossCourses(summary).catch(() => ({
@@ -130,9 +130,6 @@ async function buildDashboardPayload() {
         pendingHomework: [],
       })),
       client.getCurrentSubjectGpa().catch(() => null),
-      client.getSchedule().catch(() => ({ schedule: {}, timeSlots: {} })),
-      client.getNotices({ page: 1, size: 20 }).catch(() => ({ notices: [] })),
-      client.getUndoMessageCount().catch(() => ({ count: null })),
     ]);
 
   return {
@@ -141,10 +138,10 @@ async function buildDashboardPayload() {
     courses: homeworkAggregate.courses || [],
     homework: homeworkAggregate.homework || [],
     pendingHomework: homeworkAggregate.pendingHomework || [],
-    schedule: scheduleResult.schedule || {},
-    timeSlots: scheduleResult.timeSlots || {},
-    notices: noticesResult.notices || [],
-    unreadCount: unreadResult.count || null,
+    schedule: {},
+    timeSlots: {},
+    notices: [],
+    unreadCount: null,
     gpa: gpaResult,
     currentTask: null,
   };
@@ -179,7 +176,50 @@ async function run(command, payload) {
       }
       return ok(await buildDashboardPayload());
     case "open-task":
-      return ok(await client.getTaskDetail(payload.taskId, { includeOtherSubmissions: false }));
+      const taskDetail = await client.getTaskDetail(payload.taskId, { includeOtherSubmissions: true });
+      
+      // 只在作业结束后展示高分提交（A和A+），且匿名化
+      const highScoreSubmissions = [];
+      // 检查作业是否结束（从 task 对象或 endTime 判断）
+      const isTaskEnded = taskDetail.task?.isEnd || 
+                         (taskDetail.task?.endTime && new Date(taskDetail.task.endTime) < new Date());
+      
+      if (isTaskEnded) {
+        for (const submission of taskDetail.submittedList || []) {
+          // 根据 score 判断等级（假设 90+ 为 A/A+）
+          const score = submission.score || 0;
+          if (score >= 90) {
+            highScoreSubmissions.push({
+              id: submission.id,
+              score: submission.score,
+              academicScore: submission.academicScore,
+              level: submission.level,
+              receiptTime: submission.receiptTime,
+              remark: submission.remark,
+              fileList: submission.fileList,
+              // 匿名化：用编号代替姓名
+              userName: `A同学 #${highScoreSubmissions.length + 1}`,
+              accountAvatar: null,  // 移除头像
+              sexCode: null,  // 移除性别
+            });
+          }
+        }
+      }
+      
+      return ok({
+        ...taskDetail,
+        submittedList: highScoreSubmissions,  // 只返回高分提交
+        peerSubmissionAttachments: highScoreSubmissions.flatMap(sub => 
+          (sub.fileList || []).map(file => ({
+            fileId: file.fileId || file.id,
+            fileName: file.fileName || file.name,
+            name: file.name || file.fileName,
+            fileExt: file.fileExt || '',
+            source: 'peer-submission',
+          }))
+        ),
+        highScoreSubmissions,  // 保留简化版本用于卡片展示
+      });
     case "submit-task":
       return ok(
         await client.submitTaskResult({
@@ -196,6 +236,17 @@ async function run(command, payload) {
           directory: payload.directory,
         }),
       );
+    case "list-private-contacts":
+      return ok(await client.listPrivateMessageContacts());
+    case "get-private-thread":
+      return ok(
+        await client.getPrivateMessageThread(payload.contact, {
+          size: payload.size || 20,
+          endTime: payload.endTime || "",
+        }),
+      );
+    case "send-private-message":
+      return ok(await client.sendPrivateMessageText(payload.contact, payload.content));
     default:
       throw new Error(`Unknown desktop-shell bridge command: ${command}`);
   }

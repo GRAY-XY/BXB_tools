@@ -1,4 +1,95 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { spawn } from "node:child_process";
 import * as z from "zod/v4";
+
+const MAX_SNIPPET_TIMEOUT_MS = 15000;
+const MAX_SNIPPET_OUTPUT_CHARS = 12000;
+
+function clampPositiveInt(value, fallback, max) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return Math.min(parsed, max);
+}
+
+function trimOutput(text, maxChars = MAX_SNIPPET_OUTPUT_CHARS) {
+  const value = String(text || "");
+  if (value.length <= maxChars) {
+    return { text: value, truncated: false, totalChars: value.length };
+  }
+  return {
+    text: value.slice(0, maxChars),
+    truncated: true,
+    totalChars: value.length,
+  };
+}
+
+async function runPythonSnippet({ code, stdin = "", timeoutMs = 5000 } = {}) {
+  const effectiveTimeout = clampPositiveInt(timeoutMs, 5000, MAX_SNIPPET_TIMEOUT_MS);
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "bxb-python-"));
+  const scriptPath = path.join(tempDir, "snippet.py");
+  const startedAt = Date.now();
+
+  await writeFile(scriptPath, code, "utf8");
+
+  return new Promise((resolve, reject) => {
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+
+    const child = spawn("python", [scriptPath], {
+      cwd: tempDir,
+      windowsHide: true,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, effectiveTimeout);
+
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString("utf8");
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString("utf8");
+    });
+    child.on("error", async (error) => {
+      clearTimeout(timer);
+      await rm(tempDir, { recursive: true, force: true });
+      reject(error);
+    });
+    child.on("close", async (exitCode, signal) => {
+      clearTimeout(timer);
+      await rm(tempDir, { recursive: true, force: true });
+      const stdoutPreview = trimOutput(stdout);
+      const stderrPreview = trimOutput(stderr);
+      resolve({
+        command: "python",
+        exitCode,
+        signal,
+        timedOut,
+        timeoutMs: effectiveTimeout,
+        durationMs: Date.now() - startedAt,
+        stdout: stdoutPreview.text,
+        stdoutTruncated: stdoutPreview.truncated,
+        stdoutTotalChars: stdoutPreview.totalChars,
+        stderr: stderrPreview.text,
+        stderrTruncated: stderrPreview.truncated,
+        stderrTotalChars: stderrPreview.totalChars,
+        note: "This helper is time-limited but not a full security sandbox. Use only for short calculations or data transformations.",
+      });
+    });
+
+    if (stdin) {
+      child.stdin.write(stdin);
+    }
+    child.stdin.end();
+  });
+}
 
 export function createToolDefinitions(client) {
   return [
@@ -132,10 +223,14 @@ export function createToolDefinitions(client) {
     },
     {
       name: "set_current_subject",
-      description: "Switch the current subject by id or course name for homework and achievement tools.",
+      description:
+        'Switch the current subject by id or course name for homework and achievement tools. Use subject_name "全部课程" to aggregate homework across all courses.',
       inputSchema: {
         subject_id: z.union([z.string(), z.number()]).optional().describe("Target subject id."),
-        subject_name: z.string().optional().describe("Target course name, for example 国际公民素养."),
+        subject_name: z
+          .string()
+          .optional()
+          .describe('Target course name, for example 国际公民素养. Use "全部课程" for all courses.'),
         class_id: z
           .union([z.string(), z.number()])
           .optional()
@@ -175,7 +270,7 @@ export function createToolDefinitions(client) {
     {
       name: "list_tasks",
       description:
-        "List tasks for the current subject. This is an alias of list_homework for AI clients that prefer task wording.",
+        'List tasks for the current subject or all courses. Use subject_name "全部课程" to aggregate all current-term courses.',
       inputSchema: {
         term_id: z.union([z.string(), z.number()]).optional().describe("Optional term id override."),
         term_name: z.string().optional().describe("Optional term name override."),
@@ -183,7 +278,7 @@ export function createToolDefinitions(client) {
           .union([z.string(), z.number()])
           .optional()
           .describe("Optional subject id override."),
-        subject_name: z.string().optional().describe("Optional subject name override."),
+        subject_name: z.string().optional().describe('Optional subject name override. Use "全部课程" for all courses.'),
         class_id: z
           .union([z.string(), z.number()])
           .optional()
@@ -236,6 +331,33 @@ export function createToolDefinitions(client) {
       execute: async () => client.getCurrentSubjectGpa(),
     },
     {
+      name: "list_private_message_contacts",
+      description: "List Banxuebang private-message contacts for the current student.",
+      inputSchema: {},
+      execute: async () => client.listPrivateMessageContacts(),
+    },
+    {
+      name: "get_private_message_thread",
+      description: "Read private-message thread content for a selected contact.",
+      inputSchema: {
+        contact: z.any().describe("Contact object returned by list_private_message_contacts."),
+        size: z.number().int().positive().optional().describe("Page size. Default 20."),
+        end_time: z.string().optional().describe("Optional endTime cursor for older messages."),
+      },
+      execute: async ({ contact, size, end_time: endTime }) =>
+        client.getPrivateMessageThread(contact, { size: size ?? 20, endTime: endTime ?? "" }),
+    },
+    {
+      name: "send_private_message_text",
+      description:
+        "Send a text private message to a selected Banxuebang contact. This must only be called after direct user action in the UI.",
+      inputSchema: {
+        contact: z.any().describe("Contact object returned by list_private_message_contacts."),
+        content: z.string().describe("Text message content to send."),
+      },
+      execute: async ({ contact, content }) => client.sendPrivateMessageText(contact, content),
+    },
+    {
       name: "open_task",
       description:
         "Open a Banxuebang task by id and return its detail, attachments, and current submission state.",
@@ -276,7 +398,7 @@ export function createToolDefinitions(client) {
         directory: z
           .string()
           .optional()
-          .describe("Optional destination directory. Default is ./.banxuebang/downloads"),
+          .describe("Optional destination directory. Default is the local workspace."),
       },
       execute: async ({ task_id: taskId, file_id: fileId, directory }) =>
         client.downloadTaskAttachment({ taskId, fileId, directory }),
@@ -300,10 +422,299 @@ export function createToolDefinitions(client) {
         directory: z
           .string()
           .optional()
-          .describe("Optional download directory. Default is ./.banxuebang/downloads"),
+          .describe("Optional download directory. Default is the local workspace."),
       },
       execute: async ({ task_id: taskId, file_id: fileId, max_chars: maxChars, directory }) =>
         client.readTaskAttachment({ taskId, fileId, maxChars, directory }),
+    },
+    {
+      name: "list_workspace_files",
+      description: "List files in the local workspace where user uploads and assistant-created/downloaded files are stored.",
+      inputSchema: {
+        query: z.string().optional().describe("Optional filename or relative-path search text."),
+        max_files: z.number().int().positive().optional().describe("Maximum number of files to return. Default 200."),
+      },
+      execute: async ({ query, max_files: maxFiles }) =>
+        client.listWorkspaceFiles({ query: query ?? "", maxFiles: maxFiles ?? 200 }),
+    },
+    {
+      name: "read_workspace_file",
+      description:
+        "Read a workspace file by relative path or filename. Supports text, PDF, and DOCX when the file type is readable.",
+      inputSchema: {
+        file: z.string().describe("Workspace relative path or filename."),
+        max_chars: z.number().int().positive().optional().describe("Maximum characters to return. Default 8000."),
+      },
+      execute: async ({ file, max_chars: maxChars }) =>
+        client.readWorkspaceFile({ file, maxChars: maxChars ?? 8000 }),
+    },
+    {
+      name: "rename_workspace_file",
+      description:
+        "Rename a workspace file by relative path or filename. If the new name has no extension, the original extension is kept.",
+      inputSchema: {
+        file: z.string().describe("Workspace relative path or filename."),
+        new_name: z.string().describe("New file name. Must not include a folder path."),
+      },
+      execute: async ({ file, new_name: newName }) =>
+        client.renameWorkspaceFile({ file, newName }),
+    },
+    {
+      name: "write_workspace_text_file",
+      description: "Create a local text or Markdown file in the workspace. This does not upload anything.",
+      inputSchema: {
+        file_name: z.string().describe("File name to create in the workspace."),
+        content: z.string().describe("Text content to save."),
+        overwrite: z.boolean().optional().describe("Whether to overwrite an existing file. Default false."),
+      },
+      execute: async ({ file_name: fileName, content, overwrite }) =>
+        client.writeWorkspaceTextFile({ fileName, content, overwrite: overwrite ?? false }),
+    },
+    {
+      name: "extract_pdf_text",
+      description:
+        "Extract readable text from a local PDF file. Use paths returned by download_task_attachment when possible.",
+      inputSchema: {
+        local_path: z.string().describe("Absolute or relative path to a local PDF file."),
+        max_chars: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe("Maximum number of characters to return. Default 6000."),
+      },
+      execute: async ({ local_path: localPath, max_chars: maxChars }) => {
+        const result = await client.readLocalAttachment(localPath, maxChars ?? 6000);
+        if (result.extension !== ".pdf") {
+          throw new Error(`extract_pdf_text expected a .pdf file, got "${result.extension}".`);
+        }
+        return result;
+      },
+    },
+    {
+      name: "extract_docx_text",
+      description:
+        "Extract readable text from a local DOCX file. Use paths returned by download_task_attachment when possible.",
+      inputSchema: {
+        local_path: z.string().describe("Absolute or relative path to a local DOCX file."),
+        max_chars: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe("Maximum number of characters to return. Default 6000."),
+      },
+      execute: async ({ local_path: localPath, max_chars: maxChars }) => {
+        const result = await client.readLocalAttachment(localPath, maxChars ?? 6000);
+        if (result.extension !== ".docx") {
+          throw new Error(`extract_docx_text expected a .docx file, got "${result.extension}".`);
+        }
+        return result;
+      },
+    },
+    {
+      name: "run_python_snippet",
+      description:
+        "Run a short Python snippet for calculations or small data transformations. Time-limited and output-limited; not a full sandbox.",
+      inputSchema: {
+        code: z.string().describe("Python code to run. Keep it short and deterministic."),
+        stdin: z.string().optional().describe("Optional stdin text passed to the Python process."),
+        timeout_ms: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe("Timeout in milliseconds. Default 5000, maximum 15000."),
+      },
+      execute: async ({ code, stdin, timeout_ms: timeoutMs }) =>
+        runPythonSnippet({ code, stdin: stdin ?? "", timeoutMs: timeoutMs ?? 5000 }),
+    },
+    {
+      name: "web_search",
+      description:
+        "Search the web through the local Playwright browser. Defaults to Bing and does not require a search API key.",
+      inputSchema: {
+        query: z.string().describe("Search query."),
+        max_results: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe("Maximum number of results to return. Default 5, maximum 10."),
+        engine: z.enum(["bing"]).optional().describe("Search engine. Defaults to bing."),
+        timeout_ms: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe("Browser timeout in milliseconds. Default 20000, maximum 45000."),
+      },
+      execute: async ({ query, max_results: maxResults, engine, timeout_ms: timeoutMs }) =>
+        client.webSearch({
+          query,
+          maxResults: maxResults ?? 5,
+          engine: engine ?? "bing",
+          timeoutMs: timeoutMs ?? 20000,
+        }),
+    },
+    {
+      name: "read_web_page",
+      description:
+        "Open an http(s) web page through the local Playwright browser and return readable body text.",
+      inputSchema: {
+        url: z.string().describe("HTTP or HTTPS URL to read."),
+        max_chars: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe("Maximum number of body-text characters to return. Default 8000, maximum 30000."),
+        timeout_ms: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe("Browser timeout in milliseconds. Default 20000, maximum 45000."),
+      },
+      execute: async ({ url, max_chars: maxChars, timeout_ms: timeoutMs }) =>
+        client.readWebPage({
+          url,
+          maxChars: maxChars ?? 8000,
+          timeoutMs: timeoutMs ?? 20000,
+        }),
+    },
+    {
+      name: "collect_task_submission_context",
+      description:
+        "Collect the task text, attachments, extracted attachment text, and missing-information signals needed before drafting a submission.",
+      inputSchema: {
+        task_id: z.union([z.string(), z.number()]).describe("Activity/task id."),
+        max_chars: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe("Maximum number of characters to keep for each text field. Default 4000."),
+        max_attachments: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe("Maximum number of attachments to read. Default 6."),
+      },
+      execute: async ({ task_id: taskId, max_chars: maxChars, max_attachments: maxAttachments }) =>
+        client.collectTaskSubmissionContext(taskId, {
+          maxChars: maxChars ?? 4000,
+          maxAttachments: maxAttachments ?? 6,
+        }),
+    },
+    {
+      name: "draft_task_submission",
+      description:
+        "Save an agent-written draft for later human review. This does not upload files or submit the task.",
+      inputSchema: {
+        task_id: z.union([z.string(), z.number()]).describe("Activity/task id."),
+        subject_name: z.string().optional().describe("Course name."),
+        task_title: z.string().optional().describe("Task title."),
+        draft_text: z.string().describe("The draft submission text created by the agent."),
+        summary: z.string().optional().describe("Short summary of what the draft tries to do."),
+        evidence: z
+          .array(z.any())
+          .optional()
+          .describe("Optional evidence objects or snippets used to justify the draft."),
+        warnings: z
+          .array(z.string())
+          .optional()
+          .describe("Optional warnings about uncertainty or partial information."),
+        missing_info: z
+          .array(z.string())
+          .optional()
+          .describe("Optional missing-information items that still block or weaken the answer."),
+        needs_user_input: z
+          .boolean()
+          .optional()
+          .describe("Whether the agent believes more user input is needed before submission."),
+      },
+      execute: async ({
+        task_id: taskId,
+        subject_name: subjectName,
+        task_title: taskTitle,
+        draft_text: draftText,
+        summary,
+        evidence,
+        warnings,
+        missing_info: missingInfo,
+        needs_user_input: needsUserInput,
+      }) =>
+        client.draftTaskSubmission({
+          taskId,
+          subjectName,
+          taskTitle,
+          draftText,
+          summary,
+          evidence: evidence ?? [],
+          warnings: warnings ?? [],
+          missingInfo: missingInfo ?? [],
+          needsUserInput: needsUserInput ?? false,
+        }),
+    },
+    {
+      name: "list_submission_drafts",
+      description: "List locally archived submission drafts and their review status.",
+      inputSchema: {
+        status: z
+          .enum(["pending_review", "approved", "rejected", "submitted", "all"])
+          .optional()
+          .describe("Optional status filter."),
+      },
+      execute: async ({ status }) => client.listSubmissionDrafts({ status }),
+    },
+    {
+      name: "get_submission_draft",
+      description: "Read a saved submission draft for review.",
+      inputSchema: {
+        draft_id: z.string().describe("Draft id returned by draft_task_submission."),
+      },
+      execute: async ({ draft_id: draftId }) => client.getSubmissionDraft(draftId),
+    },
+    {
+      name: "update_submission_draft",
+      description: "Update a locally saved submission draft after human editing. This does not upload or submit anything.",
+      inputSchema: {
+        draft_id: z.string().describe("Draft id returned by draft_task_submission."),
+        draft_text: z.string().describe("Updated draft text."),
+        summary: z.string().optional().describe("Optional updated draft summary."),
+      },
+      execute: async ({ draft_id: draftId, draft_text: draftText, summary }) =>
+        client.updateSubmissionDraft(draftId, { draftText, summary }),
+    },
+    {
+      name: "approve_submission_draft",
+      description: "Mark a saved submission draft as approved after human review.",
+      inputSchema: {
+        draft_id: z.string().describe("Draft id returned by draft_task_submission."),
+        review_note: z.string().optional().describe("Optional reviewer note."),
+      },
+      execute: async ({ draft_id: draftId, review_note: reviewNote }) =>
+        client.approveSubmissionDraft(draftId, { reviewNote }),
+    },
+    {
+      name: "reject_submission_draft",
+      description: "Mark a saved submission draft as rejected after human review.",
+      inputSchema: {
+        draft_id: z.string().describe("Draft id returned by draft_task_submission."),
+        review_note: z.string().optional().describe("Optional reviewer note."),
+      },
+      execute: async ({ draft_id: draftId, review_note: reviewNote }) =>
+        client.rejectSubmissionDraft(draftId, { reviewNote }),
+    },
+    {
+      name: "delete_submission_draft",
+      description: "Delete a locally saved submission draft JSON file. This does not affect Banxuebang.",
+      inputSchema: {
+        draft_id: z.string().describe("Draft id returned by draft_task_submission."),
+      },
+      execute: async ({ draft_id: draftId }) => client.deleteSubmissionDraft(draftId),
     },
     {
       name: "upload_submission_file",

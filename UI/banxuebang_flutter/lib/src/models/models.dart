@@ -480,6 +480,7 @@ class TaskDetail {
     required this.rawTask,
     this.taskSummary,
     this.lastScore,
+    this.highScoreSubmissions = const <HighScoreSubmission>[],
   });
 
   factory TaskDetail.fromJson(JsonMap json) {
@@ -501,6 +502,9 @@ class TaskDetail {
       lastScore: json['lastScore'] == null
           ? null
           : _mapValue(json['lastScore']),
+      highScoreSubmissions: _mapList(json['highScoreSubmissions'])
+          .map(HighScoreSubmission.fromJson)
+          .toList(),
     );
   }
 
@@ -513,6 +517,7 @@ class TaskDetail {
   final int otherSubmissionCount;
   final JsonMap rawTask;
   final JsonMap? lastScore;
+  final List<HighScoreSubmission> highScoreSubmissions;
 }
 
 class AttachmentInfo {
@@ -541,6 +546,43 @@ class AttachmentInfo {
   final String source;
 }
 
+class HighScoreSubmission {
+  HighScoreSubmission({
+    required this.score,
+    required this.receiptTime,
+    this.academicScore,
+    this.level,
+    this.userName,
+    this.remark,
+    this.fileList,
+  });
+
+  factory HighScoreSubmission.fromJson(JsonMap json) {
+    final rawFileList = json['fileList'];
+    final List<JsonMap>? fileList = rawFileList is List
+        ? rawFileList.map((item) => _mapValue(item)).toList()
+        : null;
+
+    return HighScoreSubmission(
+      score: _intValue(json['score']) ?? 0,
+      academicScore: _intValue(json['academicScore']),
+      level: json['level'] == null ? null : _stringValue(json['level']),
+      receiptTime: _stringValue(json['receiptTime']),
+      userName: json['userName'] == null ? null : _stringValue(json['userName']),
+      remark: json['remark'] == null ? null : _stringValue(json['remark']),
+      fileList: fileList,
+    );
+  }
+
+  final int score;
+  final int? academicScore;
+  final String? level;
+  final String receiptTime;
+  final String? userName;
+  final String? remark;
+  final List<JsonMap>? fileList;
+}
+
 class AttachmentDownload {
   AttachmentDownload({
     required this.path,
@@ -559,6 +601,103 @@ class AttachmentDownload {
   final String path;
   final String uri;
   final String fileName;
+}
+
+class PrivateContact {
+  PrivateContact({
+    required this.id,
+    required this.classId,
+    required this.className,
+    required this.peerId,
+    required this.peerName,
+    required this.peerType,
+    required this.unreadNum,
+    required this.lastTime,
+    required this.lastContent,
+    this.peerAvatar,
+    this.peerSexCode,
+    this.courseName,
+    this.courseColor,
+    this.raw,
+  });
+
+  factory PrivateContact.fromJson(JsonMap json) {
+    return PrivateContact(
+      id: _stringValue(json['id']),
+      classId: _stringValue(json['classId']),
+      className: _stringValue(json['className']),
+      peerId: _stringValue(json['peerId']),
+      peerName: _stringValue(json['peerName']),
+      peerType: _stringValue(json['peerType']),
+      unreadNum: _intValue(json['unreadNum']) ?? 0,
+      lastTime: _stringValue(json['lastTime']),
+      lastContent: _stringValue(json['lastContent']),
+      peerAvatar: json['peerAvatar'] == null ? null : _stringValue(json['peerAvatar']),
+      peerSexCode: _intValue(json['peerSexCode']),
+      courseName: json['courseName'] == null ? null : _stringValue(json['courseName']),
+      courseColor: json['courseColor'] == null ? null : _stringValue(json['courseColor']),
+      raw: json,
+    );
+  }
+
+  final String id;
+  final String classId;
+  final String className;
+  final String peerId;
+  final String peerName;
+  final String peerType;
+  final int unreadNum;
+  final String lastTime;
+  final String lastContent;
+  final String? peerAvatar;
+  final int? peerSexCode;
+  final String? courseName;
+  final String? courseColor;
+  final JsonMap? raw;
+}
+
+class PrivateMessage {
+  PrivateMessage({
+    required this.id,
+    required this.content,
+    required this.senderId,
+    required this.senderName,
+    required this.receiverId,
+    required this.receiverName,
+    required this.createTime,
+    this.contentType,
+    this.readFlag,
+    this.senderType,
+    this.receiverType,
+  });
+
+  factory PrivateMessage.fromJson(JsonMap json) {
+    return PrivateMessage(
+      id: _stringValue(json['id']),
+      content: _stringValue(json['content']),
+      senderId: _stringValue(json['senderId']),
+      senderName: _stringValue(json['senderName']),
+      receiverId: _stringValue(json['receiverId']),
+      receiverName: _stringValue(json['receiverName']),
+      createTime: _stringValue(json['createTime']),
+      contentType: json['contentType'] == null ? null : _stringValue(json['contentType']),
+      readFlag: _intValue(json['readFlag']),
+      senderType: json['senderType'] == null ? null : _stringValue(json['senderType']),
+      receiverType: json['receiverType'] == null ? null : _stringValue(json['receiverType']),
+    );
+  }
+
+  final String id;
+  final String content;
+  final String senderId;
+  final String senderName;
+  final String receiverId;
+  final String receiverName;
+  final String createTime;
+  final String? contentType;
+  final int? readFlag;
+  final String? senderType;
+  final String? receiverType;
 }
 
 String prettyJson(JsonMap value) {
