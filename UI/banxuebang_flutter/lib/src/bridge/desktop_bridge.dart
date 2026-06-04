@@ -85,6 +85,60 @@ class DesktopBridge {
     });
   }
 
+  Future<List<PrivateContact>> listPrivateContacts() async {
+    final payload = await _run('list-private-contacts');
+    final contactsData = payload['contacts'];
+    if (contactsData is! List) {
+      return <PrivateContact>[];
+    }
+    return contactsData
+        .map((item) => item is Map
+            ? PrivateContact.fromJson(
+                item.map((k, v) => MapEntry(k.toString(), v)),
+              )
+            : null)
+        .whereType<PrivateContact>()
+        .toList();
+  }
+
+  Future<List<PrivateMessage>> getPrivateMessageThread(
+    PrivateContact contact,
+  ) async {
+    final payload = await _run('get-private-thread', {
+      'contact': contact.raw ?? {},
+      'size': 50,
+    });
+    final messagesData = payload['messages'];
+    if (messagesData is! List) {
+      return <PrivateMessage>[];
+    }
+    return messagesData
+        .map((item) => item is Map
+            ? PrivateMessage.fromJson(
+                item.map((k, v) => MapEntry(k.toString(), v)),
+              )
+            : null)
+        .whereType<PrivateMessage>()
+        .toList();
+  }
+
+  Future<PrivateMessage> sendPrivateMessage(
+    PrivateContact contact,
+    String content,
+  ) async {
+    final payload = await _run('send-private-message', {
+      'contact': contact.raw ?? {},
+      'content': content,
+    });
+    final messageData = payload['message'];
+    if (messageData is! Map) {
+      throw StateError('Failed to send message: no message data returned');
+    }
+    return PrivateMessage.fromJson(
+      messageData.map((k, v) => MapEntry(k.toString(), v)),
+    );
+  }
+
   Future<void> openTarget(String target) async {
     if (target.trim().isEmpty) {
       return;

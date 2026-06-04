@@ -138,27 +138,38 @@ class _LoginIntro extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 22),
-        Expanded(
-          child: compact
-              ? Column(
-                  children: <Widget>[
-                    _PreviewPanel(controller: controller),
-                    const SizedBox(height: 18),
-                    _SessionPanel(controller: controller),
-                  ],
-                )
-              : Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: <Widget>[
-                    Expanded(child: _PreviewPanel(controller: controller)),
-                    const SizedBox(width: 18),
-                    SizedBox(
-                      width: 280,
-                      child: _SessionPanel(controller: controller),
-                    ),
-                  ],
+        if (compact)
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                children: <Widget>[
+                  SizedBox(
+                    height: 400,
+                    child: _PreviewPanel(controller: controller),
+                  ),
+                  const SizedBox(height: 18),
+                  SizedBox(
+                    height: 420,
+                    child: _SessionPanel(controller: controller),
+                  ),
+                ],
+              ),
+            ),
+          )
+        else
+          Expanded(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                Expanded(child: _PreviewPanel(controller: controller)),
+                const SizedBox(width: 18),
+                SizedBox(
+                  width: 280,
+                  child: _SessionPanel(controller: controller),
                 ),
-        ),
+              ],
+            ),
+          ),
       ],
     );
   }
@@ -174,42 +185,39 @@ class _PreviewPanel extends StatelessWidget {
     return AppPanel(
       frosted: true,
       padding: const EdgeInsets.all(18),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Row(
-            children: <Widget>[
-              const AppMark(size: 42),
-              const SizedBox(width: 14),
-              const Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Text(
-                      '登录后第一屏会直接给你重点',
-                      style: TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                    SizedBox(height: 4),
-                    Text(
-                      '今天的课、快到期的作业、风险项和最近通知会放在同一层。',
-                      style: TextStyle(color: Color(0xFF6B7B91), height: 1.35),
-                    ),
-                  ],
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                const AppMark(size: 42),
+                const SizedBox(width: 14),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        '登录后第一屏会直接给你重点',
+                        style: TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                      SizedBox(height: 4),
+                      Text(
+                        '今天的课、快到期的作业、风险项和最近通知会放在同一层。',
+                        style: TextStyle(color: Color(0xFF6B7B91), height: 1.35),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 18),
-          Expanded(
-            child: Column(
-              children: const <Widget>[
-                _PreviewMetricRow(),
-                SizedBox(height: 12),
-                _PreviewTimeline(),
               ],
             ),
-          ),
-        ],
+            const SizedBox(height: 18),
+            const _PreviewMetricRow(),
+            const SizedBox(height: 12),
+            const _PreviewTimeline(),
+          ],
+        ),
       ),
     );
   }
@@ -225,45 +233,48 @@ class _SessionPanel extends StatelessWidget {
     return AppPanel(
       tint: const Color(0xFFF8FAFC),
       padding: const EdgeInsets.all(18),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          const Text('本地状态', style: TextStyle(fontWeight: FontWeight.w800)),
-          const SizedBox(height: 10),
-          Text(
-            controller.session?.sessionFile.isNotEmpty == true
-                ? controller.session!.sessionFile
-                : '当前还没有本地会话文件。',
-            style: const TextStyle(color: Color(0xFF6B7B91), height: 1.45),
-          ),
-          const SizedBox(height: 16),
-          const _StatusLine(
-            icon: CupertinoIcons.lock_shield,
-            title: '账号密码直登',
-            detail: '需要时会拉起浏览器完成真实站点流程。',
-          ),
-          const SizedBox(height: 12),
-          const _StatusLine(
-            icon: CupertinoIcons.arrow_2_circlepath,
-            title: '上下文保持',
-            detail: '会话、学期和科目切换都跟着本地状态走。',
-          ),
-          const SizedBox(height: 12),
-          const _StatusLine(
-            icon: CupertinoIcons.paperclip,
-            title: '作业提交通道',
-            detail: '支持备注和附件一起提交，不用再回网页找入口。',
-          ),
-          const Spacer(),
-          const Text(
-            '浏览器登录适合第一次接入或站点出现额外交互时使用。',
-            style: TextStyle(
-              color: Color(0xFF6B7B91),
-              fontSize: 12,
-              height: 1.45,
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            const Text('本地状态', style: TextStyle(fontWeight: FontWeight.w800)),
+            const SizedBox(height: 10),
+            Text(
+              controller.session?.sessionFile.isNotEmpty == true
+                  ? controller.session!.sessionFile
+                  : '当前还没有本地会话文件。',
+              style: const TextStyle(color: Color(0xFF6B7B91), height: 1.45),
             ),
-          ),
-        ],
+            const SizedBox(height: 16),
+            const _StatusLine(
+              icon: CupertinoIcons.lock_shield,
+              title: '账号密码直登',
+              detail: '需要时会拉起浏览器完成真实站点流程。',
+            ),
+            const SizedBox(height: 12),
+            const _StatusLine(
+              icon: CupertinoIcons.arrow_2_circlepath,
+              title: '上下文保持',
+              detail: '会话、学期和科目切换都跟着本地状态走。',
+            ),
+            const SizedBox(height: 12),
+            const _StatusLine(
+              icon: CupertinoIcons.paperclip,
+              title: '作业提交通道',
+              detail: '支持备注和附件一起提交，不用再回网页找入口。',
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              '浏览器登录适合第一次接入或站点出现额外交互时使用。',
+              style: TextStyle(
+                color: Color(0xFF6B7B91),
+                fontSize: 12,
+                height: 1.45,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -287,123 +298,126 @@ class _LoginForm extends StatelessWidget {
     return AppPanel(
       frosted: true,
       padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Row(
-            children: <Widget>[
-              Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFDCE9FF),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                alignment: Alignment.center,
-                child: const Icon(
-                  CupertinoIcons.person_crop_circle_badge_checkmark,
-                  color: Color(0xFF2563EB),
-                  size: 20,
-                ),
-              ),
-              const SizedBox(width: 12),
-              const Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Text(
-                      '登录账号',
-                      style: TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    SizedBox(height: 4),
-                    Text(
-                      '优先推荐直接输入账号密码；如果站点流程变化，就切回浏览器登录。',
-                      style: TextStyle(color: Color(0xFF6B7B91), height: 1.35),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 22),
-          TextField(
-            controller: usernameController,
-            enabled: !busy,
-            decoration: const InputDecoration(
-              labelText: '账号',
-              hintText: '邮箱或账号名',
-              prefixIcon: Icon(CupertinoIcons.person),
-            ),
-          ),
-          const SizedBox(height: 14),
-          TextField(
-            controller: passwordController,
-            enabled: !busy,
-            obscureText: true,
-            decoration: const InputDecoration(
-              labelText: '密码',
-              hintText: '请输入密码',
-              prefixIcon: Icon(CupertinoIcons.lock),
-            ),
-          ),
-          const SizedBox(height: 18),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton.icon(
-              onPressed: busy
-                  ? null
-                  : () => controller.loginWithCredentials(
-                      username: usernameController.text.trim(),
-                      password: passwordController.text,
-                    ),
-              icon: Icon(
-                busy
-                    ? CupertinoIcons.hourglass
-                    : CupertinoIcons.arrow_right_to_line,
-              ),
-              label: Text(busy ? '登录中…' : '账号密码登录'),
-            ),
-          ),
-          const SizedBox(height: 10),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: busy ? null : controller.loginInBrowser,
-              icon: const Icon(CupertinoIcons.globe),
-              label: const Text('浏览器登录'),
-            ),
-          ),
-          const SizedBox(height: 18),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: const Color(0xFFF8FAFC),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: const Color(0xFFD8DEE7)),
-            ),
-            child: const Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Row(
               children: <Widget>[
-                Icon(
-                  CupertinoIcons.info_circle,
-                  size: 18,
-                  color: Color(0xFF64748B),
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFDCE9FF),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  alignment: Alignment.center,
+                  child: const Icon(
+                    CupertinoIcons.person_crop_circle_badge_checkmark,
+                    color: Color(0xFF2563EB),
+                    size: 20,
+                  ),
                 ),
-                SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    '如果登录页出现额外验证、勾选项或跳转，浏览器登录会更稳。',
-                    style: TextStyle(color: Color(0xFF516176), height: 1.4),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        '登录账号',
+                        style: TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      SizedBox(height: 4),
+                      Text(
+                        '优先推荐直接输入账号密码；如果站点流程变化，就切回浏览器登录。',
+                        style: TextStyle(color: Color(0xFF6B7B91), height: 1.35),
+                      ),
+                    ],
                   ),
                 ),
               ],
             ),
-          ),
-        ],
+            const SizedBox(height: 22),
+            TextField(
+              controller: usernameController,
+              enabled: !busy,
+              decoration: const InputDecoration(
+                labelText: '账号',
+                hintText: '邮箱或账号名',
+                prefixIcon: Icon(CupertinoIcons.person),
+              ),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: passwordController,
+              enabled: !busy,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: '密码',
+                hintText: '请输入密码',
+                prefixIcon: Icon(CupertinoIcons.lock),
+              ),
+            ),
+            const SizedBox(height: 18),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: busy
+                    ? null
+                    : () => controller.loginWithCredentials(
+                        username: usernameController.text.trim(),
+                        password: passwordController.text,
+                      ),
+                icon: Icon(
+                  busy
+                      ? CupertinoIcons.hourglass
+                      : CupertinoIcons.arrow_right_to_line,
+                ),
+                label: Text(busy ? '登录中…' : '账号密码登录'),
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: busy ? null : controller.loginInBrowser,
+                icon: const Icon(CupertinoIcons.globe),
+                label: const Text('浏览器登录'),
+              ),
+            ),
+            const SizedBox(height: 18),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFFD8DEE7)),
+              ),
+              child: const Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Icon(
+                    CupertinoIcons.info_circle,
+                    size: 18,
+                    color: Color(0xFF64748B),
+                  ),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      '如果登录页出现额外验证、勾选项或跳转，浏览器登录会更稳。',
+                      style: TextStyle(color: Color(0xFF516176), height: 1.4),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -534,7 +548,7 @@ class _PreviewTimeline extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           const Text('今日预览', style: TextStyle(fontWeight: FontWeight.w800)),
-          const SizedBox(height: 12),
+          const SizedBox(height: 18),
           for (final lesson in lessons)
             Container(
               margin: const EdgeInsets.only(bottom: 10),

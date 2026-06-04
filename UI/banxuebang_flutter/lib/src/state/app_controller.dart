@@ -31,6 +31,14 @@ class AppController extends ChangeNotifier {
   List<XFile> selectedFiles = <XFile>[];
   final TextEditingController submitRemarkController = TextEditingController();
   final Set<String> _locallyReadNoticeIds = <String>{};
+  
+  // 私信相关状态
+  List<PrivateContact> privateContacts = <PrivateContact>[];
+  PrivateContact? selectedPrivateContact;
+  List<PrivateMessage> privateMessages = <PrivateMessage>[];
+  bool loadingPrivateContacts = false;
+  bool loadingPrivateMessages = false;
+  bool sendingPrivateMessage = false;
 
   @override
   void dispose() {
@@ -96,6 +104,13 @@ class AppController extends ChangeNotifier {
 
   List<NoticeSummary> get notices =>
       dashboard?.notices ?? const <NoticeSummary>[];
+  
+  int get unreadPrivateMessageCount {
+    return privateContacts.fold<int>(
+      0,
+      (sum, contact) => sum + contact.unreadNum,
+    );
+  }
 
   bool isNoticeRead(NoticeSummary notice) {
     return notice.read || _locallyReadNoticeIds.contains(notice.id);
@@ -471,5 +486,84 @@ class AppController extends ChangeNotifier {
 
   String _errorText(Object error) {
     return error is StateError ? error.message : error.toString();
+  }
+  
+  // 私信相关方法
+  Future<void> loadPrivateContacts() async {
+    loadingPrivateContacts = true;
+    notifyListeners();
+    try {
+      final result = await _bridge.listPrivateContacts();
+      privateContacts = result;
+      _setBanner('已加载 ${result.length} 个联系人。');
+    } catch (error) {
+      _setBanner(_errorText(error), isError: true);
+    } finally {
+      loadingPrivateContacts = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> loadMessageThread(PrivateContact contact) async {
+    selectedPrivateContact = contact;
+    loadingPrivateMessages = true;
+    notifyListeners();
+    try {
+      final result = await _bridge.getPrivateMessageThread(contact);
+      privateMessages = result;
+    } catch (error) {
+      _setBanner(_errorText(error), isError: true);
+    } finally {
+      loadingPrivateMessages = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> sendPrivateMessage(
+    PrivateContact contact,
+    String content,
+  ) async {
+    if (content.trim().isEmpty) {
+      _setBanner('消息内容不能为空。', isError: true);
+      notifyListeners();
+      return;
+    }
+
+    sendingPrivateMessage = true;
+    notifyListeners();
+    try {
+      final sentMessage = await _bridge.sendPrivateMessage(contact, content);
+      privateMessages = <PrivateMessage>[...privateMessages, sentMessage];
+      _setBanner('消息已发送。');
+      
+      // 更新联系人列表中的最后消息
+      final updatedContacts = privateContacts.map((c) {
+        if (c.id == contact.id) {
+          return PrivateContact(
+            id: c.id,
+            classId: c.classId,
+            className: c.className,
+            peerId: c.peerId,
+            peerName: c.peerName,
+            peerType: c.peerType,
+            unreadNum: c.unreadNum,
+            lastTime: sentMessage.createTime,
+            lastContent: content,
+            peerAvatar: c.peerAvatar,
+            peerSexCode: c.peerSexCode,
+            courseName: c.courseName,
+            courseColor: c.courseColor,
+            raw: c.raw,
+          );
+        }
+        return c;
+      }).toList();
+      privateContacts = updatedContacts;
+    } catch (error) {
+      _setBanner(_errorText(error), isError: true);
+    } finally {
+      sendingPrivateMessage = false;
+      notifyListeners();
+    }
   }
 }

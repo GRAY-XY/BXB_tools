@@ -472,6 +472,26 @@ class _DetailPanel extends StatelessWidget {
                             }).toList(),
                           ),
                         const SizedBox(height: 18),
+                        if (detail.highScoreSubmissions.isNotEmpty) ...<Widget>[
+                          const Text(
+                            '班级优秀提交',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 16,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            '作业已结束，以下是 ${detail.highScoreSubmissions.length} 位同学的 A/A+ 成绩（匿名）',
+                            style: const TextStyle(
+                              color: Color(0xFF6B7280),
+                              fontSize: 13,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          ..._buildHighScoreSubmissions(detail),
+                          const SizedBox(height: 18),
+                        ],
                         const Text(
                           '提交',
                           style: TextStyle(
@@ -547,6 +567,18 @@ class _DetailPanel extends StatelessWidget {
       ),
     );
   }
+
+  List<Widget> _buildHighScoreSubmissions(TaskDetail detail) {
+    return detail.highScoreSubmissions.asMap().entries.map((entry) {
+      final index = entry.key;
+      final submission = entry.value;
+      
+      return _HighScoreSubmissionCard(
+        index: index + 1,
+        submission: submission,
+      );
+    }).toList();
+  }
 }
 
 class _PageSectionHeader extends StatelessWidget {
@@ -597,6 +629,226 @@ class _Capsule extends StatelessWidget {
           color: Colors.white,
           fontSize: 11,
           fontWeight: FontWeight.w800,
+        ),
+      ),
+    );
+  }
+}
+
+class _HighScoreSubmissionCard extends StatefulWidget {
+  const _HighScoreSubmissionCard({
+    required this.index,
+    required this.submission,
+  });
+
+  final int index;
+  final HighScoreSubmission submission;
+
+  @override
+  State<_HighScoreSubmissionCard> createState() => _HighScoreSubmissionCardState();
+}
+
+class _HighScoreSubmissionCardState extends State<_HighScoreSubmissionCard> {
+  bool _isExpanded = false;
+
+  String _stripHtmlTags(String html) {
+    // 简单的HTML标签清理，保留文本内容
+    return html
+        .replaceAll(RegExp(r'<[^>]*>'), '')  // 移除HTML标签
+        .replaceAll('&nbsp;', ' ')            // 替换HTML实体
+        .replaceAll('&ldquo;', '"')
+        .replaceAll('&rdquo;', '"')
+        .replaceAll('&amp;', '&')
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .trim();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final submission = widget.submission;
+    
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFD8DEE7)),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: () {
+            setState(() {
+              _isExpanded = !_isExpanded;
+            });
+          },
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Row(
+                  children: <Widget>[
+                    Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF2563EB).withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(
+                        '#${widget.index}',
+                        style: const TextStyle(
+                          color: Color(0xFF2563EB),
+                          fontWeight: FontWeight.w800,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          Text(
+                            submission.userName ?? 'A同学 #${widget.index}',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 14,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            formatShortDateTime(submission.receiptTime),
+                            style: const TextStyle(
+                              color: Color(0xFF6B7280),
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: <Widget>[
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF10B981).withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            '${submission.score}分',
+                            style: const TextStyle(
+                              color: Color(0xFF10B981),
+                              fontWeight: FontWeight.w800,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                        if (submission.level?.isNotEmpty ?? false)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Text(
+                              submission.level!,
+                              style: const TextStyle(
+                                color: Color(0xFF6B7280),
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(width: 8),
+                    Icon(
+                      _isExpanded 
+                        ? CupertinoIcons.chevron_up 
+                        : CupertinoIcons.chevron_down,
+                      size: 16,
+                      color: const Color(0xFF6B7280),
+                    ),
+                  ],
+                ),
+                if (_isExpanded) ...<Widget>[
+                  const SizedBox(height: 12),
+                  const Divider(height: 1),
+                  const SizedBox(height: 12),
+                  const Text(
+                    '提交内容',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12,
+                      color: Color(0xFF6B7280),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: const Color(0xFFE5E7EB)),
+                    ),
+                    child: SelectableText(
+                      submission.remark == null || _stripHtmlTags(submission.remark!).isEmpty 
+                        ? '（该同学未填写文字内容）'
+                        : _stripHtmlTags(submission.remark!),
+                      style: TextStyle(
+                        color: submission.remark == null || _stripHtmlTags(submission.remark!).isEmpty 
+                          ? const Color(0xFF9CA3AF)
+                          : const Color(0xFF374151),
+                        fontSize: 13,
+                        height: 1.5,
+                        fontStyle: submission.remark == null || _stripHtmlTags(submission.remark!).isEmpty 
+                          ? FontStyle.italic
+                          : FontStyle.normal,
+                      ),
+                    ),
+                  ),
+                  if (submission.fileList?.isNotEmpty ?? false) ...<Widget>[
+                    const SizedBox(height: 12),
+                    const Text(
+                      '附件',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12,
+                        color: Color(0xFF6B7280),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: submission.fileList!.map((file) {
+                        final fileName = file['fileName']?.toString() ?? 
+                                       file['name']?.toString() ?? 
+                                       '未命名文件';
+                        return Chip(
+                          avatar: const Icon(
+                            CupertinoIcons.doc_fill,
+                            size: 14,
+                          ),
+                          label: Text(
+                            fileName,
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                          visualDensity: VisualDensity.compact,
+                        );
+                      }).toList(),
+                    ),
+                  ],
+                ],
+              ],
+            ),
+          ),
         ),
       ),
     );

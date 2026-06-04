@@ -168,7 +168,15 @@ String formatClassBadge(SessionSummary summary, DashboardData dashboard) {
   return '未分配班级';
 }
 
-bool isActionableTask(HomeworkTask task) => (task.isParticipate ?? 1) == 0;
+bool isActionableTask(HomeworkTask task) {
+  // 未参与的作业
+  if ((task.isParticipate ?? 1) == 0) {
+    return true;
+  }
+  // 已参与但等级不是 A+ 的作业
+  final grade = task.scoreLevel.trim().toUpperCase();
+  return task.isParticipate == 1 && grade.isNotEmpty && grade != 'A+';
+}
 
 int gradeRank(String raw) {
   const ranks = <String, int>{

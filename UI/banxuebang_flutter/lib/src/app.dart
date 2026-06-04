@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import 'screens/homework_page.dart';
 import 'screens/login_screen.dart';
+import 'screens/messages_page.dart';
 import 'screens/notices_page.dart';
 import 'screens/overview_page.dart';
 import 'screens/schedule_page.dart';
@@ -46,19 +47,21 @@ class _BanxuebangFlutterAppState extends State<BanxuebangFlutterApp> {
           }
 
           if (!_controller.isLoggedIn) {
-            return Column(
-              children: <Widget>[
-                if ((_controller.bannerMessage ?? '').isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-                    child: BannerStrip(
-                      message: _controller.bannerMessage!,
-                      isError: _controller.bannerIsError,
-                      onClose: _controller.clearBanner,
+            return Scaffold(
+              body: Column(
+                children: <Widget>[
+                  if ((_controller.bannerMessage ?? '').isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+                      child: BannerStrip(
+                        message: _controller.bannerMessage!,
+                        isError: _controller.bannerIsError,
+                        onClose: _controller.clearBanner,
+                      ),
                     ),
-                  ),
-                Expanded(child: LoginScreen(controller: _controller)),
-              ],
+                  Expanded(child: LoginScreen(controller: _controller)),
+                ],
+              ),
             );
           }
 
@@ -69,7 +72,7 @@ class _BanxuebangFlutterAppState extends State<BanxuebangFlutterApp> {
   }
 }
 
-enum _ShellSection { overview, homework, schedule, notices }
+enum _ShellSection { overview, homework, schedule, notices, messages }
 
 class _DesktopShell extends StatefulWidget {
   const _DesktopShell({required this.controller});
@@ -183,6 +186,11 @@ class _DesktopShellState extends State<_DesktopShell> {
         subtitle: '最近公告和未读提醒都在这里。',
         child: NoticesPage(controller: controller),
       ),
+      _ShellSection.messages: (
+        title: '私信',
+        subtitle: '与老师的私信会话。',
+        child: MessagesPage(controller: controller),
+      ),
     };
   }
 }
@@ -226,6 +234,12 @@ class _Sidebar extends StatelessWidget {
         icon: CupertinoIcons.bell,
         label: '通知',
         badge: controller.unreadNoticeCount,
+      ),
+      _NavItem(
+        section: _ShellSection.messages,
+        icon: CupertinoIcons.chat_bubble_2,
+        label: '私信',
+        badge: controller.unreadPrivateMessageCount,
       ),
     ];
 
