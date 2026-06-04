@@ -1643,11 +1643,93 @@ export class BanxuebangClient {
     };
   }
 
+  async getSchedule() {
+    const session = await this.requireSession();
+    await this.refreshContext(session);
+
+    const { userInfo, curClass, currTermId } = session.context;
+    const campusId = ensureObject(curClass).campusId;
+
+    if (!userInfo?.id || !campusId || !currTermId) {
+      return {
+        schedule: {},
+        timeSlots: {},
+        hasData: false,
+      };
+    }
+
+    const response = await fetch(
+      `${session.baseUrl || BASE_URL}/gateway/arrange-course/courseTable/student/${userInfo.id}/getSchemeTable/teach?campusId=${campusId}&termId=${currTermId}`,
+      {
+        headers: {
+          Authorization: `Bearer ${session.auth.access_token}`,
+          "Content-Type": "application/json",
+        },
+      },
+    );
+
+    const result = await response.json();
+    if (!response.ok || result.code !== 0) {
+      return {
+        schedule: {},
+        timeSlots: {},
+        hasData: false,
+      };
+    }
+
+    const data = result.data || {};
+    const weekDays = Array.isArray(data.weekDays) ? data.weekDays : [];
+
+    // Build schedule map: { day: { lesson: { time, courses: [...] } } }
+    const schedule = {};
+    const timeSlots = {};
+
+    for (const dayData of weekDays) {
+      const dayKey = Number(dayData.day) + 1; // API uses 0-4, we use 1-5 for Mon-Fri
+      if (dayKey < 1 || dayKey > 5) {
+        continue;
+      }
+
+      schedule[dayKey] = {};
+
+      const allSlots = [
+        ...(dayData.forenoonLessonTimeSets || []),
+        ...(dayData.afternoonLessonTimeSets || []),
+        ...(dayData.eveningLessonTimeSets || []),
+      ];
+
+      for (const slot of allSlots) {
+        const lesson = Number(slot.lesson);
+        const timeRange = `${slot.startTime}-${slot.endTime}`;
+        timeSlots[lesson] = timeRange;
+
+        const courses = (slot.teachList || []).map((teach) => ({
+          name: teach.customCourseName || teach.courseName || "",
+          teacher: teach.teacherName || "",
+          room: teach.classRoomName || "",
+          color: teach.courseColor || "#2563EB",
+        }));
+
+        schedule[dayKey][lesson] = {
+          time: timeRange,
+          courses,
+        };
+      }
+    }
+
+    return {
+      schedule,
+      timeSlots,
+      hasData: Object.keys(schedule).length > 0,
+    };
+  }
+
   async listPrivateMessageContacts() {
     const session = await this.requireSession();
     const userInfo = ensureObject(session.context?.userInfo);
     if (!userInfo.id) {
       throw new Error("Current session does not have userInfo.id.");
+
     }
 
     const response = safeBusinessResult(

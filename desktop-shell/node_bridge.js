@@ -121,7 +121,7 @@ async function buildDashboardPayload() {
     };
   }
 
-  const [termsResult, homeworkAggregate, gpaResult] =
+  const [termsResult, homeworkAggregate, gpaResult, scheduleResult] =
     await Promise.all([
       client.listTerms().catch(() => ({ terms: [] })),
       buildHomeworkAcrossCourses(summary).catch(() => ({
@@ -130,6 +130,11 @@ async function buildDashboardPayload() {
         pendingHomework: [],
       })),
       client.getCurrentSubjectGpa().catch(() => null),
+      client.getSchedule().catch(() => ({
+        schedule: {},
+        timeSlots: {},
+        hasData: false,
+      })),
     ]);
 
   return {
@@ -138,8 +143,8 @@ async function buildDashboardPayload() {
     courses: homeworkAggregate.courses || [],
     homework: homeworkAggregate.homework || [],
     pendingHomework: homeworkAggregate.pendingHomework || [],
-    schedule: {},
-    timeSlots: {},
+    schedule: scheduleResult.schedule || {},
+    timeSlots: scheduleResult.timeSlots || {},
     notices: [],
     unreadCount: null,
     gpa: gpaResult,
