@@ -54,61 +54,12 @@ class _SchedulePageState extends State<SchedulePage> {
           .any((slot) => slot.courses.isNotEmpty),
     );
 
-    return Column(
-      children: <Widget>[
-        Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          children: <Widget>[
-            SizedBox(
-              width: 220,
-              child: _SummaryMetric(
-                title: '今天课程',
-                value: todayAgenda.length > 0 ? '${todayAgenda.length} 节' : '无',
-                caption: todayAgenda.isEmpty
-                    ? '今天没有排课'
-                    : nextLesson == null
-                    ? '剩余课程已结束'
-                    : '下一节 ${dashboard.timeSlots[nextLesson] ?? '--'}',
-              ),
-            ),
-            SizedBox(
-              width: 220,
-              child: _SummaryMetric(
-                title: '本周课时',
-                value: '${timeKeys.length}',
-                caption: '按节次展示整周课程安排',
-              ),
-            ),
-            SizedBox(
-              width: 220,
-              child: _SummaryMetric(
-                title: '科目',
-                value: '${dashboard.courses.length}',
-                caption: '右侧可以直接切换当前科目',
-              ),
-            ),
-            SizedBox(
-              width: 220,
-              child: _SummaryMetric(
-                title: '当前状态',
-                value: currentLesson == null
-                    ? '空档'
-                    : '第 ${currentLesson + 1} 节',
-                caption: currentLesson == null
-                    ? '当前不在上课时段'
-                    : dashboard.timeSlots[currentLesson] ?? '--',
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Expanded(
-          child: hasScheduleData
-              ? LayoutBuilder(
-                  builder: (BuildContext context, BoxConstraints constraints) {
-                    final wide = constraints.maxWidth >= 1220;
-                    final compactHeight = constraints.maxHeight < 760;
+    return Expanded(
+      child: hasScheduleData
+          ? LayoutBuilder(
+              builder: (BuildContext context, BoxConstraints constraints) {
+                final wide = constraints.maxWidth >= 1220;
+                final compactHeight = constraints.maxHeight < 760;
                     final weeklyPanel = _WeeklySchedulePanel(
                       dashboard: dashboard,
                       timeKeys: timeKeys,
@@ -206,8 +157,6 @@ class _SchedulePageState extends State<SchedulePage> {
                   },
                 )
               : _EmptySchedulePanel(controller: controller),
-        ),
-      ],
     );
   }
 
@@ -295,49 +244,6 @@ class _SchedulePageState extends State<SchedulePage> {
       return null;
     }
     return hour * 60 + minute;
-  }
-}
-
-class _SummaryMetric extends StatelessWidget {
-  const _SummaryMetric({
-    required this.title,
-    required this.value,
-    required this.caption,
-  });
-
-  final String title;
-  final String value;
-  final String caption;
-
-  @override
-  Widget build(BuildContext context) {
-    return AppPanel(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Text(
-            title,
-            style: const TextStyle(
-              color: Color(0xFF4B5563),
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            value,
-            style: Theme.of(
-              context,
-            ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            caption,
-            style: const TextStyle(color: Color(0xFF6B7280), height: 1.35),
-          ),
-        ],
-      ),
-    );
   }
 }
 
