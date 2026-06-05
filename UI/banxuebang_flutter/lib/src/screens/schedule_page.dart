@@ -40,6 +40,15 @@ class _SchedulePageState extends State<SchedulePage> {
   @override
   Widget build(BuildContext context) {
     final controller = widget.controller;
+    return ListenableBuilder(
+      listenable: controller,
+      builder: (BuildContext context, Widget? child) {
+        return _buildContent(context, controller);
+      },
+    );
+  }
+
+  Widget _buildContent(BuildContext context, AppController controller) {
     final dashboard = controller.dashboard!;
     final timeKeys = _resolveTimeKeys(dashboard);
     final dayKeys = _resolveDayKeys(dashboard);
@@ -54,9 +63,8 @@ class _SchedulePageState extends State<SchedulePage> {
           .any((slot) => slot.courses.isNotEmpty),
     );
 
-    return Expanded(
-      child: hasScheduleData
-          ? LayoutBuilder(
+    return hasScheduleData
+        ? LayoutBuilder(
               builder: (BuildContext context, BoxConstraints constraints) {
                 final wide = constraints.maxWidth >= 1220;
                 final compactHeight = constraints.maxHeight < 760;
@@ -156,8 +164,7 @@ class _SchedulePageState extends State<SchedulePage> {
                     );
                   },
                 )
-              : _EmptySchedulePanel(controller: controller),
-    );
+        : _EmptySchedulePanel(controller: controller);
   }
 
   List<int> _resolveTimeKeys(DashboardData dashboard) {

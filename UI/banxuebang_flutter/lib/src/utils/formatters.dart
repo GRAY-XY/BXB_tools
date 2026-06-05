@@ -94,14 +94,17 @@ TermSummary? findCurrentTerm(SessionSummary summary, DashboardData dashboard) {
             : null);
 }
 
+// 预编译 RegExp，避免每次调用都重新构造正则对象
+final _reWhitespace = RegExp(r'\s+');
+final _reApPatterns = <RegExp>[
+  RegExp(r'G(\d{1,2})AP(\d{1,2})', caseSensitive: false),
+  RegExp(r'APG(\d{1,2})AP(\d{1,2})', caseSensitive: false),
+  RegExp(r'高(\d).*?AP(\d{1,2})', caseSensitive: false),
+];
+
 ({int grade, int ap})? parseApClassLabel(String raw) {
-  final compact = raw.replaceAll(RegExp(r'\s+'), '');
-  final patterns = <RegExp>[
-    RegExp(r'G(\d{1,2})AP(\d{1,2})', caseSensitive: false),
-    RegExp(r'APG(\d{1,2})AP(\d{1,2})', caseSensitive: false),
-    RegExp(r'高(\d).*?AP(\d{1,2})', caseSensitive: false),
-  ];
-  for (final pattern in patterns) {
+  final compact = raw.replaceAll(_reWhitespace, '');
+  for (final pattern in _reApPatterns) {
     final match = pattern.firstMatch(compact);
     if (match != null) {
       final grade = int.tryParse(match.group(1) ?? '');
@@ -154,7 +157,7 @@ String formatClassBadge(SessionSummary summary, DashboardData dashboard) {
   }
 
   final compactAlias = (summary.currentClass?.alias ?? '').replaceAll(
-    RegExp(r'\s+'),
+    _reWhitespace,
     '',
   );
   if (compactAlias.isNotEmpty) {
@@ -168,14 +171,190 @@ String formatClassBadge(SessionSummary summary, DashboardData dashboard) {
   return '未分配班级';
 }
 
-bool isActionableTask(HomeworkTask task) {
-  // 未参与的作业
-  if ((task.isParticipate ?? 1) == 0) {
-    return true;
+/// 作业提醒：未结束，且（未提交 或 等级为 E+，不含 N/A 等其他等级）。
+class ClassSubmissionStats {
+  const ClassSubmissionStats({
+    this.submittedCount,
+    this.totalCount,
+    this.percent,
+  });
+
+  final int? submittedCount;
+  final int? totalCount;
+  final int? percent;
+}
+
+bool isUnsubmittedTask(HomeworkTask task) => (task.isParticipate ?? 1) == 0;
+
+ClassSubmissionStats? parseClassSubmissionStats(JsonMap raw) {
+  for (final key in <String>[
+    'submitRate',
+    'participateRate',
+    'partakeRate',
+    'classSubmitRate',
+    'submitPercent',
+    'participatePercent',
+    'partakePercent',
+    'submitRatio',
+    'participateRatio',
+  ]) {
+    final percent = _parsePercentValue(raw[key]);
+    if (percent != null) {
+      return ClassSubmissionStats(percent: percent);
+    }
   }
-  // 已参与但等级不是 A+ 的作业
+
+  final submitted = _firstIntValue(
+    raw,
+    <String>[
+      'submitNum',
+      'submitCount',
+      'submittedNum',
+      'submittedCount',
+      'participateNum',
+      'participateCount',
+      'partakeNum',
+      'partakeCount',
+      'workSubmitNum',
+      'submitWorkNum',
+      'joinNum',
+      'joinCount',
+      'submitStudentNum',
+      'submitWorkCount',
+      'participateWorkNum',
+      'iSubmitCount',
+      'submitTotal',
+    ],
+  );
+  final total = _firstIntValue(
+    raw,
+    <String>[
+      'totalNum',
+      'totalCount',
+      'studentNum',
+      'studentCount',
+      'classStudentNum',
+      'classStudentCount',
+      'classNum',
+      'classCount',
+      'totalStudentNum',
+      'totalStudentCount',
+      'studentTotal',
+      'classTotal',
+      'classSize',
+      'totalStudent',
+      'iTotalCount',
+      'classPeopleNum',
+      'peopleNum',
+    ],
+  );
+
+  if (submitted != null && total != null && total > 0) {
+    return ClassSubmissionStats(
+      submittedCount: submitted,
+      totalCount: total,
+      percent: _percentFromCounts(submitted, total),
+    );
+  }
+
+  final percentText = _stringValue(raw['submitRateText'] ?? raw['participateText']);
+  if (percentText.isNotEmpty) {
+    final percent = _parsePercentValue(percentText);
+    if (percent != null) {
+      return ClassSubmissionStats(percent: percent);
+    }
+  }
+
+  return null;
+}
+
+int? _percentFromCounts(int submitted, int total) {
+  if (total <= 0) {
+    return null;
+  }
+  return ((submitted / total) * 100).round().clamp(0, 100);
+}
+
+int? _parsePercentValue(dynamic value) {
+  if (value == null) {
+    return null;
+  }
+  if (value is num) {
+    final numeric = value.toDouble();
+    if (numeric <= 1 && numeric >= 0) {
+      return (numeric * 100).round();
+    }
+    return numeric.round().clamp(0, 100);
+  }
+
+  final text = value.toString().trim();
+  if (text.isEmpty) {
+    return null;
+  }
+  final match = _rePercentNumber.firstMatch(text);
+  if (match == null) {
+    return null;
+  }
+  final parsed = double.tryParse(match.group(1)!);
+  if (parsed == null) {
+    return null;
+  }
+  if (text.contains('.') && parsed <= 1) {
+    return (parsed * 100).round();
+  }
+  return parsed.round().clamp(0, 100);
+}
+
+int? _firstIntValue(JsonMap raw, List<String> keys) {
+  for (final key in keys) {
+    if (!raw.containsKey(key)) {
+      continue;
+    }
+    final value = raw[key];
+    if (value is int) {
+      return value;
+    }
+    if (value is num) {
+      return value.round();
+    }
+    final parsed = int.tryParse(value?.toString() ?? '');
+    if (parsed != null) {
+      return parsed;
+    }
+  }
+  return null;
+}
+
+String _stringValue(dynamic value) {
+  if (value == null) {
+    return '';
+  }
+  return value.toString().trim();
+}
+
+String? formatClassSubmitPercentLabel(ClassSubmissionStats? stats) {
+  if (stats == null) {
+    return null;
+  }
+  final percent = stats.percent;
+  if (percent != null) {
+    return '约 $percent% 同学已提交';
+  }
+  final submitted = stats.submittedCount;
+  final total = stats.totalCount;
+  if (submitted != null && total != null && total > 0) {
+    return '约 ${_percentFromCounts(submitted, total)}% 同学已提交';
+  }
+  return null;
+}
+
+bool isActionableTask(HomeworkTask task) {
+  if (task.isEnd) {
+    return false;
+  }
   final grade = task.scoreLevel.trim().toUpperCase();
-  return task.isParticipate == 1 && grade.isNotEmpty && grade != 'A+';
+  final unsubmitted = (task.isParticipate ?? 1) == 0;
+  return unsubmitted || grade == 'E+';
 }
 
 int gradeRank(String raw) {
@@ -199,7 +378,11 @@ int gradeRank(String raw) {
 
 int countRiskTasks(Iterable<HomeworkTask> tasks) {
   return tasks
-      .where((task) => task.scoreLevel.toUpperCase().contains('E'))
+      .where(
+        (task) =>
+            isActionableTask(task) &&
+            task.scoreLevel.trim().toUpperCase() == 'E+',
+      )
       .length;
 }
 
@@ -243,8 +426,12 @@ String buildTaskPreview(HomeworkTask task) {
   return parts.join(' · ');
 }
 
+// 预编译 RegExp，避免每次调用都重新构造正则对象
+final _reCompactText = RegExp(r'\s+');
+final _rePercentNumber = RegExp(r'(\d+(?:\.\d+)?)');
+
 String compactText(String raw, {int maxLength = 120}) {
-  final normalized = raw.replaceAll(RegExp(r'\s+'), ' ').trim();
+  final normalized = raw.replaceAll(_reCompactText, ' ').trim();
   if (normalized.length <= maxLength) {
     return normalized;
   }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:file_selector/file_selector.dart';
@@ -39,10 +40,26 @@ class AppController extends ChangeNotifier {
   bool loadingPrivateContacts = false;
   bool loadingPrivateMessages = false;
   bool sendingPrivateMessage = false;
+  bool loadingClassSubmitStats = false;
+  final Map<String, ClassSubmissionStats> _classSubmitStats =
+      <String, ClassSubmissionStats>{};
+  Future<void>? _dashboardRefreshFuture;
+  Future<void>? _gpaLoadFuture;
+  bool _privateMessagesRequested = false;
+
+  DashboardData? _derivedCacheDashboard;
+  String? _derivedCacheCourseId;
+  TaskSortMode? _derivedCacheSortMode;
+  List<HomeworkTask>? _cachedVisibleTasks;
+  List<HomeworkTask>? _cachedActionableTasks;
+  Map<String, int>? _cachedCourseTaskCounts;
+  int? _cachedRiskCount;
+  int? _cachedPendingCount;
 
   @override
   void dispose() {
     submitRemarkController.dispose();
+    unawaited(_bridge.shutdown());
     super.dispose();
   }
 
@@ -52,26 +69,234 @@ class AppController extends ChangeNotifier {
 
   SubjectSummary? get currentSubject => dashboard?.session.currentSubject;
 
+  void _invalidateDerivedCache() {
+    _derivedCacheDashboard = null;
+    _derivedCacheCourseId = null;
+    _derivedCacheSortMode = null;
+    _cachedVisibleTasks = null;
+    _cachedActionableTasks = null;
+    _cachedCourseTaskCounts = null;
+    _cachedRiskCount = null;
+    _cachedPendingCount = null;
+  }
+
+  bool get _derivedCacheValid =>
+      identical(_derivedCacheDashboard, dashboard) &&
+      _derivedCacheCourseId == selectedCourseId &&
+      _derivedCacheSortMode == sortMode;
+
+  void _touchDerivedCache() {
+    _derivedCacheDashboard = dashboard;
+    _derivedCacheCourseId = selectedCourseId;
+    _derivedCacheSortMode = sortMode;
+  }
+
   List<HomeworkTask> get visibleTasks {
+    if (_derivedCacheValid && _cachedVisibleTasks != null) {
+      return _cachedVisibleTasks!;
+    }
     final source = dashboard?.homework ?? const <HomeworkTask>[];
     final filtered = selectedCourseId == 'all'
         ? source
         : source.where((task) => task.courseId == selectedCourseId);
-    return sortTasks(
+    final result = sortTasks(
       filtered,
       byLowestGrade: sortMode == TaskSortMode.lowestGrade,
     );
+    _cachedVisibleTasks = result;
+    _touchDerivedCache();
+    return result;
   }
 
   List<HomeworkTask> get actionableTasks {
+    if (_derivedCacheValid && _cachedActionableTasks != null) {
+      return _cachedActionableTasks!;
+    }
     final source = dashboard?.homework ?? const <HomeworkTask>[];
-    return source.where(isActionableTask).toList();
+    final result = source.where(isActionableTask).toList();
+    _cachedActionableTasks = result;
+    _touchDerivedCache();
+    return result;
   }
 
-  int get pendingCount => actionableTasks.length;
+  Map<String, int> get courseTaskCounts {
+    if (_derivedCacheValid && _cachedCourseTaskCounts != null) {
+      return _cachedCourseTaskCounts!;
+    }
+    final counts = <String, int>{'all': dashboard?.homework.length ?? 0};
+    for (final task in dashboard?.homework ?? const <HomeworkTask>[]) {
+      if (task.courseId.isEmpty) {
+        continue;
+      }
+      counts[task.courseId] = (counts[task.courseId] ?? 0) + 1;
+    }
+    _cachedCourseTaskCounts = counts;
+    _touchDerivedCache();
+    return counts;
+  }
 
-  int get riskCount =>
-      countRiskTasks(dashboard?.homework ?? const <HomeworkTask>[]);
+  ClassSubmissionStats? classSubmitStatsFor(HomeworkTask task) {
+    return _classSubmitStats[task.id] ?? parseClassSubmissionStats(task.raw);
+  }
+
+  String? classSubmitPercentLabel(HomeworkTask task) {
+    if (!isUnsubmittedTask(task) || task.isEnd) {
+      return null;
+    }
+    return formatClassSubmitPercentLabel(classSubmitStatsFor(task));
+  }
+
+  Future<void> ensureClassSubmitStats() async {
+    if (loadingClassSubmitStats || dashboard == null) {
+      return;
+    }
+
+    final targets = dashboard!.homework
+        .where(
+          (task) =>
+              isUnsubmittedTask(task) &&
+              !task.isEnd &&
+              !_classSubmitStats.containsKey(task.id) &&
+              parseClassSubmissionStats(task.raw) == null &&
+              task.id.isNotEmpty &&
+              task.classId.isNotEmpty,
+        )
+        .take(8)
+        .toList();
+    if (targets.isEmpty) {
+      return;
+    }
+
+    loadingClassSubmitStats = true;
+    notifyListeners();
+    try {
+      final payloads = await _bridge.loadClassSubmitStatsBatch(
+        targets
+            .map((task) => (taskId: task.id, classId: task.classId))
+            .toList(),
+      );
+      for (final task in targets) {
+        final stats = _statsFromBridgePayload(payloads[task.id] ?? const {});
+        if (stats != null) {
+          _classSubmitStats[task.id] = stats;
+        }
+      }
+    } catch (_) {
+      // 提交比例是增强信息，失败时静默忽略。
+    } finally {
+      loadingClassSubmitStats = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> _loadGpaInBackground() async {
+    if (dashboard == null || !isLoggedIn || dashboard!.gpa != null) {
+      return;
+    }
+    if (_gpaLoadFuture != null) {
+      await _gpaLoadFuture;
+      return;
+    }
+    _gpaLoadFuture = _loadGpaInBackgroundImpl();
+    try {
+      await _gpaLoadFuture;
+    } finally {
+      _gpaLoadFuture = null;
+    }
+  }
+
+  Future<void> _loadGpaInBackgroundImpl() async {
+    try {
+      final gpa = await _bridge.loadGpa();
+      if (gpa == null || dashboard == null) {
+        return;
+      }
+      dashboard = dashboard!.copyWith(gpa: gpa);
+      notifyListeners();
+    } catch (_) {
+      // GPA 是增强信息，失败时静默忽略。
+    }
+  }
+
+  void _applySubjectUpdate(SubjectUpdateResult result) {
+    if (result.dashboard != null) {
+      dashboard = result.dashboard;
+      _invalidateDerivedCache();
+      _reconcileNoticeReadState();
+      return;
+    }
+    final session = result.session;
+    if (session != null && dashboard != null) {
+      dashboard = dashboard!.copyWith(session: session);
+    }
+  }
+
+  void _cacheClassSubmitStatsFromDetail(
+    HomeworkTask task,
+    TaskDetail? detail,
+  ) {
+    if (detail == null || !isUnsubmittedTask(task)) {
+      return;
+    }
+
+    var stats = parseClassSubmissionStats(task.raw);
+    if (stats?.percent != null) {
+      _classSubmitStats[task.id] = stats!;
+      return;
+    }
+
+    final submitted = detail.otherSubmissionCount;
+    final total = stats?.totalCount;
+    if (submitted > 0 && total != null && total > 0) {
+      _classSubmitStats[task.id] = ClassSubmissionStats(
+        submittedCount: submitted,
+        totalCount: total,
+        percent: ((submitted / total) * 100).round().clamp(0, 100),
+      );
+    }
+  }
+
+  ClassSubmissionStats? _statsFromBridgePayload(JsonMap payload) {
+    final percent = _intValue(payload['percent']);
+    final submitted = _intValue(payload['submittedCount']);
+    final total = _intValue(payload['totalCount']);
+    if (percent == null && submitted == null && total == null) {
+      return null;
+    }
+    return ClassSubmissionStats(
+      submittedCount: submitted,
+      totalCount: total,
+      percent: percent,
+    );
+  }
+
+  int? _intValue(dynamic value) {
+    if (value is int) {
+      return value;
+    }
+    if (value is num) {
+      return value.round();
+    }
+    return int.tryParse(value?.toString() ?? '');
+  }
+
+  int get pendingCount {
+    if (_derivedCacheValid && _cachedPendingCount != null) {
+      return _cachedPendingCount!;
+    }
+    final result = actionableTasks.length;
+    _cachedPendingCount = result;
+    return result;
+  }
+
+  int get riskCount {
+    if (_derivedCacheValid && _cachedRiskCount != null) {
+      return _cachedRiskCount!;
+    }
+    final result = countRiskTasks(dashboard?.homework ?? const <HomeworkTask>[]);
+    _cachedRiskCount = result;
+    return result;
+  }
 
   int get unreadNoticeCount {
     final notices = this.notices;
@@ -149,8 +374,10 @@ class AppController extends ChangeNotifier {
     booting = true;
     notifyListeners();
     try {
-      dashboard = await _bridge.loadDashboard();
+      dashboard = await _bridge.loadDashboard(includeGpa: true);
+      _invalidateDerivedCache();
       _reconcileNoticeReadState();
+      unawaited(_loadGpaInBackground());
     } catch (error) {
       _setBanner(_errorText(error), isError: true);
     } finally {
@@ -159,19 +386,45 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  Future<void> refreshDashboard() async {
-    refreshing = true;
-    notifyListeners();
+  Future<void> refreshDashboard({bool silent = false}) async {
+    if (_dashboardRefreshFuture != null) {
+      await _dashboardRefreshFuture;
+      return;
+    }
+    _dashboardRefreshFuture = _refreshDashboardImpl(silent: silent);
     try {
-      dashboard = await _bridge.loadDashboard();
+      await _dashboardRefreshFuture;
+    } finally {
+      _dashboardRefreshFuture = null;
+    }
+  }
+
+  Future<void> _refreshDashboardImpl({required bool silent}) async {
+    if (!silent) {
+      refreshing = true;
+      notifyListeners();
+    }
+    try {
+      dashboard = await _bridge.loadDashboard(includeGpa: true);
+      _invalidateDerivedCache();
+      _resetClassSubmitStats();
       _reconcileSelections();
       _reconcileNoticeReadState();
-      _setBanner('已刷新最新数据。');
+      if (!silent) {
+        _setBanner('已刷新最新数据。');
+      }
+      unawaited(_loadGpaInBackground());
     } catch (error) {
-      _setBanner(_errorText(error), isError: true);
+      if (!silent) {
+        _setBanner(_errorText(error), isError: true);
+      }
     } finally {
-      refreshing = false;
-      notifyListeners();
+      if (!silent) {
+        refreshing = false;
+        notifyListeners();
+      } else if (dashboard != null) {
+        notifyListeners();
+      }
     }
   }
 
@@ -180,9 +433,11 @@ class AppController extends ChangeNotifier {
     notifyListeners();
     try {
       dashboard = await _bridge.loginInBrowser();
+      _invalidateDerivedCache();
       _resetSelections();
       _reconcileNoticeReadState();
       _setBanner('登录成功。');
+      unawaited(_loadGpaInBackground());
     } catch (error) {
       _setBanner(_errorText(error), isError: true);
     } finally {
@@ -202,9 +457,11 @@ class AppController extends ChangeNotifier {
         username: username,
         password: password,
       );
+      _invalidateDerivedCache();
       _resetSelections();
       _reconcileNoticeReadState();
       _setBanner('登录成功。');
+      unawaited(_loadGpaInBackground());
     } catch (error) {
       _setBanner(_errorText(error), isError: true);
     } finally {
@@ -218,7 +475,12 @@ class AppController extends ChangeNotifier {
     notifyListeners();
     try {
       dashboard = await _bridge.logout();
+      _invalidateDerivedCache();
       _resetSelections();
+      _privateMessagesRequested = false;
+      privateContacts = <PrivateContact>[];
+      privateMessages = <PrivateMessage>[];
+      selectedPrivateContact = null;
       _locallyReadNoticeIds.clear();
       _setBanner('已退出登录。');
     } catch (error) {
@@ -237,9 +499,11 @@ class AppController extends ChangeNotifier {
     notifyListeners();
     try {
       dashboard = await _bridge.setTerm(termId);
+      _invalidateDerivedCache();
       _resetSelections();
       _reconcileNoticeReadState();
       _setBanner('学期已切换。');
+      unawaited(_loadGpaInBackground());
     } catch (error) {
       _setBanner(_errorText(error), isError: true);
     } finally {
@@ -255,20 +519,25 @@ class AppController extends ChangeNotifier {
     changingSubject = true;
     notifyListeners();
     try {
-      dashboard = await _bridge.setSubject(
+      final result = await _bridge.setSubject(
         subjectId: subject.id,
         subjectName: subject.name,
         classId: subject.classId,
       );
+      _applySubjectUpdate(result);
       _resetSelections();
-      _reconcileNoticeReadState();
       _setBanner('当前科目已切换到 ${subject.name}。');
+      unawaited(_loadGpaInBackground());
     } catch (error) {
       _setBanner(_errorText(error), isError: true);
     } finally {
       changingSubject = false;
       notifyListeners();
     }
+  }
+
+  void _resetClassSubmitStats() {
+    _classSubmitStats.clear();
   }
 
   void selectCourse(String courseId) {
@@ -308,14 +577,15 @@ class AppController extends ChangeNotifier {
           currentSubject?.id != task.courseId ||
           currentSubject?.classId != task.classId;
       if (needsSubjectChange && task.courseId.isNotEmpty) {
-        dashboard = await _bridge.setSubject(
+        final result = await _bridge.setSubject(
           subjectId: task.courseId,
           subjectName: task.courseName,
           classId: task.classId,
         );
-        _reconcileNoticeReadState();
+        _applySubjectUpdate(result);
       }
       selectedTaskDetail = await _bridge.openTask(task.id);
+      _cacheClassSubmitStatsFromDetail(task, selectedTaskDetail);
       selectedFiles = <XFile>[];
       submitRemarkController.clear();
     } catch (error) {
@@ -401,14 +671,8 @@ class AppController extends ChangeNotifier {
       _setBanner('作业已提交。');
       selectedFiles = <XFile>[];
       submitRemarkController.clear();
-      dashboard = await _bridge.loadDashboard();
-      _reconcileNoticeReadState();
-      final currentTask = selectedTask;
-      if (currentTask != null) {
-        selectedTaskDetail = await _bridge.openTask(currentTask.id);
-      } else {
-        selectedTaskDetail = null;
-      }
+      selectedTaskDetail = null;
+      unawaited(refreshDashboard(silent: true));
     } catch (error) {
       _setBanner(_errorText(error), isError: true);
     } finally {
@@ -453,6 +717,7 @@ class AppController extends ChangeNotifier {
   }
 
   void _resetSelections() {
+    _resetClassSubmitStats();
     selectedCourseId = 'all';
     selectedTaskId = null;
     selectedTaskDetail = null;
@@ -488,6 +753,14 @@ class AppController extends ChangeNotifier {
     return error is StateError ? error.message : error.toString();
   }
   
+  Future<void> ensurePrivateMessagesLoaded() async {
+    if (_privateMessagesRequested && privateContacts.isNotEmpty) {
+      return;
+    }
+    _privateMessagesRequested = true;
+    await loadPrivateContacts();
+  }
+
   // 私信相关方法
   Future<void> loadPrivateContacts() async {
     loadingPrivateContacts = true;
@@ -495,7 +768,6 @@ class AppController extends ChangeNotifier {
     try {
       final result = await _bridge.listPrivateContacts();
       privateContacts = result;
-      _setBanner('已加载 ${result.length} 个联系人。');
     } catch (error) {
       _setBanner(_errorText(error), isError: true);
     } finally {
@@ -511,6 +783,30 @@ class AppController extends ChangeNotifier {
     try {
       final result = await _bridge.getPrivateMessageThread(contact);
       privateMessages = result;
+      
+      // 打开消息后，清除该联系人的未读数
+      final updatedContacts = privateContacts.map((c) {
+        if (c.id == contact.id && c.unreadNum > 0) {
+          return PrivateContact(
+            id: c.id,
+            classId: c.classId,
+            className: c.className,
+            peerId: c.peerId,
+            peerName: c.peerName,
+            peerType: c.peerType,
+            unreadNum: 0, // 清除未读数
+            lastTime: c.lastTime,
+            lastContent: c.lastContent,
+            peerAvatar: c.peerAvatar,
+            peerSexCode: c.peerSexCode,
+            courseName: c.courseName,
+            courseColor: c.courseColor,
+            raw: c.raw,
+          );
+        }
+        return c;
+      }).toList();
+      privateContacts = updatedContacts;
     } catch (error) {
       _setBanner(_errorText(error), isError: true);
     } finally {

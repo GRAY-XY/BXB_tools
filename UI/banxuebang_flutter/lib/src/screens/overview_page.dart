@@ -6,21 +6,62 @@ import '../state/app_controller.dart';
 import '../theme/app_theme.dart';
 import '../utils/formatters.dart';
 
-class OverviewPage extends StatelessWidget {
+String _taskRowSubtitle(AppController controller, HomeworkTask task) {
+  final parts = <String>[
+    task.courseName.isEmpty ? '未标记课程' : task.courseName,
+    formatRelativeDeadline(task.endTime),
+  ];
+  final submitLabel = controller.classSubmitPercentLabel(task);
+  if (submitLabel != null) {
+    parts.add(submitLabel);
+  }
+  return parts.join(' · ');
+}
+
+class OverviewPage extends StatefulWidget {
   const OverviewPage({super.key, required this.controller});
 
   final AppController controller;
 
   @override
-  Widget build(BuildContext context) {
-    final dashboard = controller.dashboard!;
-    final summary = dashboard.session;
-    final tasks = List<HomeworkTask>.from(controller.actionableTasks)
+  State<OverviewPage> createState() => _OverviewPageState();
+}
+
+class _OverviewPageState extends State<OverviewPage> {
+  // 缓存排序后的任务列表，只在数据源变化时重新排序
+  List<HomeworkTask>? _cachedTasks;
+  List<HomeworkTask>? _cachedActionableTasks;
+
+  List<HomeworkTask> _getSortedTasks(List<HomeworkTask> actionable) {
+    if (identical(_cachedActionableTasks, actionable) &&
+        _cachedTasks != null) {
+      return _cachedTasks!;
+    }
+    _cachedActionableTasks = actionable;
+    _cachedTasks = List<HomeworkTask>.from(actionable)
       ..sort((a, b) {
         final aTime = parseBxbDate(a.endTime)?.millisecondsSinceEpoch ?? 0;
         final bTime = parseBxbDate(b.endTime)?.millisecondsSinceEpoch ?? 0;
         return aTime.compareTo(bTime);
       });
+    return _cachedTasks!;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = widget.controller;
+    return ListenableBuilder(
+      listenable: controller,
+      builder: (BuildContext context, Widget? child) {
+        return _buildContent(context, controller);
+      },
+    );
+  }
+
+  Widget _buildContent(BuildContext context, AppController controller) {
+    final dashboard = controller.dashboard!;
+    final summary = dashboard.session;
+    final tasks = _getSortedTasks(controller.actionableTasks);
     final notices = controller.notices;
     final courseSnapshot = _buildCourseSnapshot(dashboard);
 
@@ -308,8 +349,7 @@ class _TasksGroup extends StatelessWidget {
                   title: task.activityName.isNotEmpty
                       ? task.activityName
                       : '未命名作业',
-                  subtitle:
-                      '${task.courseName.isEmpty ? '未标记课程' : task.courseName} · ${formatRelativeDeadline(task.endTime)}',
+                  subtitle: _taskRowSubtitle(controller, task),
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: <Widget>[

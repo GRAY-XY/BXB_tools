@@ -47,6 +47,13 @@ List<JsonMap> _mapList(dynamic value) {
   return value.map(_mapValue).toList();
 }
 
+List<HomeworkTask> _parsePendingHomework(dynamic value) {
+  if (value is! List || value.isEmpty) {
+    return const <HomeworkTask>[];
+  }
+  return _mapList(value).map(HomeworkTask.fromJson).toList();
+}
+
 class DashboardData {
   DashboardData({
     required this.session,
@@ -95,9 +102,7 @@ class DashboardData {
       terms: _mapList(json['terms']).map(TermSummary.fromJson).toList(),
       courses: _mapList(json['courses']).map(CourseSummary.fromJson).toList(),
       homework: _mapList(json['homework']).map(HomeworkTask.fromJson).toList(),
-      pendingHomework: _mapList(
-        json['pendingHomework'],
-      ).map(HomeworkTask.fromJson).toList(),
+      pendingHomework: _parsePendingHomework(json['pendingHomework']),
       schedule: parsedSchedule,
       timeSlots: parsedTimeSlots,
       notices: _mapList(json['notices']).map(NoticeSummary.fromJson).toList(),
@@ -120,6 +125,33 @@ class DashboardData {
   final List<NoticeSummary> notices;
   final UnreadSummary? unreadCount;
   final GpaSummary? gpa;
+
+  DashboardData copyWith({
+    SessionSummary? session,
+    List<TermSummary>? terms,
+    List<CourseSummary>? courses,
+    List<HomeworkTask>? homework,
+    List<HomeworkTask>? pendingHomework,
+    Map<int, Map<int, ScheduleSlot>>? schedule,
+    Map<int, String>? timeSlots,
+    List<NoticeSummary>? notices,
+    UnreadSummary? unreadCount,
+    GpaSummary? gpa,
+    bool clearGpa = false,
+  }) {
+    return DashboardData(
+      session: session ?? this.session,
+      terms: terms ?? this.terms,
+      courses: courses ?? this.courses,
+      homework: homework ?? this.homework,
+      pendingHomework: pendingHomework ?? this.pendingHomework,
+      schedule: schedule ?? this.schedule,
+      timeSlots: timeSlots ?? this.timeSlots,
+      notices: notices ?? this.notices,
+      unreadCount: unreadCount ?? this.unreadCount,
+      gpa: clearGpa ? null : (gpa ?? this.gpa),
+    );
+  }
 }
 
 class SessionSummary {

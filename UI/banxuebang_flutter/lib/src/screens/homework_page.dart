@@ -7,13 +7,28 @@ import '../state/app_controller.dart';
 import '../theme/app_theme.dart';
 import '../utils/formatters.dart';
 
-class HomeworkPage extends StatelessWidget {
+class HomeworkPage extends StatefulWidget {
   const HomeworkPage({super.key, required this.controller});
 
   final AppController controller;
 
   @override
+  State<HomeworkPage> createState() => _HomeworkPageState();
+}
+
+class _HomeworkPageState extends State<HomeworkPage> {
+  @override
   Widget build(BuildContext context) {
+    final controller = widget.controller;
+    return ListenableBuilder(
+      listenable: controller,
+      builder: (BuildContext context, Widget? child) {
+        return _buildContent(context, controller);
+      },
+    );
+  }
+
+  Widget _buildContent(BuildContext context, AppController controller) {
     final dashboard = controller.dashboard!;
     final tasks = controller.visibleTasks;
 
@@ -84,15 +99,14 @@ class _CoursePanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final taskCounts = controller.courseTaskCounts;
     final items = <({String id, String name, int count, String? color})>[
-      (id: 'all', name: '全部课程', count: dashboard.homework.length, color: null),
+      (id: 'all', name: '全部课程', count: taskCounts['all'] ?? 0, color: null),
       ...dashboard.courses.map(
         (course) => (
           id: course.id,
           name: course.name,
-          count: dashboard.homework
-              .where((task) => task.courseId == course.id)
-              .length,
+          count: taskCounts[course.id] ?? 0,
           color: course.color,
         ),
       ),
@@ -307,6 +321,18 @@ class _TaskPanel extends StatelessWidget {
                                 fontWeight: FontWeight.w700,
                               ),
                             ),
+                            if (controller.classSubmitPercentLabel(task) !=
+                                null) ...<Widget>[
+                              const SizedBox(height: 6),
+                              Text(
+                                controller.classSubmitPercentLabel(task)!,
+                                style: const TextStyle(
+                                  color: Color(0xFF2563EB),
+                                  fontWeight: FontWeight.w700,
+                                  height: 1.35,
+                                ),
+                              ),
+                            ],
                             const SizedBox(height: 10),
                             Text(
                               buildTaskPreview(task),
@@ -411,6 +437,14 @@ class _DetailPanel extends StatelessWidget {
                         Chip(label: Text(taskSummary!.scoreTypeName)),
                       if ((taskSummary?.scoreLevel ?? '').isNotEmpty)
                         Chip(label: Text('等级 ${taskSummary!.scoreLevel}')),
+                      if (taskSummary != null &&
+                          controller.classSubmitPercentLabel(taskSummary) !=
+                              null)
+                        Chip(
+                          label: Text(
+                            controller.classSubmitPercentLabel(taskSummary)!,
+                          ),
+                        ),
                       if ((taskSummary?.endTime ?? '').isNotEmpty)
                         Chip(
                           label: Text(
@@ -635,6 +669,9 @@ class _Capsule extends StatelessWidget {
   }
 }
 
+// 预编译 HTML 清理用的正则，避免每次 build 重新构造
+final _reHtmlTags = RegExp(r'<[^>]*>');
+
 class _HighScoreSubmissionCard extends StatefulWidget {
   const _HighScoreSubmissionCard({
     required this.index,
@@ -654,8 +691,8 @@ class _HighScoreSubmissionCardState extends State<_HighScoreSubmissionCard> {
   String _stripHtmlTags(String html) {
     // 简单的HTML标签清理，保留文本内容
     return html
-        .replaceAll(RegExp(r'<[^>]*>'), '')  // 移除HTML标签
-        .replaceAll('&nbsp;', ' ')            // 替换HTML实体
+        .replaceAll(_reHtmlTags, '')        // 移除HTML标签
+        .replaceAll('&nbsp;', ' ')           // 替换HTML实体
         .replaceAll('&ldquo;', '"')
         .replaceAll('&rdquo;', '"')
         .replaceAll('&amp;', '&')

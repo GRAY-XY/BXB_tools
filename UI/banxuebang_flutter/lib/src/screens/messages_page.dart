@@ -21,12 +21,6 @@ class _MessagesPageState extends State<MessagesPage> {
   final ScrollController _messageScrollController = ScrollController();
 
   @override
-  void initState() {
-    super.initState();
-    _loadContacts();
-  }
-
-  @override
   void dispose() {
     _messageController.dispose();
     _messageScrollController.dispose();
@@ -34,10 +28,7 @@ class _MessagesPageState extends State<MessagesPage> {
   }
 
   Future<void> _loadContacts() async {
-    await widget.controller.loadPrivateContacts();
-    if (mounted && widget.controller.privateContacts.isNotEmpty) {
-      _selectContact(widget.controller.privateContacts.first);
-    }
+    await widget.controller.ensurePrivateMessagesLoaded();
   }
 
   void _selectContact(PrivateContact contact) {
@@ -69,6 +60,15 @@ class _MessagesPageState extends State<MessagesPage> {
 
   @override
   Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: widget.controller,
+      builder: (BuildContext context, Widget? child) {
+        return _buildContent(context);
+      },
+    );
+  }
+
+  Widget _buildContent(BuildContext context) {
     final contacts = widget.controller.privateContacts;
     final selectedContact = contacts
         .where((c) => c.id == _selectedContactId)
@@ -504,10 +504,13 @@ class _MessageBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     return Align(
       alignment: isSentByMe ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.7,
-        ),
+      // 用 LayoutBuilder 代替 MediaQuery，避免订阅整个 MediaQuery 尺寸变化
+      child: LayoutBuilder(
+        builder: (BuildContext context, BoxConstraints constraints) {
+          return ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: constraints.maxWidth * 0.7,
+            ),
         child: Column(
           crossAxisAlignment:
               isSentByMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
@@ -571,7 +574,9 @@ class _MessageBubble extends StatelessWidget {
             ),
           ],
         ),
-      ),
+          );        // ConstrainedBox
+        },
+      ),            // LayoutBuilder
     );
   }
 }

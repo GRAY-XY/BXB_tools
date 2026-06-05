@@ -32,6 +32,15 @@ class _NoticesPageState extends State<NoticesPage> {
 
   @override
   Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: widget.controller,
+      builder: (BuildContext context, Widget? child) {
+        return _buildContent(context);
+      },
+    );
+  }
+
+  Widget _buildContent(BuildContext context) {
     final notices = widget.controller.notices;
     final selected = notices
         .where((notice) => notice.id == _selectedNoticeId)

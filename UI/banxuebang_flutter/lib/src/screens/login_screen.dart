@@ -31,7 +31,9 @@ class _LoginScreenState extends State<LoginScreen> {
 
     return Scaffold(
       body: DecoratedBox(
-        decoration: const BoxDecoration(color: Color(0xFFF2F4F7)),
+        decoration: BoxDecoration(
+          color: Theme.of(context).scaffoldBackgroundColor,
+        ),
         child: SafeArea(
           child: Center(
             child: ConstrainedBox(

@@ -3,50 +3,76 @@ import 'dart:ui';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
-ThemeData buildAppTheme() {
+import 'app_colors.dart';
+
+ThemeData buildAppTheme(Brightness brightness) {
+  final isDark = brightness == Brightness.dark;
+  final appColors = isDark ? AppColors.dark : AppColors.light;
   const seed = Color(0xFF2563EB);
   final scheme =
       ColorScheme.fromSeed(
         seedColor: seed,
-        brightness: Brightness.light,
-        surface: const Color(0xFFF5F5F3),
+        brightness: brightness,
+        surface: isDark ? const Color(0xFF14161C) : const Color(0xFFF5F5F3),
       ).copyWith(
-        surface: const Color(0xFFF6F6F4),
-        surfaceContainerHighest: const Color(0xFFFDFDFC),
-        outlineVariant: const Color(0x1F1D1D1F),
-        primaryContainer: const Color(0xFFE6EEFF),
-        secondaryContainer: const Color(0xFFEAF7F1),
+        surface: isDark ? const Color(0xFF14161C) : const Color(0xFFF6F6F4),
+        surfaceContainerHighest:
+            isDark ? const Color(0xFF1E222A) : const Color(0xFFFDFDFC),
+        outlineVariant:
+            isDark ? const Color(0x332A3140) : const Color(0x1F1D1D1F),
+        primaryContainer:
+            isDark ? const Color(0xFF1E2F52) : const Color(0xFFE6EEFF),
+        secondaryContainer:
+            isDark ? const Color(0xFF173328) : const Color(0xFFEAF7F1),
+        onSurface: appColors.strongText,
+        onSurfaceVariant: appColors.mutedText,
       );
+
+  final inputFill = isDark
+      ? const Color(0xFF232833).withValues(alpha: 0.92)
+      : Colors.white.withValues(alpha: 0.78);
+  final outlinedBg = isDark
+      ? const Color(0xFF232833).withValues(alpha: 0.72)
+      : Colors.white.withValues(alpha: 0.5);
+  final chipBg = isDark
+      ? const Color(0xFF232833).withValues(alpha: 0.88)
+      : Colors.white.withValues(alpha: 0.62);
+  final segmentedIdle = isDark
+      ? const Color(0xFF232833).withValues(alpha: 0.72)
+      : Colors.white.withValues(alpha: 0.62);
 
   return ThemeData(
     useMaterial3: true,
+    brightness: brightness,
     colorScheme: scheme,
-    scaffoldBackgroundColor: const Color(0xFFF1F1EE),
+    extensions: <ThemeExtension<dynamic>>[appColors],
+    scaffoldBackgroundColor: appColors.shellBackground,
     materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-    textTheme: ThemeData(useMaterial3: true).textTheme.apply(
-      bodyColor: const Color(0xFF1D1D1F),
-      displayColor: const Color(0xFF111827),
-    ),
-    iconTheme: const IconThemeData(color: Color(0xFF4B5563)),
-    dividerColor: const Color(0x1A1D1D1F),
-    dividerTheme: const DividerThemeData(
-      color: Color(0x1A1D1D1F),
+    textTheme: ThemeData(useMaterial3: true, brightness: brightness).textTheme
+        .apply(
+          bodyColor: appColors.strongText,
+          displayColor: appColors.strongText,
+        ),
+    iconTheme: IconThemeData(color: appColors.mutedText),
+    dividerColor: appColors.panelBorder,
+    dividerTheme: DividerThemeData(
+      color: appColors.panelBorder,
       thickness: 1,
       space: 1,
     ),
-    splashColor: seed.withValues(alpha: 0.08),
+    splashColor: seed.withValues(alpha: isDark ? 0.16 : 0.08),
     highlightColor: Colors.transparent,
-    hoverColor: const Color(0x0D111827),
+    hoverColor: appColors.strongText.withValues(alpha: isDark ? 0.06 : 0.05),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
-      fillColor: Colors.white.withValues(alpha: 0.78),
+      fillColor: inputFill,
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(8),
-        borderSide: const BorderSide(color: Color(0x1F1D1D1F)),
+        borderSide: BorderSide(color: appColors.panelBorder),
       ),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(8),
-        borderSide: const BorderSide(color: Color(0x1F1D1D1F)),
+        borderSide: BorderSide(color: appColors.panelBorder),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(8),
@@ -54,10 +80,14 @@ ThemeData buildAppTheme() {
       ),
       disabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(8),
-        borderSide: const BorderSide(color: Color(0x141D1D1F)),
+        borderSide: BorderSide(
+          color: appColors.panelBorder.withValues(alpha: 0.6),
+        ),
       ),
-      labelStyle: const TextStyle(color: Color(0xFF6B7280)),
-      hintStyle: const TextStyle(color: Color(0xFF9CA3AF)),
+      labelStyle: TextStyle(color: appColors.mutedText),
+      hintStyle: TextStyle(
+        color: appColors.mutedText.withValues(alpha: 0.85),
+      ),
       contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
     ),
     filledButtonTheme: FilledButtonThemeData(
@@ -65,7 +95,7 @@ ThemeData buildAppTheme() {
         minimumSize: const Size(0, 38),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        backgroundColor: const Color(0xFF2563EB),
+        backgroundColor: seed,
         foregroundColor: Colors.white,
         textStyle: const TextStyle(fontWeight: FontWeight.w700),
       ),
@@ -74,21 +104,21 @@ ThemeData buildAppTheme() {
       style: OutlinedButton.styleFrom(
         minimumSize: const Size(0, 38),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        side: const BorderSide(color: Color(0x1F1D1D1F)),
+        side: BorderSide(color: appColors.panelBorder),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        backgroundColor: Colors.white.withValues(alpha: 0.5),
-        foregroundColor: const Color(0xFF111827),
+        backgroundColor: outlinedBg,
+        foregroundColor: appColors.strongText,
         textStyle: const TextStyle(fontWeight: FontWeight.w700),
       ),
     ),
     chipTheme: ChipThemeData(
-      side: const BorderSide(color: Color(0x141D1D1F)),
+      side: BorderSide(color: appColors.panelBorder),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-      backgroundColor: Colors.white.withValues(alpha: 0.62),
-      selectedColor: const Color(0xFFE8EEF9),
-      labelStyle: const TextStyle(
+      backgroundColor: chipBg,
+      selectedColor: appColors.navSelected,
+      labelStyle: TextStyle(
         fontWeight: FontWeight.w600,
-        color: Color(0xFF374151),
+        color: appColors.strongText.withValues(alpha: 0.88),
       ),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
     ),
@@ -97,14 +127,12 @@ ThemeData buildAppTheme() {
         visualDensity: VisualDensity.compact,
         backgroundColor: WidgetStateProperty.resolveWith((states) {
           if (states.contains(WidgetState.selected)) {
-            return const Color(0xFFE7EEFF);
+            return appColors.navSelected;
           }
-          return Colors.white.withValues(alpha: 0.62);
+          return segmentedIdle;
         }),
-        foregroundColor: WidgetStateProperty.all(const Color(0xFF111827)),
-        side: WidgetStateProperty.all(
-          const BorderSide(color: Color(0x1A1D1D1F)),
-        ),
+        foregroundColor: WidgetStateProperty.all(appColors.strongText),
+        side: WidgetStateProperty.all(BorderSide(color: appColors.panelBorder)),
         padding: WidgetStateProperty.all(
           const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         ),
@@ -115,7 +143,7 @@ ThemeData buildAppTheme() {
     ),
     tooltipTheme: TooltipThemeData(
       decoration: BoxDecoration(
-        color: const Color(0xE6111827),
+        color: isDark ? const Color(0xE61F2937) : const Color(0xE6111827),
         borderRadius: BorderRadius.circular(8),
       ),
       textStyle: const TextStyle(
@@ -128,29 +156,33 @@ ThemeData buildAppTheme() {
       radius: const Radius.circular(99),
       thickness: WidgetStateProperty.all(6),
       thumbColor: WidgetStateProperty.resolveWith((states) {
+        final base = isDark ? const Color(0xFF6B7280) : const Color(0xFF8B93A1);
         if (states.contains(WidgetState.dragged)) {
-          return const Color(0x80717887);
+          return base.withValues(alpha: 0.72);
         }
-        return const Color(0x5C8B93A1);
+        return base.withValues(alpha: 0.45);
       }),
-      trackColor: WidgetStateProperty.all(const Color(0x08111827)),
+      trackColor: WidgetStateProperty.all(
+        appColors.strongText.withValues(alpha: isDark ? 0.08 : 0.03),
+      ),
     ),
   );
 }
 
 Color colorFromHex(
   String? raw, {
-  Color fallback = const Color(0xFF6B7280),
+  Color? fallback,
   double opacity = 1,
 }) {
+  final resolvedFallback = fallback ?? const Color(0xFF6B7280);
   final value = (raw ?? '').trim().replaceFirst('#', '');
   if (value.isEmpty) {
-    return fallback.withValues(alpha: opacity);
+    return resolvedFallback.withValues(alpha: opacity);
   }
   final normalized = value.length == 6 ? 'FF$value' : value;
   final parsed = int.tryParse(normalized, radix: 16);
   if (parsed == null) {
-    return fallback.withValues(alpha: opacity);
+    return resolvedFallback.withValues(alpha: opacity);
   }
   return Color(parsed).withValues(alpha: opacity);
 }
@@ -173,21 +205,24 @@ class AppPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = AppColors.of(context);
+    final fill = tint ?? colors.panelFill;
+    final alpha = frosted ? colors.panelFillFrosted : colors.panelFillOpaque;
     final body = Container(
       decoration: BoxDecoration(
-        color: (tint ?? Colors.white).withValues(alpha: frosted ? 0.72 : 0.86),
+        color: fill.withValues(alpha: alpha),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: borderColor ?? const Color(0x161D1D1F)),
-        boxShadow: const <BoxShadow>[
+        border: Border.all(color: borderColor ?? colors.panelBorder),
+        boxShadow: <BoxShadow>[
           BoxShadow(
-            color: Color(0x08000000),
+            color: colors.shadowLight,
             blurRadius: 22,
-            offset: Offset(0, 10),
+            offset: const Offset(0, 10),
           ),
           BoxShadow(
-            color: Color(0x12000000),
+            color: colors.shadowDark,
             blurRadius: 6,
-            offset: Offset(0, 1),
+            offset: const Offset(0, 1),
           ),
         ],
       ),
@@ -242,13 +277,13 @@ class BannerStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final foreground = isError
-        ? const Color(0xFF9A3412)
-        : const Color(0xFF0F766E);
-    final background = isError
-        ? const Color(0xFFFFF4EF)
-        : const Color(0xFFF0FDFA);
-    final border = isError ? const Color(0xFFF2C6B3) : const Color(0xFFBBF7D0);
+    final colors = AppColors.of(context);
+    final foreground =
+        isError ? colors.bannerErrorText : colors.bannerSuccessText;
+    final background =
+        isError ? colors.bannerErrorBg : colors.bannerSuccessBg;
+    final border =
+        isError ? colors.bannerErrorBorder : colors.bannerSuccessBorder;
 
     return Container(
       decoration: BoxDecoration(

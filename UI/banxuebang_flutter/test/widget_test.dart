@@ -12,6 +12,8 @@ void main() {
     required String id,
     required String scoreLevel,
     required String endTime,
+    int isParticipate = 0,
+    bool isEnd = false,
   }) {
     return HomeworkTask(
       id: id,
@@ -26,8 +28,8 @@ void main() {
       academicScore: 100,
       createName: '老师',
       classId: 'class-1',
-      isParticipate: 0,
-      isEnd: false,
+      isParticipate: isParticipate,
+      isEnd: isEnd,
       raw: const <String, dynamic>{},
     );
   }
@@ -180,7 +182,7 @@ void main() {
   ) async {
     await tester.pumpWidget(
       MaterialApp(
-        theme: buildAppTheme(),
+        theme: buildAppTheme(Brightness.light),
         home: AnimatedBuilder(
           animation: controller,
           builder: (BuildContext context, Widget? _) {
@@ -191,6 +193,92 @@ void main() {
     );
     await tester.pumpAndSettle();
   }
+
+  test('parseClassSubmissionStats reads percent and count pairs', () {
+    expect(
+      parseClassSubmissionStats(const <String, dynamic>{
+        'submitRate': 62,
+      })?.percent,
+      62,
+    );
+    final fromCounts = parseClassSubmissionStats(const <String, dynamic>{
+      'submitNum': 18,
+      'studentNum': 30,
+    });
+    expect(fromCounts?.submittedCount, 18);
+    expect(fromCounts?.totalCount, 30);
+    expect(fromCounts?.percent, 60);
+    expect(
+      formatClassSubmitPercentLabel(
+        const ClassSubmissionStats(percent: 75),
+      ),
+      '约 75% 同学已提交',
+    );
+  });
+
+  test('isActionableTask only counts open unsubmitted or E+ homework', () {
+    expect(
+      isActionableTask(
+        buildTask(id: 'open-missing', scoreLevel: '', endTime: '2026-05-20 12:00'),
+      ),
+      isTrue,
+    );
+    expect(
+      isActionableTask(
+        buildTask(
+          id: 'e-plus',
+          scoreLevel: 'E+',
+          endTime: '2026-05-20 12:00',
+          isParticipate: 1,
+        ),
+      ),
+      isTrue,
+    );
+    expect(
+      isActionableTask(
+        buildTask(
+          id: 'ended',
+          scoreLevel: '',
+          endTime: '2026-05-20 12:00',
+          isEnd: true,
+        ),
+      ),
+      isFalse,
+    );
+    expect(
+      isActionableTask(
+        buildTask(
+          id: 'na',
+          scoreLevel: 'N/A',
+          endTime: '2026-05-20 12:00',
+          isParticipate: 1,
+        ),
+      ),
+      isFalse,
+    );
+    expect(
+      isActionableTask(
+        buildTask(
+          id: 'e-only',
+          scoreLevel: 'E',
+          endTime: '2026-05-20 12:00',
+          isParticipate: 1,
+        ),
+      ),
+      isFalse,
+    );
+    expect(
+      isActionableTask(
+        buildTask(
+          id: 'submitted-a',
+          scoreLevel: 'A',
+          endTime: '2026-05-20 12:00',
+          isParticipate: 1,
+        ),
+      ),
+      isFalse,
+    );
+  });
 
   test('sortTasks orders lower grades before higher grades', () {
     final sorted = sortTasks(<HomeworkTask>[
@@ -269,7 +357,7 @@ void main() {
       (_) => SchedulePage(controller: controller),
     );
 
-    expect(find.text('今天课程'), findsOneWidget);
+    expect(find.textContaining('的课程'), findsOneWidget);
     expect(find.text('科目列表'), findsOneWidget);
     expect(find.text('本周课表'), findsOneWidget);
     expect(find.text('数学'), findsWidgets);

@@ -2,6 +2,22 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../models/models.dart';
+import 'bridge_daemon.dart';
+
+class SubjectUpdateResult {
+  const SubjectUpdateResult._({this.dashboard, this.session});
+
+  factory SubjectUpdateResult.dashboard(DashboardData dashboard) {
+    return SubjectUpdateResult._(dashboard: dashboard);
+  }
+
+  factory SubjectUpdateResult.session(SessionSummary session) {
+    return SubjectUpdateResult._(session: session);
+  }
+
+  final DashboardData? dashboard;
+  final SessionSummary? session;
+}
 
 class DesktopBridge {
   DesktopBridge({String? nodeCommand})
@@ -9,12 +25,15 @@ class DesktopBridge {
 
   final String? _nodeCommand;
   late final Directory _runtimeRoot = _resolveRuntimeRoot();
+  BridgeDaemon? _daemon;
 
   File get _bridgeScript =>
       File('${_runtimeRoot.path}/desktop-shell/node_bridge.js');
 
-  Future<DashboardData> loadDashboard() async {
-    final payload = await _run('dashboard');
+  Future<DashboardData> loadDashboard({bool includeGpa = true}) async {
+    final payload = await _run('dashboard', <String, dynamic>{
+      'includeGpa': includeGpa,
+    });
     return DashboardData.fromJson(payload);
   }
 
@@ -44,22 +63,74 @@ class DesktopBridge {
     return DashboardData.fromJson(payload);
   }
 
-  Future<DashboardData> setSubject({
+  Future<SubjectUpdateResult> setSubject({
     String? subjectId,
     String? subjectName,
     String? classId,
+    bool lightweight = true,
   }) async {
     final payload = await _run('set-subject', <String, dynamic>{
       if ((subjectId ?? '').trim().isNotEmpty) 'subjectId': subjectId,
       if ((subjectName ?? '').trim().isNotEmpty) 'subjectName': subjectName,
       if ((classId ?? '').trim().isNotEmpty) 'classId': classId,
+      'lightweight': lightweight,
     });
-    return DashboardData.fromJson(payload);
+    if (payload['lightweight'] == true) {
+      return SubjectUpdateResult.session(
+        SessionSummary.fromJson(_coerceJsonMap(payload['session'])),
+      );
+    }
+    return SubjectUpdateResult.dashboard(DashboardData.fromJson(payload));
+  }
+
+  Future<GpaSummary?> loadGpa() async {
+    final payload = await _run('gpa');
+    if (payload.isEmpty) {
+      return null;
+    }
+    return GpaSummary.fromJson(payload);
   }
 
   Future<TaskDetail> openTask(String taskId) async {
     final payload = await _run('open-task', {'taskId': taskId});
     return TaskDetail.fromJson(payload);
+  }
+
+  Future<JsonMap> loadClassSubmitStats({
+    required String taskId,
+    required String classId,
+    JsonMap raw = const <String, dynamic>{},
+  }) async {
+    return _run('task-submit-stats', <String, dynamic>{
+      'taskId': taskId,
+      'classId': classId,
+      'raw': raw,
+    });
+  }
+
+  Future<Map<String, JsonMap>> loadClassSubmitStatsBatch(
+    List<({String taskId, String classId})> tasks,
+  ) async {
+    if (tasks.isEmpty) {
+      return <String, JsonMap>{};
+    }
+    final payload = await _run('task-submit-stats-batch', <String, dynamic>{
+      'tasks': tasks
+          .map(
+            (task) => <String, dynamic>{
+              'taskId': task.taskId,
+              'classId': task.classId,
+            },
+          )
+          .toList(),
+    });
+    final statsByTaskId = payload['statsByTaskId'];
+    if (statsByTaskId is! Map) {
+      return <String, JsonMap>{};
+    }
+    return statsByTaskId.map(
+      (key, value) => MapEntry(key.toString(), _coerceJsonMap(value)),
+    );
   }
 
   Future<AttachmentDownload> downloadAttachment({
@@ -139,6 +210,11 @@ class DesktopBridge {
     );
   }
 
+  Future<void> shutdown() async {
+    await _daemon?.shutdown();
+    _daemon = null;
+  }
+
   Future<void> openTarget(String target) async {
     if (target.trim().isEmpty) {
       return;
@@ -160,6 +236,39 @@ class DesktopBridge {
     String command, [
     JsonMap payload = const <String, dynamic>{},
   ]) async {
+    final useDaemon = Platform.environment['BXB_BRIDGE_DAEMON'] != '0';
+    if (useDaemon) {
+      try {
+        return await _runViaDaemon(command, payload);
+      } catch (_) {
+        await _daemon?.shutdown();
+        _daemon = null;
+      }
+    }
+    return _runOneShot(command, payload);
+  }
+
+  Future<JsonMap> _runViaDaemon(
+    String command,
+    JsonMap payload,
+  ) async {
+    _daemon ??= BridgeDaemon(
+      nodeCommand: _resolveNodeCommand(),
+      bridgeScriptPath: _bridgeScript.path,
+      workingDirectory: _runtimeRoot.path,
+      environment: _buildRuntimeEnv(),
+    );
+    return _daemon!.request(
+      command,
+      payload,
+      timeout: _timeoutFor(command),
+    );
+  }
+
+  Future<JsonMap> _runOneShot(
+    String command,
+    JsonMap payload,
+  ) async {
     final nodeCommand = _resolveNodeCommand();
     ProcessResult process;
     try {
@@ -206,6 +315,18 @@ class DesktopBridge {
     }
 
     return _coerceJsonMap(envelope['data']);
+  }
+
+  Duration _timeoutFor(String command) {
+    switch (command) {
+      case 'login':
+      case 'login-with-credentials':
+        return const Duration(minutes: 5);
+      case 'dashboard':
+        return const Duration(minutes: 3);
+      default:
+        return const Duration(seconds: 90);
+    }
   }
 
   String _resolveNodeCommand() {
