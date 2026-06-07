@@ -1,19 +1,20 @@
 # Frontend Requirements
 
-This document describes the expected frontend behavior for the BXB Homework desktop client.
+This document is the current frontend baseline for the BXB Homework desktop client.
 
-The current production client is the Electron + React app in `desktop/`. The older Tk UI and the archived Flutter prototype are not the active frontend baseline.
+The active frontend is the Electron + React app in `desktop/`. The older Tk UI and archived Flutter prototype are reference material only.
 
-## Product Goals
+## Product Principles
 
-- Provide a non-technical desktop UI for Banxuebang homework, grades, drafts, and AI assistance.
-- Keep all user credentials, Banxuebang session data, model API keys, attachments, and drafts local.
-- Let the Agent read and organize homework information, but never upload, submit, or delete content without explicit user confirmation.
-- Keep the UI usable for students who do not understand JSON, tokens, file paths, or command line concepts.
+- Provide a desktop UI for Banxuebang homework, drafts, private messages, workspace files, model settings, and AI assistance.
+- Keep Banxuebang sessions, model API keys, conversations, attachments, drafts, update downloads, and local workspace files on the user's machine.
+- Hide raw tokens, raw API keys, raw session JSON, diagnostic path dumps, and command-line details from normal users.
+- Let the Agent read, summarize, draft, and organize information, but do not let it upload, submit, delete, or send content by itself.
+- Use readable page-specific views instead of raw JSON blocks unless a diagnostic view is explicitly needed.
 
-## Primary Navigation
+## Navigation
 
-The left sidebar should contain:
+The left sidebar contains:
 
 - `主页`
 - `助手`
@@ -23,107 +24,115 @@ The left sidebar should contain:
 - `草稿`
 - `设置`
 
-The bottom-left `Session` card is interactive:
+The bottom-left Session card:
 
-- Shows login state, account display name, and current course.
+- Shows login state and account display name.
 - Opens upward when clicked.
-- Contains a term switcher and course switcher.
-- Term switching must refresh the available courses.
-- Only the actual current term/course should show selected styling.
+- Provides term switching only.
+- Does not expose a global course selector. Course selection belongs to the pages that need it, such as `作业` and manual draft creation.
+- Refreshes session state after term switching and clears page-level task/course selections that depend on the old term.
 
 ## Home Page
 
-Required cards:
+Purpose:
 
-- Runtime summary: UI runtime, Agent availability, login status.
+- Show that the app is ready, whether Banxuebang is logged in, and the current account/session summary.
+
+Required content:
+
+- Runtime summary: Electron UI, Agent availability, and login state.
 - Login card:
-  - Browser login button.
-  - Refresh session button.
-  - Explain that login state is stored locally.
-- Current session summary:
+  - Browser login.
+  - Refresh session.
+  - Local-session storage note.
+- Session summary:
   - Account name.
   - Class name.
   - Current term.
-  - Number of available courses.
-  - Pending task count across available courses when available.
+  - Number of courses in the current term.
+  - Pending homework count when available.
 
-Do not render raw `session_status` JSON in normal UI.
+Rules:
 
-## Session And Term Switching
-
-When the Session card opens:
-
-1. Call `list_terms`.
-2. Render `切换学期`.
-3. Do not ask the user to choose a global current subject here.
-
-When the user selects a term:
-
-1. Call `set_current_term` with `term_name` or `term_id`.
-2. Refresh `getSession`.
-3. Refresh `list_terms`.
-4. Clear homework-page course/task state so the next homework refresh reloads current-term courses.
-5. Recompute selected state from `session.currentTermId`, not stale `term.status`.
-
-Acceptance criteria:
-
-- The previous term does not remain highlighted after switching.
-- The menu opens upward and remains usable on small desktop windows.
+- Do not show the current course on the home page.
+- Do not render raw `session_status` JSON in normal UI.
 
 ## Agent Page
 
+Purpose:
+
+- Provide local AI chat with tool-backed Banxuebang and workspace access.
+
 Layout:
 
-- Left column: conversation list.
-- Middle column: chat messages and input box.
-- Right column: expandable work-process timeline.
-- Top toolbar: quick prompts, new conversation, context usage meter.
+- Left: conversation list.
+- Middle: chat messages and composer.
+- Right: expandable work-process timeline.
+- Top toolbar: quick prompts, new conversation, and context usage meter.
 
-Conversation list requirements:
+Conversation requirements:
 
 - Create a new conversation.
-- Select an old conversation and restore its messages.
+- Select a saved conversation and restore messages.
 - Rename a conversation.
-- Delete a conversation after confirmation.
-- Keep conversations local in Electron userData; do not store them in the repository.
+- Delete a conversation after in-app confirmation.
+- Store conversations only in Electron userData.
+- Do not use native blocking dialogs for destructive chat actions because they can break composer focus in Electron.
 
 Chat requirements:
 
-- User messages align right.
-- Assistant messages align left.
-- User and assistant bubbles should use visibly different colors.
-- Assistant messages must render Markdown.
-- Markdown tables should not overflow the whole page; the message body should support horizontal scrolling.
-- New messages should auto-scroll into view.
-- User input `/compact` should summarize older conversation history and keep only the compressed summary plus recent turns.
-- When current or external information is needed, the Agent may call `web_search` first and `read_web_page` for selected result URLs. The default search engine is Bing and no user-provided search API key is required.
-- When the user references a workspace file, the Agent should call `list_workspace_files` to locate it, then `read_workspace_file` or `rename_workspace_file` as needed.
+- User messages align right; assistant messages align left.
+- User and assistant bubbles use visibly different colors.
+- Assistant messages render Markdown, tables, code blocks, and inline/display math such as `$...$`, `$$...$$`, `\(...\)`, and `\[...\]`.
+- Message bodies must not overflow the page; wide tables/code scroll inside the bubble.
+- New messages auto-scroll into view.
+- The composer remains focusable after new-chat, select-chat, rename, and delete flows.
+- `/compact` summarizes older conversation context and keeps the compressed summary plus recent turns.
 
 Agent progress requirements:
 
 - Subscribe to `onAgentProgress`.
-- Show elapsed running time while a request is active.
-- Display each step as expandable details.
+- Show elapsed time while a request is running.
+- Display each tool/model step as expandable details.
 - Preserve final `steps` returned by `chat()`.
 
 Context meter:
 
-- Prefer `usage.prompt_tokens` or `usage.promptTokens` when available.
-- Fallback to estimated tokens from recent messages.
-- `contextLength` is configured on the Model page.
+- Prefer `usage.prompt_tokens` or `usage.promptTokens`.
+- Fall back to an estimated count from recent messages.
+- Use the configured context length from Settings.
+
+Default Agent safety:
+
+- Need real Banxuebang data: call tools, do not guess.
+- Need web/current information: call `web_search`, then `read_web_page` for selected results.
+- Need workspace files: call `list_workspace_files`, then `read_workspace_file` or `rename_workspace_file`.
+- Homework drafts must be saved with `draft_task_submission` only after collecting context.
+- Draft body text in `draft_text` must be plain text, not Markdown.
+- The Agent must not upload, submit, delete, or send content.
 
 ## Homework Page
 
+Purpose:
+
+- Browse current-term homework without making the user manage a global current course.
+
 Required actions:
 
-- Load course filter choices: `list_courses({})`
-- Refresh all tasks for selected course: `list_tasks({ subject_name, class_id, list_type: "all", page: 1, size: 30 })`
-- Refresh pending tasks for selected course: `list_tasks({ subject_name, class_id, list_type: "pending", page: 1, size: 30 })`
-- Open task detail: `read_task_content({ task_id, max_chars: 6000 })`
+- Load course choices: `list_courses({})`
+- Refresh all tasks: `list_tasks({ subject_name, class_id, list_type: "all", page: 1, size: 30 })`
+- Refresh pending tasks: `list_tasks({ subject_name, class_id, list_type: "pending", page: 1, size: 30 })`
+- Open readable task detail: `read_task_content({ task_id, max_chars: 6000 })`
 
-The homework page must own subject selection with a dropdown that includes `全部课程`; users should not need to switch a global current subject to browse homework. When `全部课程` is selected, task lists aggregate all current-term courses and keep course names visible in rows.
+Course filtering:
 
-Table columns:
+- The page owns its course dropdown.
+- The dropdown includes `全部课程`.
+- Selecting `全部课程` aggregates tasks across current-term courses.
+- Rows must keep course names visible.
+- Do not require users to change global current subject before browsing homework.
+
+Task table columns:
 
 - ID
 - Course
@@ -131,63 +140,92 @@ Table columns:
 - Deadline
 - Score/status
 
-Implementation notes:
+Detail panel:
 
-- Task result fields vary. Use tolerant extraction for `task_id`, `taskId`, `id`, or `activityId`.
-- The detail panel should show readable task facts, content, reference text, and attachments instead of raw diagnostic JSON.
-- Image attachments should render inline in the detail panel. Download them to the managed workspace first, then preview them through the workspace image-preview IPC instead of reading arbitrary local paths in the renderer.
+- Show task facts, readable content, reference text, and attachments.
+- Use tolerant extraction for `task_id`, `taskId`, `id`, and `activityId`.
+- Image attachments render inline by downloading to the managed workspace and previewing through workspace image IPC.
+- The renderer must not read arbitrary local paths directly.
 
 ## Draft Page
 
 Purpose:
 
-- Create local submission drafts manually without raw JSON editing.
-- Review local AI-generated or user-created submission drafts.
-- Approve or reject local drafts.
-- Submit approved drafts only after an explicit in-app confirmation.
-- Show drafts as readable review cards with task context, draft text, missing information, warnings, evidence, and review history instead of raw JSON.
+- Let users create, review, approve, reject, delete, and explicitly submit local homework drafts.
+
+Draft states:
+
+- `pending_review`: waiting for user review.
+- `approved`: approved and eligible for explicit submission.
+- `rejected`: rejected locally.
+- `submitted`: successfully submitted to Banxuebang and read-only locally.
 
 Required actions:
 
-- Load courses for manual draft creation: `list_courses({})`
-- Load tasks for the selected course: `list_tasks({ subject_name, class_id, list_type: "all", page: 1, size })`
+- Load manual-draft courses: `list_courses({})`
+- Load manual-draft tasks: `list_tasks({ subject_name, class_id, list_type: "all", page: 1, size })`
 - Create draft: `draft_task_submission({ task_id, subject_name, task_title, draft_text, summary })`
 - List pending drafts: `list_submission_drafts({ status: "pending_review" })`
+- List approved drafts: `list_submission_drafts({ status: "approved" })`
+- List submitted drafts: `list_submission_drafts({ status: "submitted" })`
 - List all drafts: `list_submission_drafts({ status: "all" })`
 - Open draft: `get_submission_draft({ draft_id })`
 - Save edited draft text: `update_submission_draft({ draft_id, draft_text })`
 - Approve draft: `approve_submission_draft({ draft_id, review_note })`
 - Reject draft: `reject_submission_draft({ draft_id, review_note })`
 - Delete local draft: `delete_submission_draft({ draft_id })`
-- Prepare approved draft submission: `prepare_draft_submission({ draft_id })`
-- Submit after explicit confirmation: `submit_approved_draft({ draft_id, confirmation_token })`
+- Prepare submission preview: `prepare_draft_submission({ draft_id })`
+- Submit after confirmation: `submit_approved_draft({ draft_id, confirmation_token })`
 
-UI requirements:
+Manual draft creation:
 
-- The sidebar label should be `草稿`.
-- Manual draft creation must use normal form controls for course, task, summary, and draft body; do not ask users to write JSON.
-- Manual draft creation should be closed by default and opened from an explicit `新建草稿` button.
-- While the manual draft form is open, hide the draft list and detail preview. Return to the list/detail layout after successful creation or cancellation.
-- User-created drafts must default to `pending_review`.
-- The draft body preview must be editable.
-- Saving edits updates only the local draft JSON file and must not upload or submit anything.
-- Deleting a draft must ask for confirmation and delete only the local draft JSON file.
-- Only drafts with status `approved` may show the submit action.
-- Before submission, the UI must call `prepare_draft_submission` and show the target task, target course, submit/resubmit/supplement mode, full text, retained files, and destination.
-- The UI must require a second explicit click on `确认并提交` before calling `submit_approved_draft`.
-- The UI must pass the confirmation token returned by `prepare_draft_submission` so changed content or task state cannot be submitted without another review.
-- Submission errors must remain visible to the user and must not mark the local draft as submitted.
-- Successful submission changes the local draft status to `submitted` and keeps a local submission record.
-- Submitted drafts are read-only. A later resubmission should use a new draft and a new approval.
-- Draft submission actions must not be exposed to autonomous Agent execution.
+- Open from an explicit `新建草稿` button.
+- Closed by default.
+- Uses normal controls for course, task, summary, and body.
+- Does not ask users to write JSON.
+- Hides the draft list and detail preview while the creation form is open.
+- Returns to list/detail after successful creation or cancellation.
+- User-created drafts default to `pending_review`.
+
+Review and editing:
+
+- Draft detail shows task, course, status, summary, editable draft body, warnings, missing information, evidence, review history, and submission history.
+- Saving edits updates only the local draft JSON.
+- Saving must not upload or submit anything.
+- Editing a rejected draft moves it back to `pending_review`.
+- Submitted drafts are read-only. A later resubmission should use a new draft and a new review.
+
+Submission flow:
+
+- Only `approved` drafts may show `提交到伴学邦`.
+- If there are unsaved edits, block submission preparation and ask the user to save first.
+- On submit preparation, call `prepare_draft_submission`.
+- Show a confirmation screen with:
+  - Target course.
+  - Task title and task ID.
+  - Destination.
+  - Submit mode: submit, supplement, resubmit, or correction.
+  - Full text that will be submitted.
+  - Retained existing files, if any.
+  - Warning or reason when automatic submission is not safe.
+- Require a second explicit click on `确认并提交`.
+- Pass the `confirmationToken` returned by `prepare_draft_submission`.
+- Reject submission if the draft text or task state changed after the preview.
+- Prevent duplicate submissions while a draft is already submitting.
+- Use the task's own class ID, not the current global subject's class ID.
+- If an existing submission is detected but no existing submission ID can be determined, block automatic submission to avoid duplicate records.
+- If Banxuebang rejects the operation, keep the local draft `approved` and show the error.
+- Mark the local draft `submitted` only after Banxuebang reports success.
+
+Agent boundary:
+
+- `prepare_draft_submission`, `submit_approved_draft`, `upload_submission_file`, and `submit_task_result` must not be exposed to the autonomous Agent tool set.
 
 ## Workspace Page
 
 Purpose:
 
-- Show the managed local workspace where user-imported files, assistant-downloaded attachments, and assistant-created text files are stored.
-- Let non-technical users import local files without exposing raw filesystem mechanics.
-- Let the Agent read and rename workspace files by filename or relative path.
+- Show the managed local workspace for user-imported files, downloaded task attachments, and assistant-created text files.
 
 Required actions:
 
@@ -198,19 +236,18 @@ Required actions:
 
 UI requirements:
 
-- Sidebar includes `工作区`.
-- Page has buttons for importing files, refreshing files, and opening the workspace folder.
-- File import uses Electron IPC to copy selected files into the managed workspace directory; the renderer must not read arbitrary paths directly.
+- Include buttons for importing files, refreshing files, and opening the workspace folder.
+- File import uses Electron IPC to copy selected files into the managed workspace.
+- The renderer must not read arbitrary local paths directly.
 - File list shows name, relative path, size, modified time, and type.
-- Preview panel shows images inline, readable text for supported text-like files, and a diagnostic summary for unsupported files.
-- Task attachment downloads should default to the workspace so files created by assistant actions are visible there.
+- Preview panel shows images inline, readable text for supported files, and a diagnostic summary for unsupported files.
+- Task attachment downloads default to the workspace so generated/downloaded files remain visible.
 
 ## Private Messages Page
 
 Purpose:
 
-- Let the user read and send Banxuebang private messages inside the desktop client.
-- Keep sending as a direct user action; the autonomous Agent must not send private messages by itself.
+- Let the user read and send Banxuebang private messages from the desktop client.
 
 Required actions:
 
@@ -218,82 +255,86 @@ Required actions:
 - Open thread: `get_private_message_thread({ contact, size: 30 })`
 - Send text: `send_private_message_text({ contact, content })`
 
-Initial constraints:
+Rules:
 
-- Text sending only.
-- Image and attachment messages may render as `[图片]` or `[附件]` placeholders.
-- Do not send any test message during automated verification.
-
-## Model Settings
-
-Model configuration lives inside the `设置` page, not in a separate sidebar page.
-
-Fields:
-
-- API Key.
-- Base URL.
-- Model name.
-- Context length.
-
-Actions:
-
-- Save config.
-- Read available models from the configured OpenAI-compatible `/models` endpoint.
-- Test connectivity.
-- Clear config.
-
-Model name field:
-
-- Allow manual text entry.
-- After reading available models, show a dropdown so the user can choose a returned model id.
-- Do not require a model name before reading the model list; only the base URL is required, with API Key included when provided.
-
-Security requirements:
-
-- API Key input must use password mode.
-- Do not print raw API Key in JSON blocks or logs.
-- Show only `apiKeyMasked` after save/test.
-- Model config is local-only.
+- Sending is always a direct user action.
+- The autonomous Agent must not send private messages.
+- Text sending is the current supported mode.
+- Image and attachment messages may render as `[图片]` or `[附件]`.
+- Automated verification must not send test messages.
 
 ## Settings Page
 
-Required controls:
+Purpose:
 
-- Model settings:
-  - API Key.
-  - Base URL.
-  - Model name.
-  - Model picker should render as one control: a manual text field before loading available models, then one dropdown after models are loaded.
-  - Reading available models should only update the dropdown and status text; do not render the model-list JSON in the page.
-  - Context length.
-  - Assistant chat Temperature.
-  - Context-compaction Temperature.
-  - Save config.
-  - Read available models.
-  - Test connectivity.
-  - Clear config.
+- Combine model configuration, appearance, Agent behavior, path visibility, and software update controls in one `设置` page.
+
+Model settings:
+
+- API Key, shown as a password field.
+- Base URL.
+- Model name.
+- Model picker:
+  - Before reading models, allow manual text entry.
+  - After reading models, show one dropdown using returned model IDs.
+  - Do not render raw model-list JSON after reading models.
+- Context length.
+- Assistant chat Temperature.
+- Context-compaction Temperature.
+- Save config.
+- Read available models from an OpenAI-compatible `/models` endpoint.
+- Test connectivity.
+- Clear config.
+
+Security:
+
+- Never show raw API Key.
+- Show only masked key information after save/test.
+- Model config is local-only.
+
+Interface and Agent controls:
+
 - Theme: light/dark.
 - Max tool rounds.
 - AI system prompt textarea.
 - Restore default system prompt.
 - Save settings.
 - GitHub repository link or copyable URL.
-- Path card:
-  - Do not render raw `appInfo` JSON.
-  - Show app data, Banxuebang data, workspace, draft store, update cache, model config, conversation store, payload, and browser dependency paths as readable rows.
-  - Each row should explain what is stored there and include an `打开路径` action.
-- Update card for the Windows preview channel:
-  - Show the current app version from Electron.
-  - Check GitHub Releases for non-draft prereleases whose title starts with `BXB Homework Win v`.
-  - Treat new Windows preview release titles as `BXB Homework Win v<major>.<minor>.<patch>-pre`.
-  - Keep parsing older titles such as `BXB Homework Win v1.1.0-pre.3` for compatibility.
-  - Show the latest version, installer size, publish time, and release notes when an update is found.
-  - Let the user download and install inside the app only when the release includes both the `.exe` installer and the matching `.sha256` asset.
-  - Download to the local update cache, show progress, verify file size and SHA256, then show `现在重启安装` and `稍后`.
-  - On `现在重启安装`, launch the verified installer and quit the app. The NSIS installer should reopen the new version after installation.
-  - Keep the Release page button as the manual fallback.
 
-Default system prompt:
+Path card:
+
+- Do not render raw `appInfo` JSON.
+- Show readable rows for:
+  - App data directory.
+  - Banxuebang data directory.
+  - Workspace.
+  - Draft store.
+  - Update cache.
+  - Model config file.
+  - Conversation store.
+  - Payload directory.
+  - Browser dependency directory.
+- Each row explains what is stored there.
+- Each row has an `打开路径` action.
+
+Software update card:
+
+- Channel: Windows preview.
+- Show the current Electron app version.
+- Check GitHub Releases for non-draft prereleases whose title starts with `BXB Homework Win v`.
+- Current title/tag convention uses `BXB Homework Win v<major>.<minor>.<patch>-pre`.
+- Keep parsing older titles like `BXB Homework Win v1.1.0-pre.3` for compatibility.
+- Show latest version, installer size, publish time, and release notes when an update is found.
+- In-app download/install is allowed only when the release has both the `.exe` installer and matching `.sha256` asset.
+- Download into the local update cache.
+- Show download progress.
+- Verify file size and SHA256.
+- After verification, show `现在重启安装` and `稍后`.
+- On `现在重启安装`, launch the verified installer and quit the app.
+- The NSIS installer should overwrite the current installation and reopen the new version after installation.
+- Keep the Release page button as the manual fallback.
+
+## Default System Prompt
 
 ```text
 你是伴学邦桌面助手。需要真实数据时必须调用工具，不要猜测。需要联网资料时先调用 web_search；需要阅读某个搜索结果时再调用 read_web_page。用户提到工作区文件时，先调用 list_workspace_files 定位文件，再按需调用 read_workspace_file；需要整理文件名时可调用 rename_workspace_file。不要上传、提交或删除任何内容。处理作业草稿时先调用 collect_task_submission_context；信息不足就说明缺什么；信息足够才调用 draft_task_submission 保存草稿等待用户审核。给出或保存草稿正文时，draft_text 必须是纯文本正文，不要使用 Markdown 标题、列表、表格、代码块、加粗、引用或其他 Markdown 格式；如果需要给用户说明保存状态，可以在助手回复里用 Markdown，但草稿正文内容本身必须保持纯文本。
@@ -301,13 +342,14 @@ Default system prompt:
 
 ## Safety Rules
 
-Frontend must enforce these rules:
+Frontend must enforce:
 
 - Never display raw Banxuebang tokens.
 - Never display raw API keys.
-- Never commit local session files, model config, attachments, build output, or cache.
-- Never call upload/submit tools without explicit user confirmation.
-- The autonomous Agent should not be given upload/submit tools by default.
+- Never commit local session files, model config, attachments, build output, cache, or backups.
+- Never call upload/submit tools without explicit user confirmation in the same interaction.
+- Never expose upload/submit tools to the autonomous Agent by default.
+- Never send private messages from the Agent.
 - Browser-based web search should stay low-volume and user-facing; do not use it for batch scraping.
 - Use `npm run scan:publish` before publishing or release packaging.
 
@@ -329,24 +371,35 @@ npm run build
 npm run dist
 ```
 
-Verification checklist:
+Required checks before release packaging:
 
-- `node --check electron/main.cjs`
-- `node --check electron/preload.cjs`
-- `npm run build`
+- `npm run check` from the repository root.
+- `npm run check` from `desktop/`.
+- `npm run scan:publish` from the repository root.
+- `cd desktop; npm run dist`.
 - Start `dist-electron-app/win-unpacked/BXB Homework.exe`.
-- Confirm the app window title is `BXB Homework`.
-- Confirm login/session summary works.
-- Confirm term switching has only one selected term.
-- Confirm course switching updates current course.
-- Confirm Model config can save, test, and clear without exposing raw API Key.
-- Confirm Agent can call at least `list_courses` and `list_tasks`.
-- Confirm Agent can read task attachments through `download_task_attachment`, `read_task_attachment`, `extract_pdf_text`, and `extract_docx_text`.
-- Confirm Agent can run a short calculation through `run_python_snippet`.
+
+Manual smoke checklist:
+
+- App window title is `BXB Homework`.
+- Login/session summary works without raw JSON.
+- Term switching has exactly one selected term.
+- Home page shows pending homework count instead of current course.
+- Homework page course dropdown can load `全部课程` and concrete courses.
+- Task detail renders readable text and attachments.
+- Agent can call at least `list_courses` and `list_tasks`.
+- Agent composer remains usable after chat create/select/delete flows.
+- Markdown math renders in assistant messages.
+- Draft creation opens as a form and returns to list/detail after creation.
+- Approved draft submission shows the confirmation screen and requires a second click.
+- Submission failures remain visible and do not mark drafts submitted.
+- Model config can save, read models, test, and clear without exposing raw API Key.
+- Path card shows readable paths with open actions, not raw `appInfo`.
+- Update card can check releases and keeps manual Release page fallback.
 
 ## Known Constraints
 
-- The renderer uses a narrow IPC facade. Any new backend capability should be added behind `window.bxb`, not by enabling Node integration.
-- Tool results are not fully normalized. Frontend code must tolerate multiple field names.
-- PDF/DOCX text extraction and short Python snippets are available; PDF/DOCX editing and a full code sandbox are not yet part of the current frontend/backend contract.
-- The archived Flutter prototype exists only for future reference and is not the active UI.
+- The renderer uses a narrow IPC facade. New backend capabilities should be added behind `window.bxb`; keep Node integration disabled.
+- Banxuebang tool result shapes vary. Frontend code must tolerate multiple field names.
+- PDF/DOCX text extraction and short Python snippets are available; full document editing and a general code sandbox are not part of the current frontend contract.
+- The archived Flutter prototype is not the active UI baseline.
