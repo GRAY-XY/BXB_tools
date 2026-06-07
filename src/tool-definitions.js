@@ -717,6 +717,28 @@ export function createToolDefinitions(client) {
       execute: async ({ draft_id: draftId }) => client.deleteSubmissionDraft(draftId),
     },
     {
+      name: "prepare_draft_submission",
+      description:
+        "Validate an approved draft and return the exact Banxuebang destination, mode, text, and retained files for a human confirmation screen. This does not submit anything.",
+      inputSchema: {
+        draft_id: z.string().describe("Approved draft id."),
+      },
+      execute: async ({ draft_id: draftId }) => client.prepareDraftSubmission(draftId),
+    },
+    {
+      name: "submit_approved_draft",
+      description:
+        "Submit an approved draft to its corresponding Banxuebang task. Call only after the user explicitly confirms the prepare_draft_submission preview.",
+      inputSchema: {
+        draft_id: z.string().describe("Approved draft id that the user explicitly confirmed."),
+        confirmation_token: z
+          .string()
+          .describe("Confirmation token returned by prepare_draft_submission for the reviewed preview."),
+      },
+      execute: async ({ draft_id: draftId, confirmation_token: confirmationToken }) =>
+        client.submitApprovedDraft(draftId, { confirmationToken }),
+    },
+    {
       name: "upload_submission_file",
       description:
         "Upload a local file to Banxuebang's file system and return the submission file object used by homework submission.",
@@ -749,6 +771,10 @@ export function createToolDefinitions(client) {
           .union([z.string(), z.number()])
           .optional()
           .describe("Optional existing submission record id for editing a prior submission."),
+        class_id: z
+          .union([z.string(), z.number()])
+          .optional()
+          .describe("Optional target class id. Use the task's class id for cross-course submission."),
       },
       execute: async ({
         task_id: taskId,
@@ -757,6 +783,7 @@ export function createToolDefinitions(client) {
         file_paths: filePaths,
         is_correct_work: isCorrectWork,
         submission_id: submissionId,
+        class_id: classId,
       }) =>
         client.submitTaskResult({
           taskId,
@@ -765,6 +792,7 @@ export function createToolDefinitions(client) {
           filePaths: filePaths ?? [],
           isCorrectWork: isCorrectWork ?? 0,
           submissionId,
+          classId,
         }),
     },
     {

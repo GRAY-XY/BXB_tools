@@ -675,6 +675,32 @@ footer {
   font-size: 12px;
 }
 
+.conversation-confirm-delete {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 7px;
+  padding: 8px;
+}
+
+.conversation-confirm-delete span {
+  min-width: 0;
+  color: #a4262c;
+  font-size: 13px;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-confirm-delete button {
+  padding: 7px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .messages {
   flex: 1;
   overflow: auto;
@@ -728,6 +754,17 @@ footer {
   max-width: none;
 }
 
+.message-body .katex {
+  font-size: 1.03em;
+}
+
+.message-body .katex-display {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 4px 0;
+}
+
 .message-body th,
 .message-body td {
   border: 1px solid #dcdcdc;
@@ -753,6 +790,13 @@ footer {
   gap: 10px;
   padding-top: 12px;
   border-top: 1px solid #eeeeee;
+}
+
+.composer textarea {
+  min-height: 43px;
+  max-height: 120px;
+  resize: vertical;
+  overflow: auto;
 }
 
 .steps {
@@ -1504,6 +1548,11 @@ footer {
   color: #a4262c;
 }
 
+.draft-status.submitted {
+  background: #e5f1fb;
+  color: #005a9e;
+}
+
 .draft-status.unknown {
   background: #f3f2f1;
   color: #605e5c;
@@ -1591,6 +1640,13 @@ footer {
   resize: vertical;
 }
 
+.draft-editor[readonly] {
+  border-color: #e2e2e2;
+  background: #fafafa;
+  color: #404040;
+  resize: none;
+}
+
 .draft-edit-hint {
   color: #606060;
   font-size: 12px;
@@ -1642,6 +1698,133 @@ footer {
 .draft-empty strong {
   color: #202020;
   font-size: 18px;
+}
+
+.draft-submit-confirm {
+  display: grid;
+  gap: 16px;
+}
+
+.draft-submit-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #eeeeee;
+}
+
+.draft-submit-head span {
+  color: #606060;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.draft-submit-head h2 {
+  margin: 5px 0 0;
+  font-size: 22px;
+}
+
+.draft-submit-head > strong {
+  flex: 0 0 auto;
+  padding: 4px 10px;
+  border: 1px solid rgba(0, 103, 192, 0.25);
+  border-radius: 6px;
+  background: #e5f1fb;
+  color: #005a9e;
+  font-size: 13px;
+}
+
+.draft-submit-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.draft-submit-facts > div {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #eeeeee;
+  border-radius: 8px;
+  background: #fafafa;
+}
+
+.draft-submit-facts span,
+.draft-submit-facts strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.draft-submit-facts span {
+  margin-bottom: 4px;
+  color: #606060;
+  font-size: 12px;
+}
+
+.draft-submit-notice,
+.draft-submit-error {
+  padding: 10px 12px;
+  border: 1px solid rgba(138, 75, 0, 0.25);
+  border-radius: 8px;
+  background: rgba(255, 185, 0, 0.1);
+  line-height: 1.55;
+}
+
+.draft-submit-error {
+  border-color: rgba(209, 52, 56, 0.3);
+  background: rgba(209, 52, 56, 0.07);
+  color: #a4262c;
+}
+
+.draft-submit-text {
+  max-height: min(430px, 44vh);
+  overflow: auto;
+  margin: 0;
+  padding: 13px;
+  border: 1px solid #d7e6f6;
+  border-radius: 8px;
+  background: #f7fbff;
+  font-family: inherit;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.draft-submit-files {
+  display: grid;
+  gap: 8px;
+}
+
+.draft-submit-files > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 10px;
+  border: 1px solid #eeeeee;
+  border-radius: 8px;
+  background: #fafafa;
+}
+
+.draft-submit-files span {
+  flex: 0 0 auto;
+  color: #606060;
+  font-size: 12px;
+}
+
+.draft-submit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid #eeeeee;
+}
+
+.draft-submit-confirm > small {
+  color: #606060;
+  text-align: right;
 }
 
 :root[data-theme="dark"] .draft-empty strong {
@@ -1956,6 +2139,8 @@ tbody tr:hover {
 :root[data-theme="dark"] .draft-facts > div,
 :root[data-theme="dark"] .draft-alert,
 :root[data-theme="dark"] .draft-evidence,
+:root[data-theme="dark"] .draft-submit-facts > div,
+:root[data-theme="dark"] .draft-submit-files > div,
 :root[data-theme="dark"] .update-facts > div,
 :root[data-theme="dark"] .update-result,
 :root[data-theme="dark"] .update-progress,
@@ -2005,6 +2190,10 @@ tbody tr:hover {
 :root[data-theme="dark"] .draft-edit-hint,
 :root[data-theme="dark"] .draft-create-hint,
 :root[data-theme="dark"] .draft-empty,
+:root[data-theme="dark"] .draft-submit-head span,
+:root[data-theme="dark"] .draft-submit-facts span,
+:root[data-theme="dark"] .draft-submit-files span,
+:root[data-theme="dark"] .draft-submit-confirm > small,
 :root[data-theme="dark"] .update-head p,
 :root[data-theme="dark"] .update-facts span,
 :root[data-theme="dark"] .update-result span,
@@ -2044,7 +2233,8 @@ tbody tr:hover {
 :root[data-theme="dark"] .workspace-path,
 :root[data-theme="dark"] .path-item code,
 :root[data-theme="dark"] .workspace-text,
-:root[data-theme="dark"] .draft-editor {
+:root[data-theme="dark"] .draft-editor,
+:root[data-theme="dark"] .draft-submit-text {
   background: #202020;
   border-color: #3a3a3a;
 }
@@ -2057,6 +2247,8 @@ tbody tr:hover {
 :root[data-theme="dark"] .workspace-preview-head,
 :root[data-theme="dark"] .task-readable-section,
 :root[data-theme="dark"] .draft-preview-head,
+:root[data-theme="dark"] .draft-submit-head,
+:root[data-theme="dark"] .draft-submit-actions,
 :root[data-theme="dark"] .draft-section,
 :root[data-theme="dark"] .private-composer,
 :root[data-theme="dark"] .composer {
