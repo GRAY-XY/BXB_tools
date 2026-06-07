@@ -256,6 +256,12 @@ await window.bxb.callTool("update_submission_draft", { draft_id: "DRAFT_ID", dra
 await window.bxb.callTool("approve_submission_draft", { draft_id: "DRAFT_ID", review_note: "UI approved" });
 await window.bxb.callTool("reject_submission_draft", { draft_id: "DRAFT_ID", review_note: "UI rejected" });
 await window.bxb.callTool("delete_submission_draft", { draft_id: "DRAFT_ID" });
+const preview = await window.bxb.callTool("prepare_draft_submission", { draft_id: "APPROVED_DRAFT_ID" });
+// Only after the user reviews preview and explicitly confirms:
+await window.bxb.callTool("submit_approved_draft", {
+  draft_id: "APPROVED_DRAFT_ID",
+  confirmation_token: preview.confirmationToken,
+});
 ```
 
 ### Tool Results
@@ -315,12 +321,18 @@ These tools exist in the backend registry:
 
 - `upload_submission_file`
 - `submit_task_result`
+- `prepare_draft_submission`
+- `submit_approved_draft`
 
 Frontend rule:
 
 - Never call them without explicit user confirmation in the same interaction.
 - Never expose them to autonomous Agent execution by default.
-- The draft page may offer these actions later, but it must show the target task, files, text, and destination before calling either tool.
+- The draft page must call `prepare_draft_submission` first and show the target task, course, submit/resubmit/supplement mode, retained files, full text, and destination.
+- Only call `submit_approved_draft` after a second explicit user click on the confirmation screen.
+- Pass the `confirmationToken` returned by `prepare_draft_submission`; submission is rejected if the task state or draft content changed after preview.
+- `submit_approved_draft` repeats validation server-side, submits to the task's own class, and marks the local draft `submitted` only after Banxuebang reports success.
+- Submission failures leave the draft `approved` and must be shown to the user.
 
 ### Autonomous Agent Tool Set
 

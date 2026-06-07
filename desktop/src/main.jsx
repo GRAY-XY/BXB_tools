@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { marked } from "marked";
+import katex from "katex";
+import "katex/dist/katex.min.css";
 import "./styles.css";
 
 const pages = [
@@ -21,13 +23,68 @@ const quickPrompts = [
 ];
 
 const fallbackSystemPrompt =
-  "你是伴学邦桌面助手。需要真实数据时必须调用工具，不要猜测。需要联网资料时先调用 web_search；需要阅读某个搜索结果时再调用 read_web_page。用户提到工作区文件时，先调用 list_workspace_files 定位文件，再按需调用 read_workspace_file；需要整理文件名时可调用 rename_workspace_file。不要上传、提交或删除任何内容。处理作业草稿时先调用 collect_task_submission_context；信息不足就说明缺什么；信息足够才调用 draft_task_submission 保存草稿等待用户审核。";
+  "你是伴学邦桌面助手。需要真实数据时必须调用工具，不要猜测。需要联网资料时先调用 web_search；需要阅读某个搜索结果时再调用 read_web_page。用户提到工作区文件时，先调用 list_workspace_files 定位文件，再按需调用 read_workspace_file；需要整理文件名时可调用 rename_workspace_file。不要上传、提交或删除任何内容。处理作业草稿时先调用 collect_task_submission_context；信息不足就说明缺什么；信息足够才调用 draft_task_submission 保存草稿等待用户审核。给出或保存草稿正文时，draft_text 必须是纯文本正文，不要使用 Markdown 标题、列表、表格、代码块、加粗、引用或其他 Markdown 格式；如果需要给用户说明保存状态，可以在助手回复里用 Markdown，但草稿正文内容本身必须保持纯文本。";
 
 const allCoursesName = "全部课程";
 const imageAttachmentExtensions = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".avif"]);
 
+function escapeHtml(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function renderMath(source, displayMode = false) {
+  try {
+    return katex.renderToString(source, {
+      displayMode,
+      throwOnError: false,
+      strict: false,
+      output: "html",
+    });
+  } catch {
+    return displayMode ? `<pre>${escapeHtml(source)}</pre>` : escapeHtml(source);
+  }
+}
+
+function markdownWithMath(text) {
+  let source = String(text || "");
+  const codeSlots = [];
+  const mathSlots = [];
+
+  const stashCode = (value) => {
+    const token = `@@BXBCODE${codeSlots.length}@@`;
+    codeSlots.push(value);
+    return token;
+  };
+  const stashMath = (value, displayMode) => {
+    const token = `@@BXBMATH${mathSlots.length}@@`;
+    mathSlots.push(renderMath(value.trim(), displayMode));
+    return token;
+  };
+
+  source = source
+    .replace(/```[\s\S]*?```/g, stashCode)
+    .replace(/`[^`\n]+`/g, stashCode);
+
+  source = source
+    .replace(/\\\[([\s\S]+?)\\\]/g, (_match, math) => stashMath(math, true))
+    .replace(/\$\$([\s\S]+?)\$\$/g, (_match, math) => stashMath(math, true))
+    .replace(/\\\(([\s\S]+?)\\\)/g, (_match, math) => stashMath(math, false))
+    .replace(/(^|[^\\$])\$([^\n$]*?\S)\$/g, (_match, prefix, math) => `${prefix}${stashMath(math, false)}`);
+
+  source = source.replace(/@@BXBCODE(\d+)@@/g, (_match, index) => codeSlots[Number(index)] || "");
+
+  let html = marked.parse(source, { breaks: true, gfm: true });
+  html = html.replace(/@@BXBMATH(\d+)@@/g, (_match, index) => mathSlots[Number(index)] || "");
+  return html;
+}
+
 function md(text) {
-  return { __html: marked.parse(text || "", { breaks: true, gfm: true }) };
+  return { __html: markdownWithMath(text) };
 }
 
 function JsonBlock({ data }) {
@@ -77,13 +134,24 @@ function extractTaskRows(result) {
     return directRows;
   }
 
+  const pendingTasks = Array.isArray(result?.pendingHomeworkList)
+    ? result.pendingHomeworkList.map((task) => ({ ...task, __statusText: task.statusText || "待处理" }))
+    : [];
   const pending = Array.isArray(result?.unsubmittedHomeworkList)
-    ? result.unsubmittedHomeworkList.map((task) => ({ ...task, __statusText: "未提交" }))
+    ? result.unsubmittedHomeworkList.map((task) => ({ ...task, __statusText: task.statusText || "未提交" }))
     : [];
   const homework = Array.isArray(result?.homeworkList)
-    ? result.homeworkList.map((task) => ({ ...task, __statusText: task.scoreLevel || task.score || "已提交/已记录" }))
+    ? result.homeworkList.map((task) => ({
+        ...task,
+        __statusText: task.statusText || (task.isParticipate === 0 ? "未提交" : task.scoreLevel || task.score || "已提交/已记录"),
+      }))
     : [];
-  return [...pending, ...homework];
+  const rowsById = new Map();
+  for (const task of [...pendingTasks, ...pending, ...homework]) {
+    const id = getTaskId(task);
+    rowsById.set(id || `row-${rowsById.size}`, task);
+  }
+  return [...rowsById.values()];
 }
 
 function getTaskId(task) {
@@ -153,6 +221,7 @@ function formatDraftStatus(status) {
   if (normalized === "pending_review") return "待审核";
   if (normalized === "approved") return "已通过";
   if (normalized === "rejected") return "已驳回";
+  if (normalized === "submitted") return "已提交";
   return normalized || "未知状态";
 }
 
@@ -160,6 +229,7 @@ function draftStatusClass(status) {
   const normalized = String(status || "").trim();
   if (normalized === "approved") return "approved";
   if (normalized === "rejected") return "rejected";
+  if (normalized === "submitted") return "submitted";
   if (normalized === "pending_review") return "pending";
   return "unknown";
 }
@@ -212,6 +282,7 @@ function DraftPreview({
   const warnings = normalizeList(draft.warnings);
   const evidence = normalizeList(draft.evidence);
   const hasReview = draft.reviewedAt || draft.reviewNote;
+  const isSubmitted = draft.status === "submitted";
 
   return (
     <div className="draft-preview">
@@ -252,8 +323,8 @@ function DraftPreview({
         <div className="draft-section-head">
           <h3>待提交正文</h3>
           <div className="draft-edit-actions">
-            <button type="button" onClick={onResetDraft} disabled={!draftDirty || draftSaving}>还原</button>
-            <button type="button" className="primary" onClick={onSaveDraft} disabled={!draftDirty || draftSaving || !draftEditText.trim()}>
+            <button type="button" onClick={onResetDraft} disabled={isSubmitted || !draftDirty || draftSaving}>还原</button>
+            <button type="button" className="primary" onClick={onSaveDraft} disabled={isSubmitted || !draftDirty || draftSaving || !draftEditText.trim()}>
               {draftSaving ? "保存中" : "保存"}
             </button>
           </div>
@@ -264,9 +335,14 @@ function DraftPreview({
           onChange={(event) => onDraftTextChange?.(event.target.value)}
           placeholder="编辑待提交正文..."
           spellCheck={false}
+          readOnly={isSubmitted}
         />
         <small className="draft-edit-hint">
-          {draftDirty ? "有未保存修改。保存只会更新本地草稿，不会上传或提交。" : "保存只会更新本地草稿，不会上传或提交。"}
+          {isSubmitted
+            ? "这是已经提交到伴学邦的正文记录。如需再次提交，请新建草稿并重新审核。"
+            : draftDirty
+              ? "有未保存修改。保存只会更新本地草稿，不会上传或提交。"
+              : "保存只会更新本地草稿，不会上传或提交。"}
         </small>
       </section>
 
@@ -312,6 +388,74 @@ function DraftPreview({
           </p>
         </section>
       )}
+
+      {draft.submittedAt && (
+        <section className="draft-section">
+          <h3>提交记录</h3>
+          <p>
+            {`提交时间：${formatMessageTime(draft.submittedAt) || draft.submittedAt}`}
+            {draft.submission?.modeLabel ? `\n提交类型：${draft.submission.modeLabel}` : ""}
+            {draft.submission?.submissionId ? `\n提交记录 ID：${draft.submission.submissionId}` : ""}
+          </p>
+        </section>
+      )}
+    </div>
+  );
+}
+
+function DraftSubmissionConfirmation({ preview, loading, onCancel, onConfirm }) {
+  if (!preview) return null;
+  const attachments = Array.isArray(preview.retainedAttachments) ? preview.retainedAttachments : [];
+
+  return (
+    <div className="draft-submit-confirm">
+      <div className="draft-submit-head">
+        <div>
+          <span>提交确认</span>
+          <h2>{preview.taskTitle || `任务 ${preview.taskId || ""}`}</h2>
+        </div>
+        <strong>{preview.modeLabel || "提交"}</strong>
+      </div>
+
+      <div className="draft-submit-facts">
+        <div><span>目标课程</span><strong>{preview.subjectName || "未知课程"}</strong></div>
+        <div><span>Task ID</span><strong>{preview.taskId || "-"}</strong></div>
+        <div><span>提交位置</span><strong>{preview.destination || "伴学邦作业提交"}</strong></div>
+        <div><span>提交类型</span><strong>{preview.modeLabel || "提交"}</strong></div>
+      </div>
+
+      {preview.note && <div className="draft-submit-notice">{preview.note}</div>}
+      {!preview.canSubmit && <div className="draft-submit-error">{preview.reason || "当前无法提交。"}</div>}
+      {preview.error && <div className="draft-submit-error">{preview.error}</div>}
+
+      <section className="draft-section">
+        <h3>即将提交的正文</h3>
+        <pre className="draft-submit-text">{preview.draftText || ""}</pre>
+      </section>
+
+      <section className="draft-section">
+        <h3>随提交保留的已有附件</h3>
+        {attachments.length ? (
+          <div className="draft-submit-files">
+            {attachments.map((attachment, index) => (
+              <div key={`${attachment.fileId || attachment.fileName}-${index}`}>
+                <strong>{attachment.fileName || `附件 ${index + 1}`}</strong>
+                <span>{attachment.fileSize ? formatFileSize(attachment.fileSize) : "大小未知"}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="muted">无附件。本次只提交上方正文。</p>
+        )}
+      </section>
+
+      <div className="draft-submit-actions">
+        <button type="button" onClick={onCancel} disabled={loading}>返回草稿</button>
+        <button type="button" className="primary" onClick={onConfirm} disabled={loading || !preview.canSubmit}>
+          {loading ? "提交中" : "确认并提交"}
+        </button>
+      </div>
+      <small>点击“确认并提交”后会立即调用伴学邦提交或补交接口。</small>
     </div>
   );
 }
@@ -632,6 +776,7 @@ function App() {
   const [conversationMenuOpen, setConversationMenuOpen] = useState(false);
   const [renamingConversationId, setRenamingConversationId] = useState("");
   const [renameValue, setRenameValue] = useState("");
+  const [confirmingDeleteConversationId, setConfirmingDeleteConversationId] = useState("");
   const [messages, setMessages] = useState([]);
   const [steps, setSteps] = useState([]);
   const [input, setInput] = useState("");
@@ -671,6 +816,8 @@ function App() {
   const [draftCreateText, setDraftCreateText] = useState("");
   const [draftCreateLoading, setDraftCreateLoading] = useState(false);
   const [draftCreateOpen, setDraftCreateOpen] = useState(false);
+  const [draftSubmitPreview, setDraftSubmitPreview] = useState(null);
+  const [draftSubmitLoading, setDraftSubmitLoading] = useState(false);
   const [modelConfig, setModelConfig] = useState({
     apiKey: "",
     baseUrl: "",
@@ -690,6 +837,7 @@ function App() {
   const [updateLoading, setUpdateLoading] = useState(false);
   const chatEndRef = useRef(null);
   const stepsEndRef = useRef(null);
+  const composerInputRef = useRef(null);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -823,6 +971,20 @@ function App() {
     const nextActiveId = state?.activeId || "";
     setActiveConversationId(nextActiveId);
     setMessages(state?.activeConversation?.messages || []);
+  }
+
+  function focusComposerSoon() {
+    window.setTimeout(() => composerInputRef.current?.focus(), 0);
+  }
+
+  function focusComposerNow() {
+    composerInputRef.current?.focus({ preventScroll: true });
+  }
+
+  function handleComposerPointer(event) {
+    if (event.target?.tagName !== "BUTTON") {
+      focusComposerNow();
+    }
   }
 
   async function loadConversations() {
@@ -1234,6 +1396,7 @@ function App() {
     const draft = result?.draft || result;
     setSelectedDraft(draft);
     setDraftEditText(draft?.draftText || "");
+    setDraftSubmitPreview(null);
   }
 
   async function saveDraftEdits() {
@@ -1256,10 +1419,16 @@ function App() {
 
   async function approveDraft() {
     if (!selectedDraft?.draftId) return;
-    await callTool("approve_submission_draft", { draft_id: selectedDraft.draftId, review_note: "UI approved" });
-    setSelectedDraft(null);
-    setDraftEditText("");
-    await loadDrafts("pending_review");
+    if (draftDirty) {
+      setStatus("请先保存草稿修改，再通过审核");
+      return;
+    }
+    const result = await callTool("approve_submission_draft", { draft_id: selectedDraft.draftId, review_note: "UI approved" });
+    const updated = result?.draft || result;
+    setSelectedDraft(updated);
+    setDraftEditText(updated?.draftText || "");
+    await loadDrafts("all");
+    setStatus("草稿已通过，可以在确认内容后提交到伴学邦");
   }
 
   async function rejectDraft() {
@@ -1279,6 +1448,66 @@ function App() {
     setDraftEditText("");
     await loadDrafts(draftStatusFilter);
     setStatus("草稿已删除");
+  }
+
+  async function prepareDraftSubmit() {
+    if (!selectedDraft?.draftId || selectedDraft.status !== "approved") return;
+    if (draftDirty) {
+      setStatus("请先保存草稿修改，再准备提交");
+      return;
+    }
+
+    setDraftSubmitLoading(true);
+    setDraftSubmitPreview(null);
+    try {
+      const preview = await callTool("prepare_draft_submission", { draft_id: selectedDraft.draftId });
+      setDraftSubmitPreview(preview);
+      setStatus(preview?.canSubmit ? "请核对即将提交的内容" : preview?.reason || "当前无法提交");
+    } catch (error) {
+      setStatus(`无法准备提交：${error.message}`);
+    } finally {
+      setDraftSubmitLoading(false);
+    }
+  }
+
+  async function confirmDraftSubmit() {
+    if (!selectedDraft?.draftId || !draftSubmitPreview?.canSubmit || draftSubmitLoading) return;
+    setDraftSubmitLoading(true);
+    try {
+      const result = await callTool("submit_approved_draft", {
+        draft_id: selectedDraft.draftId,
+        confirmation_token: draftSubmitPreview.confirmationToken,
+      });
+      const updated = result?.draft || {
+        ...selectedDraft,
+        status: "submitted",
+        submittedAt: result?.submittedAt || new Date().toISOString(),
+        submission: {
+          modeLabel: result?.preview?.modeLabel || "提交",
+          submissionId: result?.submission?.submissionId || null,
+        },
+      };
+      setSelectedDraft(updated);
+      setDraftEditText(updated?.draftText || "");
+      setDraftSubmitPreview(null);
+      await loadDrafts("all");
+      setStatus(
+        result?.localRecordError
+          ? `${result?.preview?.modeLabel || "提交"}成功，但${result.localRecordError}`
+          : `${result?.preview?.modeLabel || "提交"}成功，草稿已标记为已提交`,
+      );
+    } catch (error) {
+      setDraftSubmitPreview((current) => current ? { ...current, error: error.message } : current);
+      setStatus(`无法提交：${error.message}`);
+    } finally {
+      setDraftSubmitLoading(false);
+    }
+  }
+
+  function cancelDraftSubmit() {
+    if (draftSubmitLoading) return;
+    setDraftSubmitPreview(null);
+    setStatus("已取消提交");
   }
 
   async function sendAgent(text = input) {
@@ -1318,23 +1547,33 @@ function App() {
   async function newChat() {
     applyConversationState(await window.bxb.createConversation({ title: "新对话" }));
     setConversationMenuOpen(false);
+    setRenamingConversationId("");
+    setRenameValue("");
+    setConfirmingDeleteConversationId("");
+    setInput("");
     setSteps([]);
     setUsage(null);
     setElapsed("0.0s");
     setStatus("已开始新对话");
+    focusComposerSoon();
   }
 
   async function selectChat(conversationId) {
     if (running) return;
     applyConversationState(await window.bxb.selectConversation(conversationId));
     setConversationMenuOpen(false);
+    setRenamingConversationId("");
+    setRenameValue("");
+    setConfirmingDeleteConversationId("");
     setSteps([]);
     setUsage(usageCache[conversationId] || null);
     setElapsed("0.0s");
     setStatus("已切换对话");
+    focusComposerSoon();
   }
 
   async function renameChat(conversationId, currentTitle) {
+    setConfirmingDeleteConversationId("");
     setRenamingConversationId(conversationId);
     setRenameValue(currentTitle || "新对话");
   }
@@ -1356,14 +1595,25 @@ function App() {
     setRenameValue("");
   }
 
-  async function deleteChat(conversationId) {
-    if (!window.confirm("确定删除这个对话吗？此操作只删除本机保存的对话记录。")) return;
+  function requestDeleteChat(conversationId) {
+    setRenamingConversationId("");
+    setRenameValue("");
+    setConfirmingDeleteConversationId(conversationId);
+  }
+
+  async function confirmDeleteChat(conversationId) {
     applyConversationState(await window.bxb.deleteConversation(conversationId));
     setConversationMenuOpen(false);
+    setConfirmingDeleteConversationId("");
     setSteps([]);
     setUsage(null);
     setElapsed("0.0s");
     setStatus("对话已删除");
+    focusComposerSoon();
+  }
+
+  function cancelDeleteChat() {
+    setConfirmingDeleteConversationId("");
   }
 
   async function compactChat() {
@@ -1646,7 +1896,13 @@ function App() {
                           key={conversation.id}
                           className={conversation.id === activeConversationId ? "conversation-item active" : "conversation-item"}
                         >
-                          {renamingConversationId === conversation.id ? (
+                          {confirmingDeleteConversationId === conversation.id ? (
+                            <div className="conversation-confirm-delete">
+                              <span>删除这个对话？</span>
+                              <button className="danger" onClick={() => confirmDeleteChat(conversation.id)} disabled={running}>确认删除</button>
+                              <button onClick={cancelDeleteChat}>取消</button>
+                            </div>
+                          ) : renamingConversationId === conversation.id ? (
                             <div className="conversation-rename">
                               <input
                                 autoFocus
@@ -1671,7 +1927,7 @@ function App() {
                               </button>
                               <div className="conversation-actions">
                                 <button title="重命名" onClick={() => renameChat(conversation.id, conversation.title)} disabled={running}>改名</button>
-                                <button title="删除" onClick={() => deleteChat(conversation.id)} disabled={running}>删除</button>
+                                <button title="删除" onClick={() => requestDeleteChat(conversation.id)} disabled={running}>删除</button>
                               </div>
                             </>
                           )}
@@ -1701,8 +1957,28 @@ function App() {
                   ))}
                   <div ref={chatEndRef} />
                 </div>
-                <form className="composer" onSubmit={(event) => { event.preventDefault(); sendAgent(); }}>
-                  <input value={input} onChange={(event) => setInput(event.target.value)} placeholder="输入：列出课程、打开任务、帮我写某个作业草稿，或 /compact 压缩上下文..." />
+                <form
+                  className="composer"
+                  onPointerDown={handleComposerPointer}
+                  onClick={handleComposerPointer}
+                  onSubmit={(event) => { event.preventDefault(); sendAgent(); }}
+                >
+                  <textarea
+                    ref={composerInputRef}
+                    rows={1}
+                    value={input}
+                    onPointerDown={(event) => event.currentTarget.focus({ preventScroll: true })}
+                    onMouseDown={(event) => event.currentTarget.focus({ preventScroll: true })}
+                    onClick={(event) => event.currentTarget.focus({ preventScroll: true })}
+                    onChange={(event) => setInput(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && !event.shiftKey) {
+                        event.preventDefault();
+                        sendAgent();
+                      }
+                    }}
+                    placeholder="输入：列出课程、打开任务、帮我写某个作业草稿，或 /compact 压缩上下文..."
+                  />
                   <button className="primary" disabled={running}>{running ? "执行中" : "发送"}</button>
                 </form>
               </div>
@@ -1922,17 +2198,24 @@ function App() {
 
         {page === "drafts" && (
           <section className="review-page">
-            <PageTitle title="草稿" subtitle="创建、查看和审核本地草稿；这里只保存本地内容，不做上传提交。" />
+            <PageTitle title="草稿" subtitle="创建和审核本地草稿；已通过草稿可在确认完整内容后提交到伴学邦。" />
             <div className="card toolbar">
-              <button className="primary" onClick={openDraftCreator}>新建草稿</button>
-              <button className="primary" onClick={() => loadDrafts("pending_review")}>刷新待审核</button>
-              <button onClick={() => loadDrafts("all")}>全部草稿</button>
-              <button onClick={saveDraftEdits} disabled={!draftDirty || draftSaving || !draftEditText.trim()}>
+              <button className="primary" onClick={openDraftCreator} disabled={Boolean(draftSubmitPreview) || draftSubmitLoading}>新建草稿</button>
+              <button className="primary" onClick={() => loadDrafts("pending_review")} disabled={Boolean(draftSubmitPreview) || draftSubmitLoading}>待审核</button>
+              <button onClick={() => loadDrafts("approved")} disabled={Boolean(draftSubmitPreview) || draftSubmitLoading}>已通过</button>
+              <button onClick={() => loadDrafts("submitted")} disabled={Boolean(draftSubmitPreview) || draftSubmitLoading}>已提交</button>
+              <button onClick={() => loadDrafts("all")} disabled={Boolean(draftSubmitPreview) || draftSubmitLoading}>全部草稿</button>
+              <button onClick={saveDraftEdits} disabled={selectedDraft?.status === "submitted" || Boolean(draftSubmitPreview) || !draftDirty || draftSaving || !draftEditText.trim()}>
                 {draftSaving ? "保存中" : "保存修改"}
               </button>
-              <button onClick={approveDraft} disabled={!selectedDraft}>通过</button>
-              <button onClick={rejectDraft} disabled={!selectedDraft}>驳回</button>
-              <button className="danger" onClick={deleteDraft} disabled={!selectedDraft}>删除草稿</button>
+              <button onClick={approveDraft} disabled={Boolean(draftSubmitPreview) || !selectedDraft || selectedDraft.status === "approved" || selectedDraft.status === "submitted"}>通过</button>
+              <button onClick={rejectDraft} disabled={Boolean(draftSubmitPreview) || !selectedDraft || selectedDraft.status === "rejected" || selectedDraft.status === "submitted"}>驳回</button>
+              {selectedDraft?.status === "approved" && (
+                <button className="primary" onClick={prepareDraftSubmit} disabled={Boolean(draftSubmitPreview) || draftSubmitLoading || draftDirty}>
+                  {draftSubmitLoading ? "检查中" : "提交到伴学邦"}
+                </button>
+              )}
+              <button className="danger" onClick={deleteDraft} disabled={Boolean(draftSubmitPreview) || !selectedDraft || draftSubmitLoading}>删除草稿</button>
             </div>
             {draftCreateOpen ? (
               <div className="draft-create-only">
@@ -2026,6 +2309,7 @@ function App() {
                       key={draft.draftId}
                       className={selectedDraft?.draftId === draft.draftId ? "draft-list-item active" : "draft-list-item"}
                       onClick={() => openDraft(draft.draftId)}
+                      disabled={Boolean(draftSubmitPreview) || draftSubmitLoading}
                     >
                       <span className={`draft-status ${draftStatusClass(draft.status)}`}>{formatDraftStatus(draft.status)}</span>
                       <strong>{draftTitle(draft)}</strong>
@@ -2041,15 +2325,24 @@ function App() {
                   ))}
                 </div>
                 <div className="card draft-preview-card">
-                <DraftPreview
-                  draft={selectedDraft}
-                  draftEditText={draftEditText}
-                  draftDirty={draftDirty}
-                  draftSaving={draftSaving}
-                  onDraftTextChange={setDraftEditText}
-                  onSaveDraft={saveDraftEdits}
-                  onResetDraft={() => setDraftEditText(selectedDraft?.draftText || "")}
-                />
+                {draftSubmitPreview ? (
+                  <DraftSubmissionConfirmation
+                    preview={draftSubmitPreview}
+                    loading={draftSubmitLoading}
+                    onCancel={cancelDraftSubmit}
+                    onConfirm={confirmDraftSubmit}
+                  />
+                ) : (
+                  <DraftPreview
+                    draft={selectedDraft}
+                    draftEditText={draftEditText}
+                    draftDirty={draftDirty}
+                    draftSaving={draftSaving}
+                    onDraftTextChange={setDraftEditText}
+                    onSaveDraft={saveDraftEdits}
+                    onResetDraft={() => setDraftEditText(selectedDraft?.draftText || "")}
+                  />
+                )}
                 </div>
               </div>
             )}

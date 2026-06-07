@@ -1,6 +1,6 @@
 import { mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { chromium } from "playwright";
 import { DraftStore } from "./draft-store.js";
@@ -294,7 +294,59 @@ async function launchBrowser(headless) {
 
 function enrichHomeworkRecord(item) {
   const countdown = computeCountdown(item.endTime);
-  return { ...item, ...countdown };
+  return { ...item, ...countdown, statusText: homeworkStatusText(item) };
+}
+
+function isUnsubmittedHomework(item) {
+  return item?.isParticipate === 0 || item?.isParticipate === false || item?.isParticipate === "0";
+}
+
+function isParticipatedHomework(item) {
+  return item?.isParticipate === 1 || item?.isParticipate === true || item?.isParticipate === "1";
+}
+
+function isEnabledFlag(value) {
+  return value === 1 || value === true || value === "1";
+}
+
+function submissionRecordId(record) {
+  return normalizeId(record?.id || record?.activityWorkCorrectId || record?.awcId);
+}
+
+function taskHasEnded(task) {
+  if (isEnabledFlag(task?.isEnd)) {
+    return true;
+  }
+
+  const endTime = Date.parse(task?.endTime || "");
+  return Number.isFinite(endTime) && endTime < Date.now();
+}
+
+function draftSubmissionConfirmationToken(preview) {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        draftId: preview.draftId,
+        taskId: preview.taskId,
+        classId: preview.classId,
+        draftText: preview.draftText,
+        mode: preview.mode,
+        submissionId: preview.submissionId,
+        isCorrectWork: preview.isCorrectWork,
+        retainedFileIds: toArray(preview.retainedAttachments).map((attachment) => attachment.fileId),
+      }),
+    )
+    .digest("hex");
+}
+
+function homeworkStatusText(item) {
+  if (isUnsubmittedHomework(item)) {
+    return "未提交";
+  }
+  if (item?.correction === 1 || item?.correction === "1") {
+    return "待订正";
+  }
+  return item?.scoreLevel || item?.scoreTypeName || "已提交/已记录";
 }
 
 function toArray(value) {
@@ -666,6 +718,7 @@ export class BanxuebangClient {
   constructor(store, draftStore = new DraftStore()) {
     this.store = store;
     this.draftStore = draftStore;
+    this.submittingDraftIds = new Set();
   }
 
   async getSession() {
@@ -1445,6 +1498,9 @@ export class BanxuebangClient {
 
     const data = ensureObject(homeworkResponse.data);
     const homeworkList = Array.isArray(data.aaData) ? data.aaData.map(tagCourse) : [];
+    const pendingHomeworkList = normalizedListType === 2 ? homeworkList : [];
+    const effectiveUnsubmittedHomeworkList =
+      normalizedListType === 2 ? homeworkList.filter(isUnsubmittedHomework) : unsubmittedHomeworkList;
 
     return {
       query: {
@@ -1454,7 +1510,8 @@ export class BanxuebangClient {
         listType: normalizedListType,
       },
       totalRecords: data.iTotalRecords ?? homeworkList.length,
-      unsubmittedHomeworkList,
+      pendingHomeworkList,
+      unsubmittedHomeworkList: effectiveUnsubmittedHomeworkList,
       homeworkList,
     };
   }
@@ -1485,6 +1542,7 @@ export class BanxuebangClient {
           listType: this.normalizeHomeworkListType(listType),
         },
         totalRecords: results.reduce((sum, item) => sum + Number(item.totalRecords || 0), 0),
+        pendingHomeworkList: results.flatMap((item) => item.pendingHomeworkList),
         unsubmittedHomeworkList: results.flatMap((item) => item.unsubmittedHomeworkList),
         homeworkList: results.flatMap((item) => item.homeworkList),
         courseResults: results,
@@ -1763,7 +1821,7 @@ export class BanxuebangClient {
       "activity-detail",
     );
     const task = ensureObject(detailResponse.data);
-    const taskClassId = curSubject?.classId || task.classId;
+    const taskClassId = task.classId || curSubject?.classId;
     if (!taskClassId) {
       throw new Error("Current task detail does not include classId.");
     }
@@ -1814,6 +1872,7 @@ export class BanxuebangClient {
     return {
       context: this.summarizeSession(session),
       taskId: normalizeId(taskId),
+      taskClassId: normalizeId(taskClassId),
       taskSummary: summarizeTask(task),
       task,
       contentText: stripHtml(task.activityContent || task.activityTask?.content || ""),
@@ -2135,6 +2194,7 @@ export class BanxuebangClient {
         createdAt: draft.createdAt,
         updatedAt: draft.updatedAt,
         reviewedAt: draft.reviewedAt,
+        submittedAt: draft.submittedAt,
         needsUserInput: Boolean(draft.needsUserInput),
         missingInfoCount: Array.isArray(draft.missingInfo) ? draft.missingInfo.length : 0,
         warningCount: Array.isArray(draft.warnings) ? draft.warnings.length : 0,
@@ -2160,15 +2220,21 @@ export class BanxuebangClient {
       throw new Error("draft_text is required and cannot be empty.");
     }
 
-    const updated = await this.draftStore.update(draftId, async (draft) => ({
-      ...draft,
-      draftText: normalizedDraftText,
-      summary: summary === undefined ? draft.summary : String(summary || "").trim(),
-      status: draft.status === "rejected" ? "pending_review" : draft.status,
-      reviewedAt: draft.status === "rejected" ? null : draft.reviewedAt,
-      reviewNote: draft.status === "rejected" ? null : draft.reviewNote,
-      updatedAt: new Date().toISOString(),
-    }));
+    const updated = await this.draftStore.update(draftId, async (draft) => {
+      if (draft.status === "submitted") {
+        throw new Error("已提交的草稿不能再修改。请新建草稿后重新审核。");
+      }
+
+      return {
+        ...draft,
+        draftText: normalizedDraftText,
+        summary: summary === undefined ? draft.summary : String(summary || "").trim(),
+        status: draft.status === "rejected" ? "pending_review" : draft.status,
+        reviewedAt: draft.status === "rejected" ? null : draft.reviewedAt,
+        reviewNote: draft.status === "rejected" ? null : draft.reviewNote,
+        updatedAt: new Date().toISOString(),
+      };
+    });
 
     if (!updated) {
       throw new Error(`Draft ${draftId} was not found.`);
@@ -2183,13 +2249,19 @@ export class BanxuebangClient {
   }
 
   async approveSubmissionDraft(draftId, { reviewNote = "" } = {}) {
-    const updated = await this.draftStore.update(draftId, async (draft) => ({
-      ...draft,
-      status: "approved",
-      reviewedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      reviewNote: String(reviewNote || "").trim() || null,
-    }));
+    const updated = await this.draftStore.update(draftId, async (draft) => {
+      if (draft.status === "submitted") {
+        throw new Error("已提交的草稿不能再次审核。请新建草稿后重新审核。");
+      }
+
+      return {
+        ...draft,
+        status: "approved",
+        reviewedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        reviewNote: String(reviewNote || "").trim() || null,
+      };
+    });
 
     if (!updated) {
       throw new Error(`Draft ${draftId} was not found.`);
@@ -2205,13 +2277,19 @@ export class BanxuebangClient {
   }
 
   async rejectSubmissionDraft(draftId, { reviewNote = "" } = {}) {
-    const updated = await this.draftStore.update(draftId, async (draft) => ({
-      ...draft,
-      status: "rejected",
-      reviewedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      reviewNote: String(reviewNote || "").trim() || "Rejected in UI review.",
-    }));
+    const updated = await this.draftStore.update(draftId, async (draft) => {
+      if (draft.status === "submitted") {
+        throw new Error("已提交的草稿不能再次审核。请新建草稿后重新审核。");
+      }
+
+      return {
+        ...draft,
+        status: "rejected",
+        reviewedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        reviewNote: String(reviewNote || "").trim() || "Rejected in UI review.",
+      };
+    });
 
     if (!updated) {
       throw new Error(`Draft ${draftId} was not found.`);
@@ -2240,6 +2318,160 @@ export class BanxuebangClient {
       taskId: draft.taskId,
       taskTitle: draft.taskTitle,
     };
+  }
+
+  async prepareDraftSubmission(draftId) {
+    const draft = await this.draftStore.get(draftId);
+    if (!draft) {
+      throw new Error(`Draft ${draftId} was not found.`);
+    }
+    if (draft.status !== "approved") {
+      throw new Error("只有已通过的草稿可以提交。");
+    }
+    if (!draft.taskId) {
+      throw new Error("草稿没有对应的 task ID，无法提交。");
+    }
+    if (!String(draft.draftText || "").trim()) {
+      throw new Error("草稿正文为空，无法提交。");
+    }
+
+    const detail = await this.getTaskDetail(draft.taskId, { includeOtherSubmissions: false });
+    const task = ensureObject(detail.task);
+    const taskSummary = ensureObject(detail.taskSummary);
+    const submissions = toArray(detail.mySubmissionList);
+    const lastAwcId = normalizeId(taskSummary.lastAwcId || task.lastAwcId);
+    const existingSubmission =
+      submissions.find((item) => submissionRecordId(item) === lastAwcId) ||
+      [...submissions].reverse().find((item) => submissionRecordId(item)) ||
+      null;
+    const submissionId = lastAwcId || submissionRecordId(existingSubmission);
+    const hasExistingSubmission =
+      Boolean(existingSubmission || submissionId) || isParticipatedHomework(taskSummary) || isParticipatedHomework(task);
+    const isCorrection =
+      isEnabledFlag(taskSummary.correction) ||
+      isEnabledFlag(task.correction) ||
+      isEnabledFlag(existingSubmission?.isCorrectWork);
+    const ended = taskHasEnded(taskSummary) || taskHasEnded(task);
+
+    let mode = "submit";
+    let modeLabel = "提交";
+    let isCorrectWork = 0;
+    if (hasExistingSubmission) {
+      mode = isCorrection ? "correction" : "resubmit";
+      modeLabel = isCorrection ? "订正并重新提交" : "重新提交";
+      isCorrectWork = isCorrection ? 1 : Number(existingSubmission?.isCorrectWork || 0);
+    } else if (ended) {
+      mode = "supplement";
+      modeLabel = "补交";
+    }
+
+    const canSubmit = !hasExistingSubmission || Boolean(submissionId);
+    const reason = canSubmit
+      ? null
+      : "检测到该 task 已有提交记录，但无法确定原提交记录 ID。为避免产生重复提交，当前不能自动提交。";
+    const retainedAttachments = toArray(detail.mySubmissionAttachments).map((attachment) => ({
+      fileId: attachment.fileId,
+      fileName: attachment.fileName || attachment.name || null,
+      fileSize: attachment.fileSize || null,
+    }));
+
+    const preview = {
+      draftId: draft.draftId,
+      taskId: detail.taskId || draft.taskId,
+      taskTitle: taskSummary.activityName || draft.taskTitle || null,
+      subjectName: taskSummary.courseName || draft.subjectName || null,
+      classId: normalizeId(detail.taskClassId || task.classId || taskSummary.classId),
+      destination: "伴学邦作业提交",
+      draftText: String(draft.draftText || ""),
+      mode,
+      modeLabel,
+      submissionId,
+      isCorrectWork,
+      hasExistingSubmission,
+      retainedAttachments,
+      canSubmit,
+      reason,
+      note:
+        mode === "supplement"
+          ? "该 task 已超过截止时间，将尝试补交；最终是否允许补交由伴学邦返回结果决定。"
+          : null,
+    };
+    return {
+      ...preview,
+      confirmationToken: draftSubmissionConfirmationToken(preview),
+    };
+  }
+
+  async submitApprovedDraft(draftId, { confirmationToken } = {}) {
+    if (!confirmationToken) {
+      throw new Error("缺少提交确认令牌，请返回草稿并重新核对提交内容。");
+    }
+
+    const normalizedDraftId = String(draftId || "");
+    if (this.submittingDraftIds.has(normalizedDraftId)) {
+      throw new Error("这个草稿正在提交，请等待当前提交完成。");
+    }
+    this.submittingDraftIds.add(normalizedDraftId);
+
+    try {
+      const preview = await this.prepareDraftSubmission(draftId);
+      if (!preview.canSubmit) {
+        throw new Error(preview.reason || "当前草稿无法提交。");
+      }
+      if (preview.confirmationToken !== confirmationToken) {
+        throw new Error("草稿正文或 task 状态在确认后发生了变化，请返回草稿并重新核对提交内容。");
+      }
+
+      let submission;
+      try {
+        submission = await this.submitTaskResult({
+          taskId: preview.taskId,
+          remark: preview.draftText,
+          isCorrectWork: preview.isCorrectWork,
+          submissionId: preview.submissionId,
+          classId: preview.classId,
+        });
+      } catch (error) {
+        throw new Error(`无法提交到伴学邦：${error.message}`);
+      }
+
+      const submittedAt = new Date().toISOString();
+      let updated = null;
+      let localRecordError = null;
+      try {
+        updated = await this.draftStore.update(draftId, async (draft) => ({
+          ...draft,
+          status: "submitted",
+          submittedAt,
+          updatedAt: submittedAt,
+          submission: {
+            mode: preview.mode,
+            modeLabel: preview.modeLabel,
+            taskId: preview.taskId,
+            submissionId: submission.submissionId || preview.submissionId || null,
+            submittedAt,
+            result: submission.result ?? null,
+          },
+        }));
+        if (!updated) {
+          localRecordError = "本地草稿记录不存在，无法标记为已提交。";
+        }
+      } catch (error) {
+        localRecordError = `无法更新本地草稿记录：${error.message}`;
+      }
+
+      return {
+        submitted: true,
+        submittedAt,
+        localRecordUpdated: Boolean(updated),
+        localRecordError,
+        preview,
+        submission,
+        draft: updated,
+      };
+    } finally {
+      this.submittingDraftIds.delete(normalizedDraftId);
+    }
   }
 
   async uploadSubmissionFile(localPath) {
@@ -2314,12 +2546,14 @@ export class BanxuebangClient {
     filePaths = [],
     isCorrectWork = 0,
     submissionId = null,
+    classId = null,
   } = {}) {
     const session = await this.requireSession();
     await this.refreshContext(session);
 
     const { userInfo, curSubject } = session.context;
-    if (!userInfo?.id || !curSubject?.classId) {
+    const targetClassId = normalizeId(classId || curSubject?.classId);
+    if (!userInfo?.id || !targetClassId) {
       throw new Error("Current session does not have enough context to submit task results.");
     }
 
@@ -2344,7 +2578,7 @@ export class BanxuebangClient {
       payload = {
         activityId: taskId,
         childrenId: userInfo.id,
-        classId: curSubject.classId,
+        classId: targetClassId,
         remark: "",
         id: null,
         isCorrectWork: 0,
@@ -2354,7 +2588,7 @@ export class BanxuebangClient {
 
     payload.activityId = payload.activityId || taskId;
     payload.childrenId = payload.childrenId || userInfo.id;
-    payload.classId = payload.classId || curSubject.classId;
+    payload.classId = targetClassId;
     payload.isCorrectWork = isCorrectWork;
     payload.remark = remark;
     payload.fileList = [

@@ -14,11 +14,12 @@
   },
   "dependencies": {
     "@vitejs/plugin-react": "^5.1.2",
-    "vite": "^7.2.7",
-    "typescript": "^5.9.3",
+    "katex": "^0.17.0",
+    "marked": "^17.0.2",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
-    "marked": "^17.0.2"
+    "typescript": "^5.9.3",
+    "vite": "^7.2.7"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",
