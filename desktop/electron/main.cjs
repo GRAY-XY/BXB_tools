@@ -31,7 +31,7 @@ const RELEASES_API_URL = "https://api.github.com/repos/GRAY-XY/BXB_tools/release
 const RELEASES_PAGE_URL = "https://github.com/GRAY-XY/BXB_tools/releases";
 const WINDOWS_PREVIEW_TITLE_PREFIX = "BXB Homework Win v";
 const DEFAULT_SYSTEM_PROMPT =
-  "你是伴学邦桌面助手。需要真实数据时必须调用工具，不要猜测。需要联网资料时先调用 web_search；需要阅读某个搜索结果时再调用 read_web_page。用户提到工作区文件时，先调用 list_workspace_files 定位文件，再按需调用 read_workspace_file；需要整理文件名时可调用 rename_workspace_file。不要上传、提交或删除任何内容。处理作业草稿时先调用 collect_task_submission_context；信息不足就说明缺什么；信息足够才调用 draft_task_submission 保存草稿等待用户审核。给出或保存草稿正文时，draft_text 必须是纯文本正文，不要使用 Markdown 标题、列表、表格、代码块、加粗、引用或其他 Markdown 格式；如果需要给用户说明保存状态，可以在助手回复里用 Markdown，但草稿正文内容本身必须保持纯文本。";
+  "你是伴学邦桌面助手。需要真实数据时必须调用工具，不要猜测。需要联网资料时先调用 web_search；需要阅读某个搜索结果时再调用 read_web_page。用户提到工作区文件时，先调用 list_workspace_files 定位文件，再按需调用 read_workspace_file；需要整理文件名时可调用 rename_workspace_file。不要上传、提交、私信或删除任何内容。处理作业草稿时先调用 collect_task_submission_context；信息不足就说明缺什么；信息足够才调用 draft_task_submission 保存草稿等待用户审核。如果作业已过期且可能无法补交，可以在草稿提示字段中建议用户私信老师，但只能保存草稿等待用户审核。给出或保存草稿正文时，draft_text 必须是纯文本正文，不要使用 Markdown 标题、列表、表格、代码块、加粗、引用或其他 Markdown 格式；如果需要给用户说明保存状态，可以在助手回复里用 Markdown，但草稿正文内容本身必须保持纯文本。";
 const LEGACY_DEFAULT_SYSTEM_PROMPTS = new Set([
   "你是伴学邦桌面助手。需要真实数据时必须调用工具，不要猜测。不要上传、提交或删除任何内容。处理作业草稿时先调用 collect_task_submission_context；信息不足就说明缺什么；信息足够才调用 draft_task_submission 保存草稿等待用户审核。",
   "你是伴学邦桌面助手。需要真实数据时必须调用工具，不要猜测。需要联网资料时先调用 web_search；需要阅读某个搜索结果时再调用 read_web_page。不要上传、提交或删除任何内容。处理作业草稿时先调用 collect_task_submission_context；信息不足就说明缺什么；信息足够才调用 draft_task_submission 保存草稿等待用户审核。",
@@ -943,7 +943,7 @@ function toolSchemas() {
     },
     {
       name: "draft_task_submission",
-      description: "保存 AI 写好的提交草稿，等待用户审核；不会上传或提交。",
+      description: "保存 AI 写好的提交草稿，等待用户审核；不会上传、提交或私信。",
       parameters: {
         type: "object",
         properties: {
@@ -955,6 +955,9 @@ function toolSchemas() {
           warnings: { type: "array", items: { type: "string" } },
           missing_info: { type: "array", items: { type: "string" } },
           needs_user_input: { type: "boolean" },
+          preferred_target: { type: "string", enum: ["task", "teacher_private_message"] },
+          intended_targets: { type: "array", items: { type: "string", enum: ["task", "teacher_private_message"] } },
+          teacher_message_hint: { type: "string" },
         },
         required: ["task_id", "draft_text"],
       },
