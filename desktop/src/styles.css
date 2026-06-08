@@ -1553,6 +1553,11 @@ footer {
   color: #005a9e;
 }
 
+.draft-status.sent {
+  background: #ede7f6;
+  color: #5c2d91;
+}
+
 .draft-status.unknown {
   background: #f3f2f1;
   color: #605e5c;
@@ -1653,13 +1658,15 @@ footer {
 }
 
 .draft-alerts,
-.draft-evidence-list {
+.draft-evidence-list,
+.draft-delivery-list {
   display: grid;
   gap: 8px;
 }
 
 .draft-alert,
-.draft-evidence {
+.draft-evidence,
+.draft-delivery {
   display: grid;
   gap: 4px;
   padding: 10px;
@@ -1679,11 +1686,18 @@ footer {
 }
 
 .draft-alert span,
-.draft-evidence span {
+.draft-evidence span,
+.draft-delivery span,
+.draft-delivery small {
   color: #606060;
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.draft-delivery.failed {
+  border-color: rgba(209, 52, 56, 0.25);
+  background: rgba(209, 52, 56, 0.06);
 }
 
 .draft-empty {
@@ -1814,6 +1828,16 @@ footer {
   font-size: 12px;
 }
 
+.draft-message-chunks {
+  display: grid;
+  gap: 10px;
+}
+
+.draft-message-chunk {
+  display: grid;
+  gap: 7px;
+}
+
 .draft-submit-actions {
   display: flex;
   justify-content: flex-end;
@@ -1825,6 +1849,17 @@ footer {
 .draft-submit-confirm > small {
   color: #606060;
   text-align: right;
+}
+
+.draft-target-control {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.draft-target-control select {
+  min-width: 170px;
+  min-height: 36px;
 }
 
 :root[data-theme="dark"] .draft-empty strong {
@@ -2139,6 +2174,7 @@ tbody tr:hover {
 :root[data-theme="dark"] .draft-facts > div,
 :root[data-theme="dark"] .draft-alert,
 :root[data-theme="dark"] .draft-evidence,
+:root[data-theme="dark"] .draft-delivery,
 :root[data-theme="dark"] .draft-submit-facts > div,
 :root[data-theme="dark"] .draft-submit-files > div,
 :root[data-theme="dark"] .update-facts > div,
@@ -2187,6 +2223,8 @@ tbody tr:hover {
 :root[data-theme="dark"] .draft-list-item small,
 :root[data-theme="dark"] .draft-alert span,
 :root[data-theme="dark"] .draft-evidence span,
+:root[data-theme="dark"] .draft-delivery span,
+:root[data-theme="dark"] .draft-delivery small,
 :root[data-theme="dark"] .draft-edit-hint,
 :root[data-theme="dark"] .draft-create-hint,
 :root[data-theme="dark"] .draft-empty,

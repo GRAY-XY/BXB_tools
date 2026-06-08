@@ -634,6 +634,18 @@ export function createToolDefinitions(client) {
           .boolean()
           .optional()
           .describe("Whether the agent believes more user input is needed before submission."),
+        preferred_target: z
+          .enum(["task", "teacher_private_message"])
+          .optional()
+          .describe("Optional preferred delivery target. Use teacher_private_message when the task appears expired and may not allow supplement."),
+        intended_targets: z
+          .array(z.enum(["task", "teacher_private_message"]))
+          .optional()
+          .describe("Optional list of intended delivery targets for the human reviewer."),
+        teacher_message_hint: z
+          .string()
+          .optional()
+          .describe("Optional plain-text hint to include if the user later chooses to private-message a teacher."),
       },
       execute: async ({
         task_id: taskId,
@@ -645,6 +657,9 @@ export function createToolDefinitions(client) {
         warnings,
         missing_info: missingInfo,
         needs_user_input: needsUserInput,
+        preferred_target: preferredTarget,
+        intended_targets: intendedTargets,
+        teacher_message_hint: teacherMessageHint,
       }) =>
         client.draftTaskSubmission({
           taskId,
@@ -656,6 +671,9 @@ export function createToolDefinitions(client) {
           warnings: warnings ?? [],
           missingInfo: missingInfo ?? [],
           needsUserInput: needsUserInput ?? false,
+          preferredTarget,
+          intendedTargets,
+          teacherMessageHint,
         }),
     },
     {
@@ -663,7 +681,7 @@ export function createToolDefinitions(client) {
       description: "List locally archived submission drafts and their review status.",
       inputSchema: {
         status: z
-          .enum(["pending_review", "approved", "rejected", "submitted", "all"])
+          .enum(["pending_review", "approved", "rejected", "submitted", "sent_to_teacher", "all"])
           .optional()
           .describe("Optional status filter."),
       },
@@ -737,6 +755,31 @@ export function createToolDefinitions(client) {
       },
       execute: async ({ draft_id: draftId, confirmation_token: confirmationToken }) =>
         client.submitApprovedDraft(draftId, { confirmationToken }),
+    },
+    {
+      name: "prepare_draft_private_message",
+      description:
+        "Validate an approved draft and return a private-message preview, chunk list, contact suggestions, and confirmation token. This does not send anything.",
+      inputSchema: {
+        draft_id: z.string().describe("Approved draft id."),
+        contact: z.any().optional().describe("Optional contact object returned by list_private_message_contacts or the preview contact list."),
+      },
+      execute: async ({ draft_id: draftId, contact }) =>
+        client.prepareDraftPrivateMessage(draftId, { contact }),
+    },
+    {
+      name: "send_approved_draft_private_message",
+      description:
+        "Send an approved draft to a selected existing Banxuebang private-message contact. Call only after the user explicitly confirms the prepare_draft_private_message preview.",
+      inputSchema: {
+        draft_id: z.string().describe("Approved draft id that the user explicitly confirmed."),
+        contact: z.any().describe("Selected contact returned by prepare_draft_private_message or list_private_message_contacts."),
+        confirmation_token: z
+          .string()
+          .describe("Confirmation token returned by prepare_draft_private_message for the reviewed preview."),
+      },
+      execute: async ({ draft_id: draftId, contact, confirmation_token: confirmationToken }) =>
+        client.sendApprovedDraftPrivateMessage(draftId, { contact, confirmationToken }),
     },
     {
       name: "upload_submission_file",

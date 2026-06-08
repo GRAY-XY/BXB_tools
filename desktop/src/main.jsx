@@ -23,7 +23,7 @@ const quickPrompts = [
 ];
 
 const fallbackSystemPrompt =
-  "你是伴学邦桌面助手。需要真实数据时必须调用工具，不要猜测。需要联网资料时先调用 web_search；需要阅读某个搜索结果时再调用 read_web_page。用户提到工作区文件时，先调用 list_workspace_files 定位文件，再按需调用 read_workspace_file；需要整理文件名时可调用 rename_workspace_file。不要上传、提交或删除任何内容。处理作业草稿时先调用 collect_task_submission_context；信息不足就说明缺什么；信息足够才调用 draft_task_submission 保存草稿等待用户审核。给出或保存草稿正文时，draft_text 必须是纯文本正文，不要使用 Markdown 标题、列表、表格、代码块、加粗、引用或其他 Markdown 格式；如果需要给用户说明保存状态，可以在助手回复里用 Markdown，但草稿正文内容本身必须保持纯文本。";
+  "你是伴学邦桌面助手。需要真实数据时必须调用工具，不要猜测。需要联网资料时先调用 web_search；需要阅读某个搜索结果时再调用 read_web_page。用户提到工作区文件时，先调用 list_workspace_files 定位文件，再按需调用 read_workspace_file；需要整理文件名时可调用 rename_workspace_file。不要上传、提交、私信或删除任何内容。处理作业草稿时先调用 collect_task_submission_context；信息不足就说明缺什么；信息足够才调用 draft_task_submission 保存草稿等待用户审核。如果作业已过期且可能无法补交，可以在草稿提示字段中建议用户私信老师，但只能保存草稿等待用户审核。给出或保存草稿正文时，draft_text 必须是纯文本正文，不要使用 Markdown 标题、列表、表格、代码块、加粗、引用或其他 Markdown 格式；如果需要给用户说明保存状态，可以在助手回复里用 Markdown，但草稿正文内容本身必须保持纯文本。";
 
 const allCoursesName = "全部课程";
 const imageAttachmentExtensions = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".avif"]);
@@ -221,7 +221,8 @@ function formatDraftStatus(status) {
   if (normalized === "pending_review") return "待审核";
   if (normalized === "approved") return "已通过";
   if (normalized === "rejected") return "已驳回";
-  if (normalized === "submitted") return "已提交";
+  if (normalized === "submitted") return "已提交到作业";
+  if (normalized === "sent_to_teacher") return "已私信老师";
   return normalized || "未知状态";
 }
 
@@ -230,12 +231,37 @@ function draftStatusClass(status) {
   if (normalized === "approved") return "approved";
   if (normalized === "rejected") return "rejected";
   if (normalized === "submitted") return "submitted";
+  if (normalized === "sent_to_teacher") return "sent";
   if (normalized === "pending_review") return "pending";
   return "unknown";
 }
 
 function draftTitle(draft) {
   return draft?.taskTitle || (draft?.taskId ? `任务 ${draft.taskId}` : "未命名草稿");
+}
+
+function isDraftDelivered(draft) {
+  return draft?.status === "submitted" || draft?.status === "sent_to_teacher";
+}
+
+function privateContactKey(contact) {
+  return [
+    contact?.contactKey || "",
+    contact?.id || "",
+    contact?.classId || "",
+    contact?.peerId || "",
+    contact?.receiverId || "",
+    contact?.senderId || "",
+  ].join("|");
+}
+
+function privateContactLabel(contact) {
+  if (!contact) return "未选择";
+  const parts = [
+    contact.peerName || contact.receiverName || contact.senderName || "未知联系人",
+    contact.courseName || contact.className,
+  ].filter(Boolean);
+  return parts.join(" · ");
 }
 
 function normalizeList(value) {
@@ -282,7 +308,8 @@ function DraftPreview({
   const warnings = normalizeList(draft.warnings);
   const evidence = normalizeList(draft.evidence);
   const hasReview = draft.reviewedAt || draft.reviewNote;
-  const isSubmitted = draft.status === "submitted";
+  const isDelivered = isDraftDelivered(draft);
+  const deliveryHistory = Array.isArray(draft.deliveryHistory) ? draft.deliveryHistory : [];
 
   return (
     <div className="draft-preview">
@@ -323,8 +350,8 @@ function DraftPreview({
         <div className="draft-section-head">
           <h3>待提交正文</h3>
           <div className="draft-edit-actions">
-            <button type="button" onClick={onResetDraft} disabled={isSubmitted || !draftDirty || draftSaving}>还原</button>
-            <button type="button" className="primary" onClick={onSaveDraft} disabled={isSubmitted || !draftDirty || draftSaving || !draftEditText.trim()}>
+            <button type="button" onClick={onResetDraft} disabled={isDelivered || !draftDirty || draftSaving}>还原</button>
+            <button type="button" className="primary" onClick={onSaveDraft} disabled={isDelivered || !draftDirty || draftSaving || !draftEditText.trim()}>
               {draftSaving ? "保存中" : "保存"}
             </button>
           </div>
@@ -335,11 +362,11 @@ function DraftPreview({
           onChange={(event) => onDraftTextChange?.(event.target.value)}
           placeholder="编辑待提交正文..."
           spellCheck={false}
-          readOnly={isSubmitted}
+          readOnly={isDelivered}
         />
         <small className="draft-edit-hint">
-          {isSubmitted
-            ? "这是已经提交到伴学邦的正文记录。如需再次提交，请新建草稿并重新审核。"
+          {isDelivered
+            ? "这是已经交付过的正文记录。如需再次提交或私信，请新建草稿并重新审核。"
             : draftDirty
               ? "有未保存修改。保存只会更新本地草稿，不会上传或提交。"
               : "保存只会更新本地草稿，不会上传或提交。"}
@@ -399,11 +426,36 @@ function DraftPreview({
           </p>
         </section>
       )}
+
+      {deliveryHistory.length > 0 && (
+        <section className="draft-section">
+          <h3>交付记录</h3>
+          <div className="draft-delivery-list">
+            {deliveryHistory.map((record, index) => (
+              <div key={`${record.type || "delivery"}-${index}`} className={`draft-delivery ${record.status || ""}`}>
+                <strong>
+                  {record.type === "teacher_private_message" ? "私信老师" : "作业 Task"}
+                  {record.status === "failed" ? "失败" : "成功"}
+                </strong>
+                <span>
+                  {record.type === "teacher_private_message"
+                    ? `${privateContactLabel(record.contact)} · ${record.sentCount ?? record.chunkCount ?? 0}/${record.chunkCount ?? 0} 条`
+                    : `${record.modeLabel || "提交"} · ${record.submissionId || "无提交记录 ID"}`}
+                </span>
+                <small>
+                  {formatMessageTime(record.sentAt || record.submittedAt || record.failedAt) || "-"}
+                  {record.error ? ` · ${record.error}` : ""}
+                </small>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }
 
-function DraftSubmissionConfirmation({ preview, loading, onCancel, onConfirm }) {
+function DraftSubmissionConfirmation({ preview, loading, onCancel, onConfirm, onSwitchToMessage }) {
   if (!preview) return null;
   const attachments = Array.isArray(preview.retainedAttachments) ? preview.retainedAttachments : [];
 
@@ -451,11 +503,93 @@ function DraftSubmissionConfirmation({ preview, loading, onCancel, onConfirm }) 
 
       <div className="draft-submit-actions">
         <button type="button" onClick={onCancel} disabled={loading}>返回草稿</button>
+        {(preview.suggestTeacherMessage || preview.error || !preview.canSubmit) && (
+          <button type="button" onClick={onSwitchToMessage} disabled={loading}>改用私信老师</button>
+        )}
         <button type="button" className="primary" onClick={onConfirm} disabled={loading || !preview.canSubmit}>
           {loading ? "提交中" : "确认并提交"}
         </button>
       </div>
       <small>点击“确认并提交”后会立即调用伴学邦提交或补交接口。</small>
+    </div>
+  );
+}
+
+function DraftPrivateMessageConfirmation({
+  preview,
+  selectedKey,
+  loading,
+  onSelectContact,
+  onCancel,
+  onConfirm,
+}) {
+  if (!preview) return null;
+  const contacts = Array.isArray(preview.contacts) ? preview.contacts : [];
+  const chunks = Array.isArray(preview.chunks) ? preview.chunks : [];
+  const selectedContact = preview.selectedContact || contacts.find((contact) => privateContactKey(contact) === selectedKey) || null;
+
+  return (
+    <div className="draft-submit-confirm">
+      <div className="draft-submit-head">
+        <div>
+          <span>私信确认</span>
+          <h2>{preview.taskTitle || `任务 ${preview.taskId || ""}`}</h2>
+        </div>
+        <strong>私信老师</strong>
+      </div>
+
+      <div className="draft-submit-facts">
+        <div><span>目标课程</span><strong>{preview.subjectName || "未知课程"}</strong></div>
+        <div><span>Task ID</span><strong>{preview.taskId || "-"}</strong></div>
+        <div><span>提交位置</span><strong>{preview.destination || "伴学邦私信老师"}</strong></div>
+        <div><span>分条数量</span><strong>{chunks.length || 0} 条</strong></div>
+      </div>
+
+      {preview.note && <div className="draft-submit-notice">{preview.note}</div>}
+      {preview.error && <div className="draft-submit-error">{preview.error}</div>}
+      {!preview.canSend && <div className="draft-submit-notice">{preview.reason || "请选择联系人后再发送。"}</div>}
+
+      <section className="draft-section">
+        <h3>目标联系人</h3>
+        <select
+          value={selectedContact ? privateContactKey(selectedContact) : selectedKey || ""}
+          onChange={(event) => onSelectContact?.(event.target.value)}
+          disabled={loading}
+        >
+          <option value="">选择已有私信联系人</option>
+          {contacts.map((contact) => {
+            const key = privateContactKey(contact);
+            const suffix = contact.recommended
+              ? `（推荐${contact.matchReasons?.length ? `：${contact.matchReasons.join("、")}` : ""}）`
+              : "";
+            return (
+              <option key={key} value={key}>
+                {privateContactLabel(contact)}{suffix}
+              </option>
+            );
+          })}
+        </select>
+      </section>
+
+      <section className="draft-section">
+        <h3>即将发送的分条内容</h3>
+        <div className="draft-message-chunks">
+          {chunks.map((chunk) => (
+            <div key={chunk.index} className="draft-message-chunk">
+              <strong>第 {chunk.index}/{chunk.total} 条 · {chunk.length} 字</strong>
+              <pre className="draft-submit-text">{chunk.text}</pre>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <div className="draft-submit-actions">
+        <button type="button" onClick={onCancel} disabled={loading}>返回草稿</button>
+        <button type="button" className="primary" onClick={onConfirm} disabled={loading || !preview.canSend}>
+          {loading ? "发送中" : "确认并分条发送"}
+        </button>
+      </div>
+      <small>确认后会逐条发送到所选已有私信联系人；任一条失败会停止后续发送。</small>
     </div>
   );
 }
@@ -818,6 +952,11 @@ function App() {
   const [draftCreateOpen, setDraftCreateOpen] = useState(false);
   const [draftSubmitPreview, setDraftSubmitPreview] = useState(null);
   const [draftSubmitLoading, setDraftSubmitLoading] = useState(false);
+  const [draftDeliveryTarget, setDraftDeliveryTarget] = useState("task");
+  const [draftMessagePreview, setDraftMessagePreview] = useState(null);
+  const [draftMessageLoading, setDraftMessageLoading] = useState(false);
+  const [draftMessageContactKey, setDraftMessageContactKey] = useState("");
+  const [draftDeleteConfirming, setDraftDeleteConfirming] = useState(false);
   const [modelConfig, setModelConfig] = useState({
     apiKey: "",
     baseUrl: "",
@@ -931,6 +1070,12 @@ function App() {
   const contextMax = Number(modelConfig.contextLength || 0) || 1000000;
   const contextPercent = Math.min(100, Math.round((contextUsed / contextMax) * 100));
   const draftDirty = Boolean(selectedDraft && draftEditText !== (selectedDraft.draftText || ""));
+  const draftInteractionLocked = Boolean(draftSubmitPreview || draftMessagePreview) || draftSubmitLoading || draftMessageLoading;
+  const draftMessageContacts = Array.isArray(draftMessagePreview?.contacts) ? draftMessagePreview.contacts : [];
+  const selectedDraftMessageContact = useMemo(
+    () => draftMessageContacts.find((contact) => privateContactKey(contact) === draftMessageContactKey) || null,
+    [draftMessageContacts, draftMessageContactKey],
+  );
   const draftCreateCourse = useMemo(
     () => draftCreateCourses.find((course, index) => getCourseOptionKey(course, index) === draftCreateCourseKey) || null,
     [draftCreateCourses, draftCreateCourseKey],
@@ -1397,6 +1542,10 @@ function App() {
     setSelectedDraft(draft);
     setDraftEditText(draft?.draftText || "");
     setDraftSubmitPreview(null);
+    setDraftMessagePreview(null);
+    setDraftMessageContactKey("");
+    setDraftDeleteConfirming(false);
+    setDraftDeliveryTarget(draft?.deliveryTarget || draft?.preferredTarget || "task");
   }
 
   async function saveDraftEdits() {
@@ -1441,13 +1590,22 @@ function App() {
 
   async function deleteDraft() {
     if (!selectedDraft?.draftId) return;
-    const confirmed = confirm(`删除草稿“${draftTitle(selectedDraft)}”？这只会删除本地草稿文件，不会影响伴学邦。`);
-    if (!confirmed) return;
+    if (!draftDeleteConfirming) {
+      setDraftDeleteConfirming(true);
+      setStatus(`再次点击确认删除草稿“${draftTitle(selectedDraft)}”`);
+      return;
+    }
     await callTool("delete_submission_draft", { draft_id: selectedDraft.draftId });
     setSelectedDraft(null);
     setDraftEditText("");
+    setDraftDeleteConfirming(false);
     await loadDrafts(draftStatusFilter);
     setStatus("草稿已删除");
+  }
+
+  function cancelDraftDelete() {
+    setDraftDeleteConfirming(false);
+    setStatus("已取消删除草稿");
   }
 
   async function prepareDraftSubmit() {
@@ -1459,6 +1617,7 @@ function App() {
 
     setDraftSubmitLoading(true);
     setDraftSubmitPreview(null);
+    setDraftMessagePreview(null);
     try {
       const preview = await callTool("prepare_draft_submission", { draft_id: selectedDraft.draftId });
       setDraftSubmitPreview(preview);
@@ -1497,7 +1656,7 @@ function App() {
           : `${result?.preview?.modeLabel || "提交"}成功，草稿已标记为已提交`,
       );
     } catch (error) {
-      setDraftSubmitPreview((current) => current ? { ...current, error: error.message } : current);
+      setDraftSubmitPreview((current) => current ? { ...current, error: error.message, suggestTeacherMessage: true } : current);
       setStatus(`无法提交：${error.message}`);
     } finally {
       setDraftSubmitLoading(false);
@@ -1508,6 +1667,114 @@ function App() {
     if (draftSubmitLoading) return;
     setDraftSubmitPreview(null);
     setStatus("已取消提交");
+  }
+
+  async function prepareDraftPrivateMessage(contact = null) {
+    if (!selectedDraft?.draftId || selectedDraft.status !== "approved") return;
+    if (draftDirty) {
+      setStatus("请先保存草稿修改，再准备私信");
+      return;
+    }
+
+    setDraftMessageLoading(true);
+    setDraftSubmitPreview(null);
+    try {
+      const args = { draft_id: selectedDraft.draftId };
+      if (contact) {
+        args.contact = contact;
+      }
+      const preview = await callTool("prepare_draft_private_message", args);
+      setDraftMessagePreview(preview);
+      setDraftMessageContactKey(preview.selectedContact ? privateContactKey(preview.selectedContact) : "");
+      setStatus(preview?.canSend ? "请核对即将私信的内容" : preview?.reason || "请选择私信联系人");
+    } catch (error) {
+      setDraftMessagePreview((current) => current ? { ...current, error: error.message } : current);
+      setStatus(`无法准备私信：${error.message}`);
+    } finally {
+      setDraftMessageLoading(false);
+    }
+  }
+
+  async function handleDraftMessageContactChange(nextKey) {
+    setDraftMessageContactKey(nextKey);
+    const contact = draftMessageContacts.find((item) => privateContactKey(item) === nextKey);
+    if (contact) {
+      await prepareDraftPrivateMessage(contact);
+    }
+  }
+
+  async function confirmDraftPrivateMessage() {
+    if (!selectedDraft?.draftId || !draftMessagePreview?.canSend || draftMessageLoading) return;
+    const contact = selectedDraftMessageContact || draftMessagePreview.selectedContact;
+    if (!contact) {
+      setStatus("请先选择私信联系人");
+      return;
+    }
+
+    setDraftMessageLoading(true);
+    try {
+      const result = await callTool("send_approved_draft_private_message", {
+        draft_id: selectedDraft.draftId,
+        contact,
+        confirmation_token: draftMessagePreview.confirmationToken,
+      });
+      if (!result?.sent) {
+        const updated = result?.draft || selectedDraft;
+        setSelectedDraft(updated);
+        setDraftEditText(updated?.draftText || "");
+        setDraftMessagePreview((current) => current ? {
+          ...current,
+          error: `已发送 ${result?.sentCount || 0} 条后失败：${result?.error || "未知错误"}`,
+          canSend: false,
+        } : current);
+        await loadDrafts("all");
+        setStatus(`私信部分发送失败，草稿仍保持已通过：${result?.error || "未知错误"}`);
+        return;
+      }
+
+      const updated = result?.draft || {
+        ...selectedDraft,
+        status: "sent_to_teacher",
+        sentToTeacherAt: result?.sentAt || new Date().toISOString(),
+      };
+      setSelectedDraft(updated);
+      setDraftEditText(updated?.draftText || "");
+      setDraftMessagePreview(null);
+      setDraftMessageContactKey("");
+      await loadDrafts("all");
+      setStatus(
+        result?.localRecordError
+          ? `私信已发送，但${result.localRecordError}`
+          : "私信已发送，草稿已标记为已私信老师",
+      );
+    } catch (error) {
+      setDraftMessagePreview((current) => current ? { ...current, error: error.message } : current);
+      setStatus(`无法私信老师：${error.message}`);
+    } finally {
+      setDraftMessageLoading(false);
+    }
+  }
+
+  function cancelDraftPrivateMessage() {
+    if (draftMessageLoading) return;
+    setDraftMessagePreview(null);
+    setDraftMessageContactKey("");
+    setStatus("已取消私信");
+  }
+
+  async function switchDraftSubmitToMessage() {
+    if (draftSubmitLoading || draftMessageLoading) return;
+    setDraftDeliveryTarget("teacher_private_message");
+    setDraftSubmitPreview(null);
+    await prepareDraftPrivateMessage();
+  }
+
+  async function prepareSelectedDraftDelivery() {
+    if (draftDeliveryTarget === "teacher_private_message") {
+      await prepareDraftPrivateMessage();
+    } else {
+      await prepareDraftSubmit();
+    }
   }
 
   async function sendAgent(text = input) {
@@ -2198,24 +2465,44 @@ function App() {
 
         {page === "drafts" && (
           <section className="review-page">
-            <PageTitle title="草稿" subtitle="创建和审核本地草稿；已通过草稿可在确认完整内容后提交到伴学邦。" />
+            <PageTitle title="草稿" subtitle="创建和审核本地草稿；已通过草稿可在确认完整内容后提交到作业 Task 或私信老师。" />
             <div className="card toolbar">
-              <button className="primary" onClick={openDraftCreator} disabled={Boolean(draftSubmitPreview) || draftSubmitLoading}>新建草稿</button>
-              <button className="primary" onClick={() => loadDrafts("pending_review")} disabled={Boolean(draftSubmitPreview) || draftSubmitLoading}>待审核</button>
-              <button onClick={() => loadDrafts("approved")} disabled={Boolean(draftSubmitPreview) || draftSubmitLoading}>已通过</button>
-              <button onClick={() => loadDrafts("submitted")} disabled={Boolean(draftSubmitPreview) || draftSubmitLoading}>已提交</button>
-              <button onClick={() => loadDrafts("all")} disabled={Boolean(draftSubmitPreview) || draftSubmitLoading}>全部草稿</button>
-              <button onClick={saveDraftEdits} disabled={selectedDraft?.status === "submitted" || Boolean(draftSubmitPreview) || !draftDirty || draftSaving || !draftEditText.trim()}>
+              <button className="primary" onClick={openDraftCreator} disabled={draftInteractionLocked}>新建草稿</button>
+              <button className="primary" onClick={() => loadDrafts("pending_review")} disabled={draftInteractionLocked}>待审核</button>
+              <button onClick={() => loadDrafts("approved")} disabled={draftInteractionLocked}>已通过</button>
+              <button onClick={() => loadDrafts("submitted")} disabled={draftInteractionLocked}>已提交作业</button>
+              <button onClick={() => loadDrafts("sent_to_teacher")} disabled={draftInteractionLocked}>已私信老师</button>
+              <button onClick={() => loadDrafts("all")} disabled={draftInteractionLocked}>全部草稿</button>
+              <button onClick={saveDraftEdits} disabled={isDraftDelivered(selectedDraft) || draftInteractionLocked || !draftDirty || draftSaving || !draftEditText.trim()}>
                 {draftSaving ? "保存中" : "保存修改"}
               </button>
-              <button onClick={approveDraft} disabled={Boolean(draftSubmitPreview) || !selectedDraft || selectedDraft.status === "approved" || selectedDraft.status === "submitted"}>通过</button>
-              <button onClick={rejectDraft} disabled={Boolean(draftSubmitPreview) || !selectedDraft || selectedDraft.status === "rejected" || selectedDraft.status === "submitted"}>驳回</button>
+              <button onClick={approveDraft} disabled={draftInteractionLocked || !selectedDraft || selectedDraft.status === "approved" || isDraftDelivered(selectedDraft)}>通过</button>
+              <button onClick={rejectDraft} disabled={draftInteractionLocked || !selectedDraft || selectedDraft.status === "rejected" || isDraftDelivered(selectedDraft)}>驳回</button>
               {selectedDraft?.status === "approved" && (
-                <button className="primary" onClick={prepareDraftSubmit} disabled={Boolean(draftSubmitPreview) || draftSubmitLoading || draftDirty}>
-                  {draftSubmitLoading ? "检查中" : "提交到伴学邦"}
-                </button>
+                <div className="draft-target-control">
+                  <select
+                    value={draftDeliveryTarget}
+                    onChange={(event) => setDraftDeliveryTarget(event.target.value)}
+                    disabled={draftInteractionLocked || draftDirty}
+                  >
+                    <option value="task">提交到作业 Task</option>
+                    <option value="teacher_private_message">私信老师</option>
+                  </select>
+                  <button className="primary" onClick={prepareSelectedDraftDelivery} disabled={draftInteractionLocked || draftDirty}>
+                    {draftSubmitLoading || draftMessageLoading
+                      ? "准备中"
+                      : draftDeliveryTarget === "teacher_private_message"
+                        ? "准备私信"
+                        : "准备提交"}
+                  </button>
+                </div>
               )}
-              <button className="danger" onClick={deleteDraft} disabled={Boolean(draftSubmitPreview) || !selectedDraft || draftSubmitLoading}>删除草稿</button>
+              <button className="danger" onClick={deleteDraft} disabled={draftInteractionLocked || !selectedDraft}>
+                {draftDeleteConfirming ? "确认删除" : "删除草稿"}
+              </button>
+              {draftDeleteConfirming && (
+                <button onClick={cancelDraftDelete} disabled={draftInteractionLocked}>取消删除</button>
+              )}
             </div>
             {draftCreateOpen ? (
               <div className="draft-create-only">
@@ -2309,7 +2596,7 @@ function App() {
                       key={draft.draftId}
                       className={selectedDraft?.draftId === draft.draftId ? "draft-list-item active" : "draft-list-item"}
                       onClick={() => openDraft(draft.draftId)}
-                      disabled={Boolean(draftSubmitPreview) || draftSubmitLoading}
+                      disabled={draftInteractionLocked}
                     >
                       <span className={`draft-status ${draftStatusClass(draft.status)}`}>{formatDraftStatus(draft.status)}</span>
                       <strong>{draftTitle(draft)}</strong>
@@ -2331,6 +2618,16 @@ function App() {
                     loading={draftSubmitLoading}
                     onCancel={cancelDraftSubmit}
                     onConfirm={confirmDraftSubmit}
+                    onSwitchToMessage={switchDraftSubmitToMessage}
+                  />
+                ) : draftMessagePreview ? (
+                  <DraftPrivateMessageConfirmation
+                    preview={draftMessagePreview}
+                    selectedKey={draftMessageContactKey}
+                    loading={draftMessageLoading}
+                    onSelectContact={handleDraftMessageContactChange}
+                    onCancel={cancelDraftPrivateMessage}
+                    onConfirm={confirmDraftPrivateMessage}
                   />
                 ) : (
                   <DraftPreview

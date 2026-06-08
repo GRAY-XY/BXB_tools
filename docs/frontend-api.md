@@ -249,6 +249,9 @@ await window.bxb.callTool("draft_task_submission", {
   task_title: "Task title",
   draft_text: "Draft body...",
   summary: "User-created draft",
+  preferred_target: "task",
+  intended_targets: ["task", "teacher_private_message"],
+  teacher_message_hint: "作业可能已过期，可询问老师是否开放补交。",
 });
 await window.bxb.callTool("list_submission_drafts", { status: "pending_review" });
 await window.bxb.callTool("get_submission_draft", { draft_id: "DRAFT_ID" });
@@ -261,6 +264,20 @@ const preview = await window.bxb.callTool("prepare_draft_submission", { draft_id
 await window.bxb.callTool("submit_approved_draft", {
   draft_id: "APPROVED_DRAFT_ID",
   confirmation_token: preview.confirmationToken,
+});
+const messagePreview = await window.bxb.callTool("prepare_draft_private_message", {
+  draft_id: "APPROVED_DRAFT_ID",
+});
+const contact = messagePreview.contacts[0];
+const contactPreview = await window.bxb.callTool("prepare_draft_private_message", {
+  draft_id: "APPROVED_DRAFT_ID",
+  contact,
+});
+// Only after the user reviews contactPreview chunks and explicitly confirms:
+await window.bxb.callTool("send_approved_draft_private_message", {
+  draft_id: "APPROVED_DRAFT_ID",
+  contact,
+  confirmation_token: contactPreview.confirmationToken,
 });
 ```
 
@@ -323,6 +340,8 @@ These tools exist in the backend registry:
 - `submit_task_result`
 - `prepare_draft_submission`
 - `submit_approved_draft`
+- `prepare_draft_private_message`
+- `send_approved_draft_private_message`
 
 Frontend rule:
 
@@ -333,6 +352,12 @@ Frontend rule:
 - Pass the `confirmationToken` returned by `prepare_draft_submission`; submission is rejected if the task state or draft content changed after preview.
 - `submit_approved_draft` repeats validation server-side, submits to the task's own class, and marks the local draft `submitted` only after Banxuebang reports success.
 - Submission failures leave the draft `approved` and must be shown to the user.
+- Task submission failures should expose a `改用私信老师` path, but must not automatically send private messages.
+- The draft page must call `prepare_draft_private_message` first and show the selected contact, course, task, full preview text split into roughly 800-character chunks, and destination.
+- Only call `send_approved_draft_private_message` after a second explicit user click on the confirmation screen.
+- Pass the `confirmationToken` returned by the contact-specific `prepare_draft_private_message`; sending is rejected if the draft, task, contact, or chunk text changed after preview.
+- `send_approved_draft_private_message` sends chunks sequentially. If chunk N fails, it stops, leaves the draft `approved`, and returns the sent count plus the error.
+- A fully successful teacher message marks the local draft `sent_to_teacher`, not `submitted`.
 
 ### Autonomous Agent Tool Set
 
@@ -373,7 +398,7 @@ Workspace files live under the local Electron user data directory at `workspaceD
 Private-message send safety:
 
 - `send_private_message_text` must only be triggered by a direct user action in the UI.
-- Do not expose `send_private_message_text` to autonomous Agent execution by default.
+- Do not expose `send_private_message_text`, `prepare_draft_private_message`, or `send_approved_draft_private_message` to autonomous Agent execution by default.
 - The current UI supports text messages only; image/file message display may be represented as placeholders.
 
 ## Model Config

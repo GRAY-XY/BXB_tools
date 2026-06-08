@@ -54,6 +54,9 @@ const AUDIO_EXTENSIONS = new Set([".aac", ".flac", ".m4a", ".mp3", ".ogg", ".wav
 const ALL_SUBJECT_ID = "__all_courses__";
 const ALL_SUBJECT_NAMES = new Set(["全部课程", "全部", "all", "all courses"]);
 const WEB_SEARCH_ENGINES = new Set(["bing"]);
+const DRAFT_DELIVERY_TARGETS = new Set(["task", "teacher_private_message"]);
+const FINAL_DRAFT_STATUSES = new Set(["submitted", "sent_to_teacher"]);
+const PRIVATE_MESSAGE_CHUNK_LIMIT = 800;
 
 function defaultWorkspaceDir() {
   return process.env.BANXUEBANG_WORKSPACE_DIR || path.join(process.cwd(), ".banxuebang", "workspace");
@@ -337,6 +340,208 @@ function draftSubmissionConfirmationToken(preview) {
       }),
     )
     .digest("hex");
+}
+
+function normalizeDeliveryTarget(value, fallback = "task") {
+  const normalized = String(value || "").trim();
+  return DRAFT_DELIVERY_TARGETS.has(normalized) ? normalized : fallback;
+}
+
+function normalizeDeliveryTargets(value, fallback = ["task"]) {
+  const items = Array.isArray(value) ? value : value ? [value] : fallback;
+  const normalized = items.map((item) => normalizeDeliveryTarget(item, null)).filter(Boolean);
+  return normalized.length ? Array.from(new Set(normalized)) : fallback;
+}
+
+function isFinalDraftStatus(status) {
+  return FINAL_DRAFT_STATUSES.has(String(status || "").trim());
+}
+
+function draftPrivateMessageContactKey(contact) {
+  const source = ensureObject(contact?.raw || contact);
+  return [
+    normalizeId(source.id) || "",
+    normalizeId(source.classId) || "",
+    normalizeId(source.peerId) || "",
+    normalizeId(source.receiverId) || "",
+    normalizeId(source.senderId) || "",
+  ].join("|");
+}
+
+function draftPrivateMessageConfirmationToken(preview) {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        target: "teacher_private_message",
+        draftId: preview.draftId,
+        taskId: preview.taskId,
+        contactKey: preview.selectedContact?.contactKey || null,
+        chunks: toArray(preview.chunks).map((chunk) => chunk.text),
+      }),
+    )
+    .digest("hex");
+}
+
+function splitPrivateMessageText(text, maxChars = PRIVATE_MESSAGE_CHUNK_LIMIT) {
+  const normalized = String(text || "")
+    .replace(/\r/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{4,}/g, "\n\n\n")
+    .trim();
+  if (!normalized) {
+    return [];
+  }
+
+  const chunks = [];
+  let current = "";
+  const pushCurrent = () => {
+    const trimmed = current.trim();
+    if (trimmed) {
+      chunks.push(trimmed);
+    }
+    current = "";
+  };
+
+  for (const paragraph of normalized.split(/\n{2,}/)) {
+    const block = paragraph.trim();
+    if (!block) {
+      continue;
+    }
+
+    if (block.length > maxChars) {
+      pushCurrent();
+      for (let index = 0; index < block.length; index += maxChars) {
+        chunks.push(block.slice(index, index + maxChars).trim());
+      }
+      continue;
+    }
+
+    const candidate = current ? `${current}\n\n${block}` : block;
+    if (candidate.length > maxChars) {
+      pushCurrent();
+      current = block;
+    } else {
+      current = candidate;
+    }
+  }
+
+  pushCurrent();
+  return chunks.map((chunk, index) => ({
+    index: index + 1,
+    total: chunks.length,
+    text: chunk,
+    length: chunk.length,
+  }));
+}
+
+function collectTeacherNames(value) {
+  return toArray(value)
+    .flatMap((teacher) => [
+      teacher?.name,
+      teacher?.teacherName,
+      teacher?.realName,
+      teacher?.userName,
+      teacher?.cnName,
+    ])
+    .filter(Boolean)
+    .map((item) => String(item).trim())
+    .filter(Boolean);
+}
+
+function buildDraftPrivateMessageSignals(draft, detail) {
+  const taskSummary = ensureObject(detail?.taskSummary);
+  const task = ensureObject(detail?.task);
+  const subjectList = toArray(draft?.sourceSession?.availableSubjects || detail?.context?.availableSubjects);
+  const courseName = taskSummary.courseName || task.courseName || draft?.subjectName || "";
+  const matchingCourse = subjectList.find((course) => {
+    const names = [course?.name, course?.cnName, course?.courseName].filter(Boolean).map(normalizeName);
+    return normalizeName(courseName) && names.includes(normalizeName(courseName));
+  });
+
+  const teacherNames = [
+    taskSummary.createName,
+    task.createName,
+    ...collectTeacherNames(task.teacherList),
+    ...collectTeacherNames(task.activityTask?.teacherList),
+    ...collectTeacherNames(matchingCourse?.teacherList),
+  ]
+    .filter(Boolean)
+    .map((item) => String(item).trim())
+    .filter(Boolean);
+
+  return {
+    teacherNames: Array.from(new Set(teacherNames)),
+    courseNames: Array.from(new Set([courseName, draft?.subjectName].filter(Boolean).map((item) => String(item).trim()))),
+    taskTitle: taskSummary.activityName || task.activityName || draft?.taskTitle || "",
+  };
+}
+
+function scoreDraftPrivateContact(contact, signals) {
+  const peerName = normalizeName(contact?.peerName);
+  const courseName = normalizeName(contact?.courseName);
+  const className = normalizeName(contact?.className);
+  let score = 0;
+  const reasons = [];
+
+  for (const teacherName of signals.teacherNames || []) {
+    const normalized = normalizeName(teacherName);
+    if (!normalized) {
+      continue;
+    }
+    if (peerName && (peerName === normalized || peerName.includes(normalized) || normalized.includes(peerName))) {
+      score += 80;
+      reasons.push(`教师名匹配：${teacherName}`);
+    }
+  }
+
+  for (const name of signals.courseNames || []) {
+    const normalized = normalizeName(name);
+    if (!normalized) {
+      continue;
+    }
+    if (courseName && (courseName === normalized || courseName.includes(normalized) || normalized.includes(courseName))) {
+      score += 30;
+      reasons.push(`课程匹配：${name}`);
+    }
+    if (className && (className === normalized || className.includes(normalized) || normalized.includes(className))) {
+      score += 15;
+      reasons.push(`班级匹配：${name}`);
+    }
+  }
+
+  return {
+    matchScore: score,
+    matchReasons: Array.from(new Set(reasons)),
+    recommended: score > 0,
+  };
+}
+
+function buildDraftTeacherMessageText({ draft, detail }) {
+  const taskSummary = ensureObject(detail?.taskSummary);
+  const task = ensureObject(detail?.task);
+  const userName =
+    draft?.sourceSession?.user?.name ||
+    detail?.context?.user?.name ||
+    detail?.context?.userInfo?.name ||
+    "";
+  const courseName = taskSummary.courseName || task.courseName || draft?.subjectName || "未知课程";
+  const taskTitle = taskSummary.activityName || task.activityName || draft?.taskTitle || "未命名作业";
+  const taskId = normalizeId(detail?.taskId || draft?.taskId) || "-";
+  const hint = String(draft?.teacherMessageHint || "").trim();
+
+  return [
+    `老师您好${userName ? `，我是${userName}` : ""}。`,
+    "我想询问下面这份作业是否可以开放补交，或请老师协助处理：",
+    `课程：${courseName}`,
+    `作业：${taskTitle}`,
+    `Task ID：${taskId}`,
+    hint ? `补充说明：${hint}` : "",
+    "我已经整理好的作业内容如下：",
+    String(draft?.draftText || "").trim(),
+    "如果可以补交，麻烦老师开放一下补交入口或告知后续处理方式，谢谢老师。",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function homeworkStatusText(item) {
@@ -719,6 +924,7 @@ export class BanxuebangClient {
     this.store = store;
     this.draftStore = draftStore;
     this.submittingDraftIds = new Set();
+    this.sendingDraftMessageIds = new Set();
   }
 
   async getSession() {
@@ -781,6 +987,7 @@ export class BanxuebangClient {
         classId: subject.classId || null,
         name: subject.cnName || subject.name || null,
         color: subject.color || null,
+        teacherList: toArray(subject.teacherList),
         unSubmitCount: subject.unSubmitCount ?? null,
       })),
     };
@@ -2131,6 +2338,9 @@ export class BanxuebangClient {
     warnings = [],
     missingInfo = [],
     needsUserInput = false,
+    preferredTarget = "task",
+    intendedTargets = ["task"],
+    teacherMessageHint = "",
   } = {}) {
     const normalizedDraftText = String(draftText || "").trim();
     if (!normalizedDraftText) {
@@ -2141,6 +2351,7 @@ export class BanxuebangClient {
     const sessionSummary = this.summarizeSession(session);
     const now = new Date().toISOString();
     const draftId = `draft_${Date.now()}_${randomUUID().slice(0, 8)}`;
+    const deliveryTarget = normalizeDeliveryTarget(preferredTarget, "task");
     const draft = {
       draftId,
       status: "pending_review",
@@ -2157,6 +2368,11 @@ export class BanxuebangClient {
       warnings: Array.isArray(warnings) ? warnings : [],
       missingInfo: Array.isArray(missingInfo) ? missingInfo : [],
       needsUserInput: Boolean(needsUserInput),
+      preferredTarget: deliveryTarget,
+      intendedTargets: normalizeDeliveryTargets(intendedTargets, [deliveryTarget]),
+      teacherMessageHint: String(teacherMessageHint || "").trim(),
+      deliveryTarget,
+      deliveryHistory: [],
       sourceSession: sessionSummary,
     };
 
@@ -2195,6 +2411,9 @@ export class BanxuebangClient {
         updatedAt: draft.updatedAt,
         reviewedAt: draft.reviewedAt,
         submittedAt: draft.submittedAt,
+        sentToTeacherAt: draft.sentToTeacherAt,
+        deliveryTarget: draft.deliveryTarget || draft.preferredTarget || "task",
+        deliveryHistoryCount: Array.isArray(draft.deliveryHistory) ? draft.deliveryHistory.length : 0,
         needsUserInput: Boolean(draft.needsUserInput),
         missingInfoCount: Array.isArray(draft.missingInfo) ? draft.missingInfo.length : 0,
         warningCount: Array.isArray(draft.warnings) ? draft.warnings.length : 0,
@@ -2221,8 +2440,8 @@ export class BanxuebangClient {
     }
 
     const updated = await this.draftStore.update(draftId, async (draft) => {
-      if (draft.status === "submitted") {
-        throw new Error("已提交的草稿不能再修改。请新建草稿后重新审核。");
+      if (isFinalDraftStatus(draft.status)) {
+        throw new Error("已交付的草稿不能再修改。请新建草稿后重新审核。");
       }
 
       return {
@@ -2250,8 +2469,8 @@ export class BanxuebangClient {
 
   async approveSubmissionDraft(draftId, { reviewNote = "" } = {}) {
     const updated = await this.draftStore.update(draftId, async (draft) => {
-      if (draft.status === "submitted") {
-        throw new Error("已提交的草稿不能再次审核。请新建草稿后重新审核。");
+      if (isFinalDraftStatus(draft.status)) {
+        throw new Error("已交付的草稿不能再次审核。请新建草稿后重新审核。");
       }
 
       return {
@@ -2278,8 +2497,8 @@ export class BanxuebangClient {
 
   async rejectSubmissionDraft(draftId, { reviewNote = "" } = {}) {
     const updated = await this.draftStore.update(draftId, async (draft) => {
-      if (draft.status === "submitted") {
-        throw new Error("已提交的草稿不能再次审核。请新建草稿后重新审核。");
+      if (isFinalDraftStatus(draft.status)) {
+        throw new Error("已交付的草稿不能再次审核。请新建草稿后重新审核。");
       }
 
       return {
@@ -2442,6 +2661,7 @@ export class BanxuebangClient {
         updated = await this.draftStore.update(draftId, async (draft) => ({
           ...draft,
           status: "submitted",
+          deliveryTarget: "task",
           submittedAt,
           updatedAt: submittedAt,
           submission: {
@@ -2452,6 +2672,19 @@ export class BanxuebangClient {
             submittedAt,
             result: submission.result ?? null,
           },
+          deliveryHistory: [
+            ...toArray(draft.deliveryHistory),
+            {
+              type: "task",
+              status: "success",
+              taskId: preview.taskId,
+              mode: preview.mode,
+              modeLabel: preview.modeLabel,
+              submissionId: submission.submissionId || preview.submissionId || null,
+              submittedAt,
+              result: submission.result ?? null,
+            },
+          ],
         }));
         if (!updated) {
           localRecordError = "本地草稿记录不存在，无法标记为已提交。";
@@ -2471,6 +2704,216 @@ export class BanxuebangClient {
       };
     } finally {
       this.submittingDraftIds.delete(normalizedDraftId);
+    }
+  }
+
+  async prepareDraftPrivateMessage(draftId, { contact } = {}) {
+    const draft = await this.draftStore.get(draftId);
+    if (!draft) {
+      throw new Error(`Draft ${draftId} was not found.`);
+    }
+    if (draft.status !== "approved") {
+      throw new Error("只有已通过的草稿可以准备私信老师。");
+    }
+    if (!draft.taskId) {
+      throw new Error("草稿没有对应的 task ID，无法生成私信预览。");
+    }
+    if (!String(draft.draftText || "").trim()) {
+      throw new Error("草稿正文为空，无法生成私信预览。");
+    }
+
+    let detail = null;
+    let detailWarning = null;
+    try {
+      detail = await this.getTaskDetail(draft.taskId, { includeOtherSubmissions: false });
+    } catch (error) {
+      detailWarning = `无法读取 task 详情，私信预览将使用本地草稿信息：${error.message}`;
+    }
+
+    const contactsResult = await this.listPrivateMessageContacts();
+    const signals = buildDraftPrivateMessageSignals(draft, detail);
+    const contacts = toArray(contactsResult.contacts)
+      .map((item) => {
+        const contactSummary = item?.peerName || item?.peerId ? item : summarizePrivateContact(item.raw || item);
+        return {
+          ...contactSummary,
+          contactKey: draftPrivateMessageContactKey(contactSummary),
+          ...scoreDraftPrivateContact(contactSummary, signals),
+        };
+      })
+      .sort((left, right) => {
+        if (right.matchScore !== left.matchScore) {
+          return right.matchScore - left.matchScore;
+        }
+        return String(left.peerName || "").localeCompare(String(right.peerName || ""), "zh-Hans-CN");
+      });
+
+    let selectedContact = null;
+    if (contact) {
+      const requestedKey = draftPrivateMessageContactKey(contact);
+      selectedContact = contacts.find((item) => item.contactKey === requestedKey) || null;
+      if (!selectedContact) {
+        throw new Error("所选私信联系人不在当前伴学邦联系人列表中。");
+      }
+    }
+
+    const messageText = buildDraftTeacherMessageText({ draft, detail });
+    const chunks = splitPrivateMessageText(messageText);
+    const preview = {
+      draftId: draft.draftId,
+      taskId: normalizeId(detail?.taskId || draft.taskId),
+      taskTitle: detail?.taskSummary?.activityName || draft.taskTitle || null,
+      subjectName: detail?.taskSummary?.courseName || draft.subjectName || null,
+      destination: "伴学邦私信老师",
+      deliveryTarget: "teacher_private_message",
+      selectedContact,
+      contacts,
+      recommendedContactCount: contacts.filter((item) => item.recommended).length,
+      signals,
+      messageText,
+      chunks,
+      chunkCount: chunks.length,
+      canSend: Boolean(selectedContact && chunks.length),
+      reason: selectedContact
+        ? chunks.length
+          ? null
+          : "私信正文为空，无法发送。"
+        : "请选择一个已有私信联系人后再确认发送。",
+      note: detailWarning,
+    };
+
+    return {
+      ...preview,
+      confirmationToken: draftPrivateMessageConfirmationToken(preview),
+    };
+  }
+
+  async sendApprovedDraftPrivateMessage(draftId, { contact, confirmationToken } = {}) {
+    if (!confirmationToken) {
+      throw new Error("缺少私信确认令牌，请返回草稿并重新核对私信内容。");
+    }
+    if (!contact) {
+      throw new Error("缺少私信联系人。");
+    }
+
+    const normalizedDraftId = String(draftId || "");
+    if (this.sendingDraftMessageIds.has(normalizedDraftId)) {
+      throw new Error("这个草稿正在发送私信，请等待当前发送完成。");
+    }
+    this.sendingDraftMessageIds.add(normalizedDraftId);
+
+    try {
+      const preview = await this.prepareDraftPrivateMessage(draftId, { contact });
+      if (!preview.canSend) {
+        throw new Error(preview.reason || "当前草稿无法私信老师。");
+      }
+      if (preview.confirmationToken !== confirmationToken) {
+        throw new Error("草稿正文、task 或私信联系人在确认后发生了变化，请返回草稿并重新核对私信内容。");
+      }
+
+      const sentMessages = [];
+      let failed = null;
+      for (const chunk of preview.chunks) {
+        try {
+          const result = await this.sendPrivateMessageText(preview.selectedContact, chunk.text);
+          sentMessages.push({
+            index: chunk.index,
+            length: chunk.length,
+            result: result.message || result,
+          });
+        } catch (error) {
+          failed = {
+            index: chunk.index,
+            error: error.message,
+          };
+          break;
+        }
+      }
+
+      if (failed) {
+        const failedAt = new Date().toISOString();
+        let updated = null;
+        try {
+          updated = await this.draftStore.update(draftId, async (draft) => ({
+            ...draft,
+            status: "approved",
+            deliveryTarget: "teacher_private_message",
+            updatedAt: failedAt,
+            deliveryHistory: [
+              ...toArray(draft.deliveryHistory),
+              {
+                type: "teacher_private_message",
+                status: "failed",
+                contact: preview.selectedContact,
+                chunkCount: preview.chunkCount,
+                sentCount: sentMessages.length,
+                failedChunkIndex: failed.index,
+                failedAt,
+                error: failed.error,
+                messages: sentMessages,
+              },
+            ],
+          }));
+        } catch {
+          updated = null;
+        }
+
+        return {
+          sent: false,
+          partial: sentMessages.length > 0,
+          sentCount: sentMessages.length,
+          failedChunkIndex: failed.index,
+          error: failed.error,
+          preview,
+          draft: updated,
+        };
+      }
+
+      const sentAt = new Date().toISOString();
+      let updated = null;
+      let localRecordError = null;
+      try {
+        updated = await this.draftStore.update(draftId, async (draft) => ({
+          ...draft,
+          status: "sent_to_teacher",
+          deliveryTarget: "teacher_private_message",
+          sentToTeacherAt: sentAt,
+          updatedAt: sentAt,
+          teacherPrivateMessage: {
+            contact: preview.selectedContact,
+            chunkCount: preview.chunkCount,
+            sentAt,
+          },
+          deliveryHistory: [
+            ...toArray(draft.deliveryHistory),
+            {
+              type: "teacher_private_message",
+              status: "success",
+              contact: preview.selectedContact,
+              chunkCount: preview.chunkCount,
+              sentAt,
+              messages: sentMessages,
+            },
+          ],
+        }));
+        if (!updated) {
+          localRecordError = "本地草稿记录不存在，无法标记为已私信老师。";
+        }
+      } catch (error) {
+        localRecordError = `无法更新本地草稿记录：${error.message}`;
+      }
+
+      return {
+        sent: true,
+        sentAt,
+        chunkCount: preview.chunkCount,
+        localRecordUpdated: Boolean(updated),
+        localRecordError,
+        preview,
+        draft: updated,
+      };
+    } finally {
+      this.sendingDraftMessageIds.delete(normalizedDraftId);
     }
   }
 

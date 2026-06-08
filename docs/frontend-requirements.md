@@ -108,6 +108,7 @@ Default Agent safety:
 - Need web/current information: call `web_search`, then `read_web_page` for selected results.
 - Need workspace files: call `list_workspace_files`, then `read_workspace_file` or `rename_workspace_file`.
 - Homework drafts must be saved with `draft_task_submission` only after collecting context.
+- If a task appears expired and may not allow supplement, the Agent may save target hints for private-message fallback, but still must only save a draft for review.
 - Draft body text in `draft_text` must be plain text, not Markdown.
 - The Agent must not upload, submit, delete, or send content.
 
@@ -151,14 +152,15 @@ Detail panel:
 
 Purpose:
 
-- Let users create, review, approve, reject, delete, and explicitly submit local homework drafts.
+- Let users create, review, approve, reject, delete, and explicitly deliver local homework drafts to either a homework Task or a teacher private message.
 
 Draft states:
 
 - `pending_review`: waiting for user review.
 - `approved`: approved and eligible for explicit submission.
 - `rejected`: rejected locally.
-- `submitted`: successfully submitted to Banxuebang and read-only locally.
+- `submitted`: successfully submitted to Banxuebang Task and read-only locally.
+- `sent_to_teacher`: successfully sent to a teacher private-message contact and read-only locally.
 
 Required actions:
 
@@ -168,6 +170,7 @@ Required actions:
 - List pending drafts: `list_submission_drafts({ status: "pending_review" })`
 - List approved drafts: `list_submission_drafts({ status: "approved" })`
 - List submitted drafts: `list_submission_drafts({ status: "submitted" })`
+- List teacher-message drafts: `list_submission_drafts({ status: "sent_to_teacher" })`
 - List all drafts: `list_submission_drafts({ status: "all" })`
 - Open draft: `get_submission_draft({ draft_id })`
 - Save edited draft text: `update_submission_draft({ draft_id, draft_text })`
@@ -176,6 +179,8 @@ Required actions:
 - Delete local draft: `delete_submission_draft({ draft_id })`
 - Prepare submission preview: `prepare_draft_submission({ draft_id })`
 - Submit after confirmation: `submit_approved_draft({ draft_id, confirmation_token })`
+- Prepare teacher private-message preview: `prepare_draft_private_message({ draft_id, contact? })`
+- Send after confirmation: `send_approved_draft_private_message({ draft_id, contact, confirmation_token })`
 
 Manual draft creation:
 
@@ -189,16 +194,22 @@ Manual draft creation:
 
 Review and editing:
 
-- Draft detail shows task, course, status, summary, editable draft body, warnings, missing information, evidence, review history, and submission history.
+- Draft detail shows task, course, status, summary, editable draft body, warnings, missing information, evidence, review history, and delivery history.
 - Saving edits updates only the local draft JSON.
 - Saving must not upload or submit anything.
 - Editing a rejected draft moves it back to `pending_review`.
-- Submitted drafts are read-only. A later resubmission should use a new draft and a new review.
+- Delivered drafts (`submitted` or `sent_to_teacher`) are read-only. A later resubmission or re-send should use a new draft and a new review.
+- Delete uses an in-app two-step confirmation, not native `confirm()`.
 
-Submission flow:
+Delivery target flow:
 
-- Only `approved` drafts may show `提交到伴学邦`.
-- If there are unsaved edits, block submission preparation and ask the user to save first.
+- Only `approved` drafts may show delivery controls.
+- Show a target selector with `提交到作业 Task` and `私信老师`.
+- Default target is `提交到作业 Task`, unless the draft's preferred target is `teacher_private_message`.
+- If there are unsaved edits, block delivery preparation and ask the user to save first.
+
+Task submission flow:
+
 - On submit preparation, call `prepare_draft_submission`.
 - Show a confirmation screen with:
   - Target course.
@@ -214,12 +225,30 @@ Submission flow:
 - Prevent duplicate submissions while a draft is already submitting.
 - Use the task's own class ID, not the current global subject's class ID.
 - If an existing submission is detected but no existing submission ID can be determined, block automatic submission to avoid duplicate records.
-- If Banxuebang rejects the operation, keep the local draft `approved` and show the error.
+- If Banxuebang rejects the operation, keep the local draft `approved`, show the error, and show a `改用私信老师` entry.
 - Mark the local draft `submitted` only after Banxuebang reports success.
+
+Teacher private-message flow:
+
+- First call `prepare_draft_private_message({ draft_id })` to get contact suggestions, full preview text, chunks, and a confirmation token.
+- Contact suggestions are sorted by teacher name, task creator, course name, and class/course matches.
+- Matching is only a suggestion; do not send automatically.
+- If no contact is selected, show the full contact dropdown and keep send disabled.
+- Selecting a contact calls `prepare_draft_private_message({ draft_id, contact })` again so the confirmation token covers the chosen contact.
+- Preview must show contact, course, task title, task ID, and every chunk labeled `第 1/N 条`.
+- Default preview text includes course, homework title, Task ID, a request asking the teacher to open/handle supplement, and the full draft body.
+- The confirmation screen does not edit the body; users return to the draft editor to change text.
+- Require a second explicit click on `确认并分条发送`.
+- Pass the `confirmationToken` returned by the contact-specific preview.
+- Reject send if the draft, task, contact, or chunk text changed after the preview.
+- Prevent duplicate private-message sends while a draft is already sending.
+- Send chunks sequentially through `sendPrivateMessageText`.
+- If chunk N fails, stop subsequent chunks, keep the local draft `approved`, and show sent count plus the error.
+- Mark the local draft `sent_to_teacher` only after all chunks succeed.
 
 Agent boundary:
 
-- `prepare_draft_submission`, `submit_approved_draft`, `upload_submission_file`, and `submit_task_result` must not be exposed to the autonomous Agent tool set.
+- `prepare_draft_submission`, `submit_approved_draft`, `prepare_draft_private_message`, `send_approved_draft_private_message`, `upload_submission_file`, `send_private_message_text`, and `submit_task_result` must not be exposed to the autonomous Agent tool set.
 
 ## Workspace Page
 
@@ -337,7 +366,7 @@ Software update card:
 ## Default System Prompt
 
 ```text
-你是伴学邦桌面助手。需要真实数据时必须调用工具，不要猜测。需要联网资料时先调用 web_search；需要阅读某个搜索结果时再调用 read_web_page。用户提到工作区文件时，先调用 list_workspace_files 定位文件，再按需调用 read_workspace_file；需要整理文件名时可调用 rename_workspace_file。不要上传、提交或删除任何内容。处理作业草稿时先调用 collect_task_submission_context；信息不足就说明缺什么；信息足够才调用 draft_task_submission 保存草稿等待用户审核。给出或保存草稿正文时，draft_text 必须是纯文本正文，不要使用 Markdown 标题、列表、表格、代码块、加粗、引用或其他 Markdown 格式；如果需要给用户说明保存状态，可以在助手回复里用 Markdown，但草稿正文内容本身必须保持纯文本。
+你是伴学邦桌面助手。需要真实数据时必须调用工具，不要猜测。需要联网资料时先调用 web_search；需要阅读某个搜索结果时再调用 read_web_page。用户提到工作区文件时，先调用 list_workspace_files 定位文件，再按需调用 read_workspace_file；需要整理文件名时可调用 rename_workspace_file。不要上传、提交、私信或删除任何内容。处理作业草稿时先调用 collect_task_submission_context；信息不足就说明缺什么；信息足够才调用 draft_task_submission 保存草稿等待用户审核。如果作业已过期且可能无法补交，可以在草稿提示字段中建议用户私信老师，但只能保存草稿等待用户审核。给出或保存草稿正文时，draft_text 必须是纯文本正文，不要使用 Markdown 标题、列表、表格、代码块、加粗、引用或其他 Markdown 格式；如果需要给用户说明保存状态，可以在助手回复里用 Markdown，但草稿正文内容本身必须保持纯文本。
 ```
 
 ## Safety Rules
