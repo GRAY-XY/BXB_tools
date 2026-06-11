@@ -63,7 +63,7 @@ jobs:
           chmod +x ./UI/banxuebang_flutter/packaging/macos/build_macos_pkg.sh
           ./UI/banxuebang_flutter/packaging/macos/build_macos_pkg.sh
 
-      - name: Build DMG with hdiutil
+      - name: Build main DMG
         id: dmg
         env:
           VERSION: ${{ steps.ver.outputs.version }}
@@ -73,27 +73,61 @@ jobs:
           DMG_PATH="dist/${DMG_NAME}"
           mkdir -p dist
 
-          # Create a temporary writable image
           hdiutil create \
             -volname "BXB Student" \
             -srcfolder "$APP_PATH" \
             -ov -format UDRW \
             "dist/tmp_bxb.dmg"
 
-          # Convert to compressed read-only DMG
           hdiutil convert "dist/tmp_bxb.dmg" \
             -format UDZO \
             -o "$DMG_PATH"
 
           rm -f "dist/tmp_bxb.dmg"
 
-          # Compute SHA256 for Homebrew cask
           SHA256="$(shasum -a 256 "$DMG_PATH" | awk '{print $1}')"
           echo "dmg_path=$DMG_PATH" >> "$GITHUB_OUTPUT"
           echo "dmg_name=$DMG_NAME" >> "$GITHUB_OUTPUT"
           echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "app_path=$APP_PATH" >> "$GITHUB_OUTPUT"
           echo "DMG: $DMG_PATH  SHA256: $SHA256"
+
+      - name: Build installer .app and DMG
+        id: installer
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: |
+          DMG_URL="https://github.com/GRAY-XY/BXB_tools/releases/download/${TAG}/BXB_Student_macOS_v${VERSION}.dmg"
+          INSTALLER_OUT="dist/installer"
+          INSTALLER_NAME="安装 BXB Student v${VERSION}"
+          INSTALLER_DMG_NAME="BXB_Student_macOS_Installer_v${VERSION}.dmg"
+          INSTALLER_DMG_PATH="dist/${INSTALLER_DMG_NAME}"
+
+          chmod +x ./UI/banxuebang_flutter/packaging/macos/build_installer_app.sh
+          ./UI/banxuebang_flutter/packaging/macos/build_installer_app.sh \
+            "$VERSION" \
+            "$DMG_URL" \
+            "$INSTALLER_OUT"
+
+          # 把安装器 .app 打成独立 DMG
+          INSTALLER_APP="$INSTALLER_OUT/安装 BXB Student.app"
+          hdiutil create \
+            -volname "$INSTALLER_NAME" \
+            -srcfolder "$INSTALLER_APP" \
+            -ov -format UDRW \
+            "dist/tmp_installer.dmg"
+
+          hdiutil convert "dist/tmp_installer.dmg" \
+            -format UDZO \
+            -o "$INSTALLER_DMG_PATH"
+
+          rm -f "dist/tmp_installer.dmg"
+
+          echo "installer_dmg_path=$INSTALLER_DMG_PATH" >> "$GITHUB_OUTPUT"
+          echo "installer_dmg_name=$INSTALLER_DMG_NAME" >> "$GITHUB_OUTPUT"
+          echo "Installer DMG: $INSTALLER_DMG_PATH"
 
       - name: Resolve PKG path
         id: pkg
@@ -101,11 +135,13 @@ jobs:
           pkg_path="$(ls -1 dist/banxuebang-flutter-release-*/BXB_Student_macOS_v*.pkg 2>/dev/null | head -n1 || echo '')"
           echo "pkg_path=$pkg_path" >> "$GITHUB_OUTPUT"
 
-      - name: Upload DMG workflow artifact
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: BXB_Student_macOS_DMG
-          path: ${{ steps.dmg.outputs.dmg_path }}
+          name: BXB_Student_macOS_Artifacts
+          path: |
+            ${{ steps.dmg.outputs.dmg_path }}
+            ${{ steps.installer.outputs.installer_dmg_path }}
 
       - name: Ensure GitHub release exists
         env:
@@ -120,20 +156,48 @@ jobs:
               --prerelease
           fi
 
-      - name: Attach DMG to release
+      - name: Attach files to release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
           gh release upload "$TAG" "${{ steps.dmg.outputs.dmg_path }}" --clobber
+          gh release upload "$TAG" "${{ steps.installer.outputs.installer_dmg_path }}" --clobber
+          if [ -n "${{ steps.pkg.outputs.pkg_path }}" ]; then
+            gh release upload "$TAG" "${{ steps.pkg.outputs.pkg_path }}" --clobber
+          fi
 
-      - name: Attach PKG to release
-        if: steps.pkg.outputs.pkg_path != ''
+      - name: Update release notes
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.release_tag || github.ref_name }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          INSTALLER_DMG_NAME: ${{ steps.installer.outputs.installer_dmg_name }}
+          DMG_NAME: ${{ steps.dmg.outputs.dmg_name }}
         run: |
-          gh release upload "$TAG" "${{ steps.pkg.outputs.pkg_path }}" --clobber
+          NOTES="## BXB Student v${VERSION}
+
+          ### 📦 安装方法（推荐，双击即可）
+
+          1. 下载 \`${INSTALLER_DMG_NAME}\`
+          2. 打开 DMG，双击「安装 BXB Student」
+          3. 按提示完成安装，全程无需终端
+
+          ### 🔧 高级用户 / 手动安装
+
+          下载 \`${DMG_NAME}\`，拖入「应用程序」文件夹，然后运行：
+          \`\`\`bash
+          xattr -dr com.apple.quarantine /Applications/BXB\ Student.app
+          \`\`\`
+
+          ### 🍺 Homebrew（开发者）
+
+          \`\`\`bash
+          brew tap igpig1226/tap
+          brew install --cask bxb-student
+          \`\`\`"
+
+          gh release edit "$TAG" --notes "$NOTES"
 
       - name: Update Homebrew Cask
         env:
@@ -169,7 +233,6 @@ jobs:
           end
           "
 
-          # Try to push to homebrew-tap repo if token available
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git config --global user.name "github-actions[bot]"
 
@@ -183,8 +246,5 @@ jobs:
             git diff --cached --quiet || git commit -m "chore: update bxb-student to v${VERSION}"
             git push
             cd ..
-            echo "Cask updated in homebrew-tap repo."
-          else
-            echo "homebrew-tap repo not found, printing cask for manual setup:"
-            echo "$CASK_CONTENT"
+            echo "Cask updated."
           fi
