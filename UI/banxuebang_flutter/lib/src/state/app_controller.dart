@@ -33,6 +33,11 @@ class AppController extends ChangeNotifier {
   final TextEditingController submitRemarkController = TextEditingController();
   final Set<String> _locallyReadNoticeIds = <String>{};
   
+  // 检查更新 / 卸载状态
+  bool checkingUpdates = false;
+  bool uninstalling = false;
+  JsonMap? updateInfo;
+
   // 私信相关状态
   List<PrivateContact> privateContacts = <PrivateContact>[];
   PrivateContact? selectedPrivateContact;
@@ -753,6 +758,38 @@ class AppController extends ChangeNotifier {
     return error is StateError ? error.message : error.toString();
   }
   
+  Future<void> checkForUpdates() async {
+    checkingUpdates = true;
+    notifyListeners();
+    try {
+      updateInfo = await _bridge.checkForUpdates();
+    } catch (error) {
+      _setBanner(_errorText(error), isError: true);
+    } finally {
+      checkingUpdates = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> openReleaseUrl(String url) async {
+    await _bridge.openTarget(url);
+  }
+
+  Future<bool> uninstallApp() async {
+    uninstalling = true;
+    notifyListeners();
+    try {
+      await _bridge.uninstallApp();
+      return true;
+    } catch (error) {
+      _setBanner(_errorText(error), isError: true);
+      return false;
+    } finally {
+      uninstalling = false;
+      notifyListeners();
+    }
+  }
+
   Future<void> ensurePrivateMessagesLoaded() async {
     if (_privateMessagesRequested && privateContacts.isNotEmpty) {
       return;

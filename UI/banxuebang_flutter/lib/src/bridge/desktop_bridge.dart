@@ -210,6 +210,14 @@ class DesktopBridge {
     );
   }
 
+  Future<JsonMap> checkForUpdates() async {
+    return _run('check-updates');
+  }
+
+  Future<JsonMap> uninstallApp() async {
+    return _run('uninstall');
+  }
+
   Future<void> shutdown() async {
     await _daemon?.shutdown();
     _daemon = null;

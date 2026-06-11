@@ -2,7 +2,6 @@ import { mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promi
 import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { chromium } from "playwright";
 import { DraftStore } from "./draft-store.js";
 
 const BASE_URL = "https://student.banxuebang.com";
@@ -284,6 +283,7 @@ async function launchBrowser(headless) {
     } else {
       launchOptions.channel = "chromium";
     }
+    const { chromium } = await import("playwright");
     return await chromium.launch(launchOptions);
   } catch (error) {
     throw new Error(
@@ -662,10 +662,17 @@ function parseTextBuffer(buffer, extension) {
   return text;
 }
 
+const CONTEXT_REFRESH_TTL_MS = 45_000;
+
 export class BanxuebangClient {
   constructor(store, draftStore = new DraftStore()) {
     this.store = store;
     this.draftStore = draftStore;
+    this._contextRefreshExpiresAt = 0;
+  }
+
+  _invalidateContextCache() {
+    this._contextRefreshExpiresAt = 0;
   }
 
   async getSession() {
@@ -880,7 +887,8 @@ export class BanxuebangClient {
 
     const session = this.buildSessionFromStorage(storage, source);
     await this.saveSession(session);
-    await this.refreshContext(session);
+    this._invalidateContextCache();
+    await this.refreshContext(session, { force: true });
     return session;
   }
 
@@ -1024,11 +1032,13 @@ export class BanxuebangClient {
       typeof storageJson === "string" ? JSON.parse(storageJson) : ensureObject(storageJson);
     const session = this.buildSessionFromStorage(storage, "manual-storage-import");
     await this.saveSession(session);
-    await this.refreshContext(session);
+    this._invalidateContextCache();
+    await this.refreshContext(session, { force: true });
     return this.summarizeSession(session);
   }
 
   async clearSession() {
+    this._invalidateContextCache();
     await this.store.clear();
     return {
       cleared: true,
@@ -1139,8 +1149,13 @@ export class BanxuebangClient {
     return payload;
   }
 
-  async refreshContext(existingSession = null) {
+  async refreshContext(existingSession = null, { force = false } = {}) {
     const session = existingSession || (await this.requireSession());
+    const now = Date.now();
+    if (!force && this._contextRefreshExpiresAt > now) {
+      return this.summarizeSession(session);
+    }
+
     const userInfo = ensureObject(session.context?.userInfo);
 
     if (!userInfo.id) {
@@ -1215,13 +1230,14 @@ export class BanxuebangClient {
     };
     session.storage = buildStorageFromContext(session.storage, session.context, session.auth);
     await this.saveSession(session);
+    this._contextRefreshExpiresAt = now + CONTEXT_REFRESH_TTL_MS;
 
     return this.summarizeSession(session);
   }
 
   async setCurrentTerm(termId) {
+    this._invalidateContextCache();
     const session = await this.requireSession();
-    await this.refreshContext(session);
 
     const target = findById(session.context.termList || [], termId);
     if (!target) {
@@ -1232,12 +1248,12 @@ export class BanxuebangClient {
     session.storage.currTermId = String(target.id);
     await this.saveSession(session);
 
-    return this.refreshContext(session);
+    return this.refreshContext(session, { force: true });
   }
 
   async setCurrentTermByName(termName) {
+    this._invalidateContextCache();
     const session = await this.requireSession();
-    await this.refreshContext(session);
 
     const target = findByName(session.context.termList || [], termName, [
       (term) => term.name,
@@ -1251,8 +1267,9 @@ export class BanxuebangClient {
   }
 
   async setCurrentSubject(subjectId, classId = null) {
+    this._invalidateContextCache();
     const session = await this.requireSession();
-    await this.refreshContext(session);
+    await this.refreshContext(session, { force: true });
 
     if (normalizeId(subjectId) === ALL_SUBJECT_ID || isAllSubjectName(subjectId)) {
       const target = buildAllSubject();
@@ -1316,9 +1333,11 @@ export class BanxuebangClient {
     return this.setCurrentSubject(target.id, target.classId);
   }
 
-  async listCourses() {
+  async listCourses({ skipContextRefresh = false } = {}) {
     const session = await this.requireSession();
-    await this.refreshContext(session);
+    if (!skipContextRefresh) {
+      await this.refreshContext(session);
+    }
 
     return {
       context: this.summarizeSession(session),
@@ -1338,9 +1357,11 @@ export class BanxuebangClient {
     };
   }
 
-  async listTerms() {
+  async listTerms({ skipContextRefresh = false } = {}) {
     const session = await this.requireSession();
-    await this.refreshContext(session);
+    if (!skipContextRefresh) {
+      await this.refreshContext(session);
+    }
 
     return {
       context: this.summarizeSession(session),
@@ -1386,7 +1407,11 @@ export class BanxuebangClient {
     return -1;
   }
 
-  async queryHomeworkForSubject(session, subject, { listType = "all", page = 1, size = 10 } = {}) {
+  async queryHomeworkForSubject(
+    session,
+    subject,
+    { listType = "all", page = 1, size = 10, includeUnsubmitted = true } = {},
+  ) {
     const { userInfo, currTermId } = session.context;
     const query = {
       page,
@@ -1405,7 +1430,7 @@ export class BanxuebangClient {
     });
 
     let unsubmittedHomeworkList = [];
-    if (normalizedListType === -1) {
+    if (normalizedListType === -1 && includeUnsubmitted) {
       const unsubmittedResponse = safeBusinessResult(
         await this.request(
           session,
@@ -1459,9 +1484,11 @@ export class BanxuebangClient {
     };
   }
 
-  async listHomework({ listType = "all", page = 1, size = 10 } = {}) {
+  async listHomework({ listType = "all", page = 1, size = 10, skipContextRefresh = false } = {}) {
     const session = await this.requireSession();
-    await this.refreshContext(session);
+    if (!skipContextRefresh) {
+      await this.refreshContext(session);
+    }
 
     const { userInfo, curSubject, currTermId, subjectList } = session.context;
     if (!userInfo?.id || !currTermId) {
@@ -1532,9 +1559,11 @@ export class BanxuebangClient {
     return this.listHomework(homeworkOptions);
   }
 
-  async getAchievementOverview({ transferClassId = null } = {}) {
+  async getAchievementOverview({ transferClassId = null, skipContextRefresh = false } = {}) {
     const session = await this.requireSession();
-    await this.refreshContext(session);
+    if (!skipContextRefresh) {
+      await this.refreshContext(session);
+    }
 
     const { userInfo, curClass, curSubject, currTermId } = session.context;
     if (!userInfo?.id || !curClass?.campusId || !curSubject?.id || !curSubject?.classId || !currTermId) {
@@ -1630,8 +1659,8 @@ export class BanxuebangClient {
     };
   }
 
-  async getCurrentSubjectGpa() {
-    const overview = await this.getAchievementOverview();
+  async getCurrentSubjectGpa({ skipContextRefresh = false } = {}) {
+    const overview = await this.getAchievementOverview({ skipContextRefresh });
 
     return {
       context: overview.context,
@@ -1643,9 +1672,11 @@ export class BanxuebangClient {
     };
   }
 
-  async getSchedule() {
+  async getSchedule({ skipContextRefresh = false } = {}) {
     const session = await this.requireSession();
-    await this.refreshContext(session);
+    if (!skipContextRefresh) {
+      await this.refreshContext(session);
+    }
 
     const { userInfo, curClass, currTermId } = session.context;
     const campusId = ensureObject(curClass).campusId;

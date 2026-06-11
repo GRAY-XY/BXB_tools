@@ -258,7 +258,8 @@ class _TaskPanel extends StatelessWidget {
                 itemBuilder: (BuildContext context, int index) {
                   final task = tasks[index];
                   final selected = controller.selectedTaskId == task.id;
-                  final accent = task.scoreLevel.toUpperCase().contains('E')
+                  final accent = (task.isEnd &&
+                          task.scoreLevel.toUpperCase().contains('E'))
                       ? const Color(0xFFBE123C)
                       : colorFromHex(
                           task.scoreTypeColor,
@@ -348,10 +349,12 @@ class _TaskPanel extends StatelessWidget {
                               children: <Widget>[
                                 if (task.scoreTypeName.isNotEmpty)
                                   Chip(label: Text(task.scoreTypeName)),
-                                if (task.scoreLevel.isNotEmpty)
+                                if (task.scoreLevel.isNotEmpty && task.isEnd)
                                   Chip(label: Text('等级 ${task.scoreLevel}')),
                                 if (task.academicScore != null)
                                   Chip(label: Text('分数 ${task.academicScore}')),
+                                if (!task.isEnd)
+                                  _submitStatusChip(task),
                               ],
                             ),
                           ],
@@ -435,7 +438,8 @@ class _DetailPanel extends StatelessWidget {
                         Chip(label: Text(taskSummary!.courseName)),
                       if ((taskSummary?.scoreTypeName ?? '').isNotEmpty)
                         Chip(label: Text(taskSummary!.scoreTypeName)),
-                      if ((taskSummary?.scoreLevel ?? '').isNotEmpty)
+                      if ((taskSummary?.scoreLevel ?? '').isNotEmpty &&
+                          (taskSummary?.isEnd ?? false))
                         Chip(label: Text('等级 ${taskSummary!.scoreLevel}')),
                       if (taskSummary != null &&
                           controller.classSubmitPercentLabel(taskSummary) !=
@@ -890,4 +894,47 @@ class _HighScoreSubmissionCardState extends State<_HighScoreSubmissionCard> {
       ),
     );
   }
+}
+
+Widget _submitStatusChip(HomeworkTask task) {
+  final correction = task.raw['correction'];
+  final needsCorrection =
+      correction != null && correction != 0 && correction != false;
+
+  // 需订正
+  if (needsCorrection) {
+    return Chip(
+      avatar: const Icon(CupertinoIcons.exclamationmark_circle,
+          size: 14, color: Color(0xFFB45309)),
+      label: const Text('需订正',
+          style: TextStyle(
+              color: Color(0xFFB45309), fontWeight: FontWeight.w700)),
+      backgroundColor: const Color(0xFFFEF3C7),
+      side: const BorderSide(color: Color(0xFFFCD34D)),
+    );
+  }
+
+  // 已提交
+  if (task.isParticipate == 1) {
+    return Chip(
+      avatar: const Icon(CupertinoIcons.checkmark_circle,
+          size: 14, color: Color(0xFF059669)),
+      label: const Text('已提交',
+          style: TextStyle(
+              color: Color(0xFF059669), fontWeight: FontWeight.w700)),
+      backgroundColor: const Color(0xFFD1FAE5),
+      side: const BorderSide(color: Color(0xFF6EE7B7)),
+    );
+  }
+
+  // 未提交（isParticipate == 0 或 null）
+  return Chip(
+    avatar: const Icon(CupertinoIcons.clock,
+        size: 14, color: Color(0xFFDC2626)),
+    label: const Text('未提交',
+        style: TextStyle(
+            color: Color(0xFFDC2626), fontWeight: FontWeight.w700)),
+    backgroundColor: const Color(0xFFFEE2E2),
+    side: const BorderSide(color: Color(0xFFFCA5A5)),
+  );
 }

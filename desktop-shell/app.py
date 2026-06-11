@@ -230,6 +230,12 @@ def evaluate_policy(summary: dict | None, policy: dict | None = None) -> dict:
         access["reason"] = f"当前版本过旧，请升级到 v{minimum_supported_version} 或更高版本。"
         return access
 
+    # 全局锁：无论谁登录都锁死
+    if bool(policy.get("globalLock", False)):
+        access["locked"] = True
+        access["reason"] = str(policy.get("lockMessage") or "服务当前已被管理员暂停，请稍后再试。")
+        return access
+
     if not summary or not summary.get("ready"):
         return access
 
@@ -626,6 +632,27 @@ class DesktopApi:
         except Exception as error:
             LOGGER.exception("unexpected update-check failure")
             return {"ok": False, "error": f"检查更新失败：{error}"}
+
+    def uninstall_app(self) -> dict:
+        """Remove app support data and ask the user to delete the app bundle themselves."""
+        import shutil as _shutil
+        removed: list[str] = []
+        errors: list[str] = []
+
+        for target in [APP_SUPPORT_DIR]:
+            try:
+                if target.exists():
+                    _shutil.rmtree(target, ignore_errors=True)
+                    removed.append(str(target))
+            except Exception as exc:
+                errors.append(f"{target}: {exc}")
+
+        LOGGER.info("uninstall: removed=%s errors=%s", removed, errors)
+        return ok({
+            "removed": removed,
+            "errors": errors,
+            "note": "应用数据已清除。请手动将应用程序移到废纸篓以完成卸载。",
+        })
 
     def reveal_path(self, target_path: str) -> bool:
         candidate = Path(target_path).expanduser()

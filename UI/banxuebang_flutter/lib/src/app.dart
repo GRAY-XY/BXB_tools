@@ -199,7 +199,10 @@ class _DesktopShellState extends State<_DesktopShell> {
         case _ShellSection.files:
           return const FilesPage();
         case _ShellSection.settings:
-          return SettingsPage(themeController: widget.themeController);
+          return SettingsPage(
+                  themeController: widget.themeController,
+                  controller: widget.controller,
+                );
       }
     });
   }

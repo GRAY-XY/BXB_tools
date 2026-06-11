@@ -1,12 +1,15 @@
 name: Build macOS Release
 
 on:
+  push:
+    tags:
+      - "v[0-9]*"
   workflow_dispatch:
     inputs:
       release_tag:
         description: Release tag to build and upload
         required: true
-        default: v1.0.2
+        default: v1.3.0
 
 permissions:
   contents: write
@@ -19,8 +22,15 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.release_tag }}
+          ref: ${{ inputs.release_tag || github.ref }}
           fetch-depth: 0
+
+      - name: Resolve version
+        id: ver
+        run: |
+          raw="$(grep '^version:' UI/banxuebang_flutter/pubspec.yaml | awk '{print $2}')"
+          version="${raw%%+*}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Set up Node.js 22
         uses: actions/setup-node@v4
@@ -44,25 +54,137 @@ jobs:
         working-directory: UI/banxuebang_flutter
         run: flutter config --enable-macos-desktop
 
-      - name: Build macOS package
+      - name: Build Flutter release app
+        working-directory: UI/banxuebang_flutter
+        run: flutter build macos --release
+
+      - name: Bundle runtime into app
         run: |
           chmod +x ./UI/banxuebang_flutter/packaging/macos/build_macos_pkg.sh
           ./UI/banxuebang_flutter/packaging/macos/build_macos_pkg.sh
 
-      - name: Resolve package path
-        id: pkg
-        shell: bash
+      - name: Build DMG with hdiutil
+        id: dmg
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          pkg_path="$(ls -1 dist/banxuebang-flutter-release-*/BXB_Student_macOS_v*.pkg | head -n 1)"
+          APP_PATH="$(ls -d dist/banxuebang-flutter-release-*/BXB\ Student.app | head -n1)"
+          DMG_NAME="BXB_Student_macOS_v${VERSION}.dmg"
+          DMG_PATH="dist/${DMG_NAME}"
+          mkdir -p dist
+
+          # Create a temporary writable image
+          hdiutil create \
+            -volname "BXB Student" \
+            -srcfolder "$APP_PATH" \
+            -ov -format UDRW \
+            "dist/tmp_bxb.dmg"
+
+          # Convert to compressed read-only DMG
+          hdiutil convert "dist/tmp_bxb.dmg" \
+            -format UDZO \
+            -o "$DMG_PATH"
+
+          rm -f "dist/tmp_bxb.dmg"
+
+          # Compute SHA256 for Homebrew cask
+          SHA256="$(shasum -a 256 "$DMG_PATH" | awk '{print $1}')"
+          echo "dmg_path=$DMG_PATH" >> "$GITHUB_OUTPUT"
+          echo "dmg_name=$DMG_NAME" >> "$GITHUB_OUTPUT"
+          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "DMG: $DMG_PATH  SHA256: $SHA256"
+
+      - name: Resolve PKG path
+        id: pkg
+        run: |
+          pkg_path="$(ls -1 dist/banxuebang-flutter-release-*/BXB_Student_macOS_v*.pkg 2>/dev/null | head -n1 || echo '')"
           echo "pkg_path=$pkg_path" >> "$GITHUB_OUTPUT"
 
-      - name: Upload workflow artifact
+      - name: Upload DMG workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: BXB_Student_macOS_Package
-          path: ${{ steps.pkg.outputs.pkg_path }}
+          name: BXB_Student_macOS_DMG
+          path: ${{ steps.dmg.outputs.dmg_path }}
 
-      - name: Attach package to GitHub release
+      - name: Ensure GitHub release exists
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ inputs.release_tag }}" "${{ steps.pkg.outputs.pkg_path }}" --clobber
+          TAG: ${{ inputs.release_tag || github.ref_name }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --title "BXB Student v${VERSION}" \
+              --notes "macOS 桌面版 v${VERSION}" \
+              --prerelease
+          fi
+
+      - name: Attach DMG to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: |
+          gh release upload "$TAG" "${{ steps.dmg.outputs.dmg_path }}" --clobber
+
+      - name: Attach PKG to release
+        if: steps.pkg.outputs.pkg_path != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: |
+          gh release upload "$TAG" "${{ steps.pkg.outputs.pkg_path }}" --clobber
+
+      - name: Update Homebrew Cask
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN || github.token }}
+          VERSION: ${{ steps.dmg.outputs.version }}
+          SHA256: ${{ steps.dmg.outputs.sha256 }}
+          DMG_NAME: ${{ steps.dmg.outputs.dmg_name }}
+          TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: |
+          CASK_CONTENT="cask \"bxb-student\" do
+            version \"${VERSION}\"
+            sha256 \"${SHA256}\"
+
+            url \"https://github.com/GRAY-XY/BXB_tools/releases/download/${TAG}/${DMG_NAME}\"
+            name \"BXB Student\"
+            desc \"班学帮学生桌面工具\"
+            homepage \"https://github.com/GRAY-XY/BXB_tools\"
+
+            app \"BXB Student.app\"
+
+            postflight do
+              system_command \"/usr/bin/xattr\",
+                             args: [\"-dr\", \"com.apple.quarantine\", \"#{appdir}/BXB Student.app\"]
+            end
+
+            uninstall quit: \"com.grayxy.bxbstudent\",
+                      delete: \"#{appdir}/BXB Student.app\"
+
+            zap trash: [
+              \"~/Library/Application Support/BXB Student\",
+              \"~/Library/Logs/BXB Student\",
+            ]
+          end
+          "
+
+          # Try to push to homebrew-tap repo if token available
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+
+          TAP_REPO="https://x-access-token:${GH_TOKEN}@github.com/igpig1226/homebrew-tap.git"
+          if git ls-remote "$TAP_REPO" HEAD >/dev/null 2>&1; then
+            git clone "$TAP_REPO" homebrew-tap-repo
+            mkdir -p homebrew-tap-repo/Casks
+            echo "$CASK_CONTENT" > homebrew-tap-repo/Casks/bxb-student.rb
+            cd homebrew-tap-repo
+            git add Casks/bxb-student.rb
+            git diff --cached --quiet || git commit -m "chore: update bxb-student to v${VERSION}"
+            git push
+            cd ..
+            echo "Cask updated in homebrew-tap repo."
+          else
+            echo "homebrew-tap repo not found, printing cask for manual setup:"
+            echo "$CASK_CONTENT"
+          fi
