@@ -1,7 +1,7 @@
 name: banxuebang_flutter
 description: Flutter desktop rewrite for the Banxuebang student shell.
 publish_to: "none"
-version: 1.0.2+1
+version: 1.3.0+1
 
 environment:
   sdk: ^3.9.0
