@@ -166,6 +166,152 @@ app.get('/api/achievement', async (req, res) => {
   }
 });
 
+app.get('/api/gpa', async (req, res) => {
+  try {
+    const client = getClient(req.sessionID);
+    const result = await client.getCurrentSubjectGpa();
+    res.json({ success: true, data: result });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/messages/contacts', async (req, res) => {
+  try {
+    const client = getClient(req.sessionID);
+    const result = await client.listPrivateMessageContacts();
+    res.json({ success: true, data: result });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/messages/thread', async (req, res) => {
+  try {
+    const { contact, size, endTime } = req.body;
+    const client = getClient(req.sessionID);
+    const result = await client.getPrivateMessageThread(contact, { size, endTime });
+    res.json({ success: true, data: result });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/messages/send', async (req, res) => {
+  try {
+    const { contact, content } = req.body;
+    const client = getClient(req.sessionID);
+    const result = await client.sendPrivateMessageText(contact, content);
+    res.json({ success: true, data: result });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/workspace/files', async (req, res) => {
+  try {
+    const { query, maxFiles } = req.query;
+    const client = getClient(req.sessionID);
+    const result = await client.listWorkspaceFiles({
+      query: query || '',
+      maxFiles: maxFiles ? parseInt(maxFiles) : 200
+    });
+    res.json({ success: true, data: result });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/workspace/files/:file', async (req, res) => {
+  try {
+    const { file } = req.params;
+    const { maxChars } = req.query;
+    const client = getClient(req.sessionID);
+    const result = await client.readWorkspaceFile({
+      file,
+      maxChars: maxChars ? parseInt(maxChars) : 8000
+    });
+    res.json({ success: true, data: result });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/workspace/files', async (req, res) => {
+  try {
+    const { fileName, content, overwrite } = req.body;
+    const client = getClient(req.sessionID);
+    const result = await client.writeWorkspaceTextFile({
+      fileName,
+      content,
+      overwrite: overwrite || false
+    });
+    res.json({ success: true, data: result });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/tasks/:taskId/download', async (req, res) => {
+  try {
+    const { taskId } = req.params;
+    const { fileId, directory } = req.body;
+    const client = getClient(req.sessionID);
+    const result = await client.downloadTaskAttachment({
+      taskId,
+      fileId,
+      directory
+    });
+    res.json({ success: true, data: result });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/tasks/:taskId/submit', async (req, res) => {
+  try {
+    const { taskId } = req.params;
+    const { remark, filePaths, isCorrectWork, submissionId } = req.body;
+    const client = getClient(req.sessionID);
+    const result = await client.submitTaskResult({
+      taskId,
+      remark: remark || '',
+      filePaths: filePaths || [],
+      isCorrectWork: isCorrectWork || 0,
+      submissionId
+    });
+    res.json({ success: true, data: result });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/dashboard', async (req, res) => {
+  try {
+    const client = getClient(req.sessionID);
+    const session = await client.requireSession();
+    
+    // 并行获取所有仪表板数据
+    const [homeworkResult, achievementResult, coursesResult] = await Promise.all([
+      client.listHomework({ listType: 'pending', page: 1, size: 5 }).catch(() => null),
+      client.getAchievementOverview().catch(() => null),
+      client.listCourses().catch(() => null)
+    ]);
+    
+    res.json({
+      success: true,
+      data: {
+        session: client.summarizeSession(session),
+        pendingHomework: homeworkResult?.items || [],
+        achievement: achievementResult,
+        courses: coursesResult?.subjects || []
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`🚀 BXB Student Web Server running at http://localhost:${PORT}`);
 });
