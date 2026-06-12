@@ -72,8 +72,15 @@ fi
 
 ensure_flutter_snapshot_alias() {
   local engine_root
+  local flutter_root_dir
 
-  engine_root="$(cd "$(dirname "$FLUTTER_BIN")/cache/artifacts/engine/darwin-x64-release" && pwd)"
+  flutter_root_dir="$(dirname "$(dirname "$(readlink -f "$FLUTTER_BIN")")")"
+  engine_root="$flutter_root_dir/bin/cache/artifacts/engine/darwin-x64-release"
+  
+  if [ ! -d "$engine_root" ]; then
+    return 0
+  fi
+  
   if [ ! -f "$engine_root/gen_snapshot" ]; then
     return 0
   fi
