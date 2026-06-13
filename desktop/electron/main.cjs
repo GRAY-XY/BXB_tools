@@ -27,6 +27,15 @@ const IMAGE_MIME_BY_EXTENSION = new Map([
   [".avif", "image/avif"],
 ]);
 const MAX_INLINE_IMAGE_BYTES = 25 * 1024 * 1024;
+const MAX_PASTED_FILE_BYTES = 25 * 1024 * 1024;
+const PASTED_IMAGE_EXTENSION_BY_MIME = new Map([
+  ["image/png", ".png"],
+  ["image/jpeg", ".jpg"],
+  ["image/gif", ".gif"],
+  ["image/webp", ".webp"],
+  ["image/bmp", ".bmp"],
+  ["image/avif", ".avif"],
+]);
 const RELEASES_API_URL = "https://api.github.com/repos/GRAY-XY/BXB_tools/releases?per_page=30";
 const RELEASES_PAGE_URL = "https://github.com/GRAY-XY/BXB_tools/releases";
 const WINDOWS_PREVIEW_TITLE_PREFIX = "BXB Homework Win v";
@@ -655,6 +664,14 @@ function normalizeTemperature(value, fallback) {
   return Math.min(2, Math.max(0, temperature));
 }
 
+function normalizeLongPasteThreshold(value, fallback = 4000) {
+  const threshold = Number.parseInt(value, 10);
+  if (!Number.isFinite(threshold)) {
+    return fallback;
+  }
+  return Math.min(100000, Math.max(500, threshold));
+}
+
 async function loadModelConfig() {
   const config = await readJson(modelConfigPath, {
     apiKey: "",
@@ -663,6 +680,7 @@ async function loadModelConfig() {
     contextLength: 0,
     chatTemperature: 0.2,
     compactTemperature: 0.1,
+    longPasteThreshold: 4000,
     maxToolRounds: 6,
     systemPrompt: DEFAULT_SYSTEM_PROMPT,
   });
@@ -671,6 +689,7 @@ async function loadModelConfig() {
     ...config,
     chatTemperature: normalizeTemperature(config.chatTemperature, 0.2),
     compactTemperature: normalizeTemperature(config.compactTemperature, 0.1),
+    longPasteThreshold: normalizeLongPasteThreshold(config.longPasteThreshold, 4000),
     systemPrompt: normalizeSystemPrompt(config.systemPrompt),
     defaultSystemPrompt: DEFAULT_SYSTEM_PROMPT,
     apiKeyMasked: maskKey(config.apiKey),
@@ -686,6 +705,7 @@ async function saveModelConfig(config) {
     contextLength: Number.parseInt(config?.contextLength || 0, 10) || 0,
     chatTemperature: normalizeTemperature(config?.chatTemperature, 0.2),
     compactTemperature: normalizeTemperature(config?.compactTemperature, 0.1),
+    longPasteThreshold: normalizeLongPasteThreshold(config?.longPasteThreshold, 4000),
     maxToolRounds: Math.max(1, Number.parseInt(config?.maxToolRounds || 6, 10) || 6),
     systemPrompt: normalizeSystemPrompt(config?.systemPrompt),
   };
@@ -1207,6 +1227,62 @@ async function importWorkspaceFiles() {
   };
 }
 
+async function saveWorkspacePastes(items) {
+  const entries = Array.isArray(items) ? items.slice(0, 20) : [];
+  if (!entries.length) {
+    return { saved: [] };
+  }
+
+  const saved = [];
+  for (const entry of entries) {
+    const kind = String(entry?.kind || "");
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    let fileName;
+    let buffer;
+
+    if (kind === "image") {
+      const mimeType = String(entry?.mimeType || "").toLowerCase();
+      const extension = PASTED_IMAGE_EXTENSION_BY_MIME.get(mimeType);
+      if (!extension) {
+        throw new Error(`不支持粘贴的图片类型：${mimeType || "未知类型"}`);
+      }
+      buffer = Buffer.from(entry?.bytes || []);
+      if (!buffer.length || buffer.byteLength > MAX_PASTED_FILE_BYTES) {
+        throw new Error("粘贴图片为空或超过 25 MB。");
+      }
+      const requestedName = sanitizeWorkspaceImportName(entry?.name || `pasted-image-${timestamp}${extension}`);
+      fileName = `${path.parse(requestedName).name || `pasted-image-${timestamp}`}${extension}`;
+    } else if (kind === "text") {
+      const text = String(entry?.text || "");
+      if (!text) {
+        throw new Error("粘贴文本为空。");
+      }
+      buffer = Buffer.from(text, "utf8");
+      if (buffer.byteLength > MAX_PASTED_FILE_BYTES) {
+        throw new Error("粘贴文本超过 25 MB。");
+      }
+      const requestedName = sanitizeWorkspaceImportName(entry?.name || `pasted-text-${timestamp}.txt`);
+      fileName = `${path.parse(requestedName).name || `pasted-text-${timestamp}`}.txt`;
+    } else {
+      throw new Error("只支持保存粘贴图片和长文本。");
+    }
+
+    const targetPath = await nextWorkspacePath(fileName);
+    await fs.writeFile(targetPath, buffer);
+    saved.push({
+      kind,
+      name: path.basename(targetPath),
+      path: targetPath,
+      relativePath: path.relative(workspaceDir, targetPath).replaceAll("\\", "/"),
+      sizeBytes: buffer.byteLength,
+      charCount: kind === "text" ? String(entry.text || "").length : null,
+      mimeType: kind === "image" ? String(entry.mimeType || "") : "text/plain",
+    });
+  }
+
+  return { saved };
+}
+
 function assertWorkspacePath(filePath) {
   const workspaceRoot = path.resolve(workspaceDir);
   const resolved = path.resolve(String(filePath || ""));
@@ -1561,6 +1637,7 @@ ipcMain.handle("app:open-path", async (_event, { key } = {}) => openAppPath(key)
 ipcMain.handle("bxb:session", async () => callTool("session_status"));
 ipcMain.handle("bxb:tool", async (_event, { name, args }) => callTool(name, args));
 ipcMain.handle("workspace:import", async () => importWorkspaceFiles());
+ipcMain.handle("workspace:save-pastes", async (_event, { items } = {}) => saveWorkspacePastes(items));
 ipcMain.handle("workspace:open", async () => {
   await fs.mkdir(workspaceDir, { recursive: true });
   await shell.openPath(workspaceDir);

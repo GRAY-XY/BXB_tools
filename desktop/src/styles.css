@@ -792,6 +792,56 @@ footer {
   border-top: 1px solid #eeeeee;
 }
 
+.composer-files {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.composer-file {
+  min-width: 180px;
+  max-width: min(360px, 100%);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px 8px 10px;
+  border: 1px solid #d8e7f5;
+  border-radius: 8px;
+  background: #f3f8fc;
+}
+
+.composer-file span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.composer-file strong,
+.composer-file small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-file strong {
+  font-size: 13px;
+}
+
+.composer-file small {
+  color: #606060;
+  font-size: 11px;
+}
+
+.composer-file button {
+  width: 28px;
+  min-height: 28px;
+  padding: 0;
+  font-size: 18px;
+  line-height: 1;
+}
+
 .composer textarea {
   min-height: 43px;
   max-height: 120px;
@@ -2175,6 +2225,7 @@ tbody tr:hover {
 :root[data-theme="dark"] .draft-alert,
 :root[data-theme="dark"] .draft-evidence,
 :root[data-theme="dark"] .draft-delivery,
+:root[data-theme="dark"] .composer-file,
 :root[data-theme="dark"] .draft-submit-facts > div,
 :root[data-theme="dark"] .draft-submit-files > div,
 :root[data-theme="dark"] .update-facts > div,
@@ -2225,6 +2276,7 @@ tbody tr:hover {
 :root[data-theme="dark"] .draft-evidence span,
 :root[data-theme="dark"] .draft-delivery span,
 :root[data-theme="dark"] .draft-delivery small,
+:root[data-theme="dark"] .composer-file small,
 :root[data-theme="dark"] .draft-edit-hint,
 :root[data-theme="dark"] .draft-create-hint,
 :root[data-theme="dark"] .draft-empty,

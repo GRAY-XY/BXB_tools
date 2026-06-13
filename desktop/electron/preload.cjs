@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld("bxb", {
   getSession: () => ipcRenderer.invoke("bxb:session"),
   callTool: (name, args = {}) => ipcRenderer.invoke("bxb:tool", { name, args }),
   importWorkspaceFiles: () => ipcRenderer.invoke("workspace:import"),
+  saveWorkspacePastes: (items) => ipcRenderer.invoke("workspace:save-pastes", { items }),
   openWorkspaceFolder: () => ipcRenderer.invoke("workspace:open"),
   getWorkspaceImageDataUrl: (filePath) => ipcRenderer.invoke("workspace:image-data-url", { filePath }),
   checkForUpdates: () => ipcRenderer.invoke("update:check"),
