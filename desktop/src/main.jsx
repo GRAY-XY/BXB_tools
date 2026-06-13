@@ -264,6 +264,20 @@ function privateContactLabel(contact) {
   return parts.join(" · ");
 }
 
+function pastedFilePrompt(files) {
+  if (!files.length) return "";
+  const rows = files.map((file) => {
+    const detail = file.kind === "text"
+      ? `${file.charCount || 0} 字的文本文件`
+      : "图片文件";
+    return `- ${file.relativePath || file.name}（${detail}）`;
+  });
+  return [
+    "我在工作区中附带了以下文件。请先调用 list_workspace_files 定位，再按需读取并结合这些文件回答：",
+    ...rows,
+  ].join("\n");
+}
+
 function normalizeList(value) {
   if (!Array.isArray(value)) return [];
   return value.filter((item) => item !== null && item !== undefined && String(item).trim() !== "");
@@ -914,6 +928,8 @@ function App() {
   const [messages, setMessages] = useState([]);
   const [steps, setSteps] = useState([]);
   const [input, setInput] = useState("");
+  const [composerFiles, setComposerFiles] = useState([]);
+  const [composerPasteLoading, setComposerPasteLoading] = useState(false);
   const [running, setRunning] = useState(false);
   const [startedAt, setStartedAt] = useState(0);
   const [elapsed, setElapsed] = useState("0.0s");
@@ -964,6 +980,7 @@ function App() {
     contextLength: 0,
     chatTemperature: 0.2,
     compactTemperature: 0.1,
+    longPasteThreshold: 4000,
     maxToolRounds: 6,
     systemPrompt: fallbackSystemPrompt,
     defaultSystemPrompt: fallbackSystemPrompt,
@@ -1130,6 +1147,70 @@ function App() {
     if (event.target?.tagName !== "BUTTON") {
       focusComposerNow();
     }
+  }
+
+  function insertComposerText(text) {
+    const textarea = composerInputRef.current;
+    const start = textarea?.selectionStart ?? input.length;
+    const end = textarea?.selectionEnd ?? input.length;
+    setInput((current) => `${current.slice(0, start)}${text}${current.slice(end)}`);
+    window.setTimeout(() => {
+      textarea?.focus({ preventScroll: true });
+      textarea?.setSelectionRange?.(start + text.length, start + text.length);
+    }, 0);
+  }
+
+  async function handleComposerPaste(event) {
+    const clipboard = event.clipboardData;
+    if (!clipboard || composerPasteLoading || running) return;
+
+    const directFiles = Array.from(clipboard.files || []);
+    const itemFiles = directFiles.length
+      ? []
+      : Array.from(clipboard.items || []).map((item) => item.getAsFile?.()).filter(Boolean);
+    const imageFiles = [...directFiles, ...itemFiles].filter((file) => String(file.type || "").startsWith("image/"));
+    const pastedText = clipboard.getData("text/plain") || "";
+    const threshold = Math.max(500, Number.parseInt(modelConfig.longPasteThreshold || 4000, 10) || 4000);
+    const isLongText = !imageFiles.length && pastedText.length >= threshold;
+    if (!imageFiles.length && !isLongText) return;
+
+    event.preventDefault();
+    setComposerPasteLoading(true);
+    try {
+      const items = [];
+      for (const file of imageFiles) {
+        items.push({
+          kind: "image",
+          name: file.name || "",
+          mimeType: file.type || "",
+          bytes: new Uint8Array(await file.arrayBuffer()),
+        });
+      }
+      if (isLongText) {
+        items.push({
+          kind: "text",
+          name: `pasted-text-${new Date().toISOString().replace(/[:.]/g, "-")}.txt`,
+          text: pastedText,
+        });
+      } else if (pastedText && !imageFiles.length) {
+        insertComposerText(pastedText);
+      }
+
+      const result = await window.bxb.saveWorkspacePastes(items);
+      const saved = Array.isArray(result?.saved) ? result.saved : [];
+      setComposerFiles((current) => [...current, ...saved.map((file) => ({ ...file, id: crypto.randomUUID() }))]);
+      setStatus(`已将 ${saved.length} 个粘贴内容保存到工作区`);
+    } catch (error) {
+      setStatus(`无法处理粘贴内容：${error.message}`);
+    } finally {
+      setComposerPasteLoading(false);
+      focusComposerSoon();
+    }
+  }
+
+  function removeComposerFile(fileId) {
+    setComposerFiles((current) => current.filter((file) => file.id !== fileId));
+    focusComposerSoon();
   }
 
   async function loadConversations() {
@@ -1778,13 +1859,16 @@ function App() {
   }
 
   async function sendAgent(text = input) {
-    const trimmed = text.trim();
+    const typedText = text.trim();
+    const fileContext = pastedFilePrompt(composerFiles);
+    const trimmed = [typedText, fileContext].filter(Boolean).join("\n\n");
     if (!trimmed || running) return;
     if (trimmed === "/compact") {
       await compactChat();
       return;
     }
     setInput("");
+    setComposerFiles([]);
     setMessages((current) => [...current, { role: "user", text: trimmed }]);
     setSteps([]);
     setUsage(null);
@@ -1818,6 +1902,7 @@ function App() {
     setRenameValue("");
     setConfirmingDeleteConversationId("");
     setInput("");
+    setComposerFiles([]);
     setSteps([]);
     setUsage(null);
     setElapsed("0.0s");
@@ -1832,6 +1917,8 @@ function App() {
     setRenamingConversationId("");
     setRenameValue("");
     setConfirmingDeleteConversationId("");
+    setInput("");
+    setComposerFiles([]);
     setSteps([]);
     setUsage(usageCache[conversationId] || null);
     setElapsed("0.0s");
@@ -1872,6 +1959,8 @@ function App() {
     applyConversationState(await window.bxb.deleteConversation(conversationId));
     setConversationMenuOpen(false);
     setConfirmingDeleteConversationId("");
+    setInput("");
+    setComposerFiles([]);
     setSteps([]);
     setUsage(null);
     setElapsed("0.0s");
@@ -1885,6 +1974,7 @@ function App() {
 
   async function compactChat() {
     setInput("");
+    setComposerFiles([]);
     setSteps([]);
     setUsage(null);
     setRunning(true);
@@ -2230,6 +2320,19 @@ function App() {
                   onClick={handleComposerPointer}
                   onSubmit={(event) => { event.preventDefault(); sendAgent(); }}
                 >
+                  {composerFiles.length > 0 && (
+                    <div className="composer-files">
+                      {composerFiles.map((file) => (
+                        <div key={file.id} className="composer-file">
+                          <span>
+                            <strong>{file.kind === "text" ? `粘贴文本 · ${file.charCount || 0} 字` : file.name}</strong>
+                            <small>{file.relativePath || file.name}</small>
+                          </span>
+                          <button type="button" title="移除待发送文件" onClick={() => removeComposerFile(file.id)} disabled={running}>×</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   <textarea
                     ref={composerInputRef}
                     rows={1}
@@ -2238,15 +2341,18 @@ function App() {
                     onMouseDown={(event) => event.currentTarget.focus({ preventScroll: true })}
                     onClick={(event) => event.currentTarget.focus({ preventScroll: true })}
                     onChange={(event) => setInput(event.target.value)}
+                    onPaste={handleComposerPaste}
                     onKeyDown={(event) => {
                       if (event.key === "Enter" && !event.shiftKey) {
                         event.preventDefault();
                         sendAgent();
                       }
                     }}
-                    placeholder="输入：列出课程、打开任务、帮我写某个作业草稿，或 /compact 压缩上下文..."
+                    placeholder={composerPasteLoading ? "正在保存粘贴内容到工作区..." : "输入消息，或粘贴图片/长文本..."}
                   />
-                  <button className="primary" disabled={running}>{running ? "执行中" : "发送"}</button>
+                  <button className="primary" disabled={running || composerPasteLoading || (!input.trim() && !composerFiles.length)}>
+                    {running ? "执行中" : composerPasteLoading ? "处理中" : "发送"}
+                  </button>
                 </form>
               </div>
               <div className="steps card">
@@ -2812,6 +2918,17 @@ function App() {
                   </select>
                 </label>
                 <label>最大工具轮次<input value={modelConfig.maxToolRounds || 6} onChange={(event) => setModelConfig({ ...modelConfig, maxToolRounds: event.target.value })} /></label>
+                <label>长文本粘贴阈值
+                  <input
+                    type="number"
+                    min="500"
+                    max="100000"
+                    step="100"
+                    value={modelConfig.longPasteThreshold || 4000}
+                    onChange={(event) => setModelConfig({ ...modelConfig, longPasteThreshold: event.target.value })}
+                  />
+                  <small className="muted">粘贴文本达到该字数时，将保存为工作区 TXT 文件，而不是直接放入输入框。</small>
+                </label>
                 <label>AI 系统提示词
                   <textarea
                     value={modelConfig.systemPrompt || ""}

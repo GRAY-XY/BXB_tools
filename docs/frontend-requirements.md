@@ -102,6 +102,16 @@ Context meter:
 - Fall back to an estimated count from recent messages.
 - Use the configured context length from Settings.
 
+Composer paste handling:
+
+- Pasting one or more images into the Agent composer saves each image into the managed workspace and adds a removable pending-file item above the input.
+- Pasting plain text shorter than the configured threshold behaves like normal text paste.
+- Pasting plain text at or above the configured threshold saves it as a `.txt` workspace file and adds a pending-file item showing the pasted character count.
+- The long-text threshold is configurable in Settings and defaults to `4000` characters.
+- Sending with pending files appends workspace file references to the user prompt and instructs the Agent to locate/read them with workspace tools.
+- Files are saved locally when pasted; removing an item from the composer only removes it from the pending message, not from the workspace.
+- The paste IPC must accept file bytes/text only and must not let the renderer choose an arbitrary destination path.
+
 Default Agent safety:
 
 - Need real Banxuebang data: call tools, do not guess.
@@ -267,6 +277,7 @@ UI requirements:
 
 - Include buttons for importing files, refreshing files, and opening the workspace folder.
 - File import uses Electron IPC to copy selected files into the managed workspace.
+- Composer-pasted images and long text use Electron IPC to save directly into the managed workspace.
 - The renderer must not read arbitrary local paths directly.
 - File list shows name, relative path, size, modified time, and type.
 - Preview panel shows images inline, readable text for supported files, and a diagnostic summary for unsupported files.

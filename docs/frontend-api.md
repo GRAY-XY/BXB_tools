@@ -19,6 +19,7 @@ declare global {
       getSession(): Promise<SessionStatus>;
       callTool<T = unknown>(name: string, args?: Record<string, unknown>): Promise<T>;
       importWorkspaceFiles(): Promise<WorkspaceImportResult>;
+      saveWorkspacePastes(items: WorkspacePasteInput[]): Promise<WorkspacePasteResult>;
       openWorkspaceFolder(): Promise<{ ok: true; workspaceDir: string }>;
       getWorkspaceImageDataUrl(filePath: string): Promise<WorkspaceImagePreview>;
       checkForUpdates(): Promise<UpdateCheckResult>;
@@ -318,6 +319,28 @@ type WorkspaceImportResult = {
 
 The renderer must not read arbitrary local files directly. Use `importWorkspaceFiles()` to let the user pick files and copy them into the managed workspace. The Agent should reference workspace files by `relativePath` or filename.
 
+Composer paste saving:
+
+```ts
+type WorkspacePasteInput =
+  | { kind: "image"; name?: string; mimeType: string; bytes: Uint8Array }
+  | { kind: "text"; name?: string; text: string };
+
+type WorkspacePasteResult = {
+  saved: Array<{
+    kind: "image" | "text";
+    name: string;
+    path: string;
+    relativePath: string;
+    sizeBytes: number;
+    charCount: number | null;
+    mimeType: string;
+  }>;
+};
+```
+
+`saveWorkspacePastes()` only accepts image bytes or text and always chooses a unique destination inside the managed workspace. It rejects unsupported image types and items over 25 MB.
+
 Image previews:
 
 ```ts
@@ -419,6 +442,7 @@ type ModelConfigInput = {
   contextLength?: number | string;
   chatTemperature?: number | string;
   compactTemperature?: number | string;
+  longPasteThreshold?: number | string;
   maxToolRounds?: number | string;
   systemPrompt?: string;
 };
@@ -552,6 +576,7 @@ Renderer API to IPC channel mapping:
 | `getSession()` | `bxb:session` |
 | `callTool(name, args)` | `bxb:tool` |
 | `importWorkspaceFiles()` | `workspace:import` |
+| `saveWorkspacePastes(items)` | `workspace:save-pastes` |
 | `openWorkspaceFolder()` | `workspace:open` |
 | `getWorkspaceImageDataUrl(filePath)` | `workspace:image-data-url` |
 | `loadModelConfig()` | `config:model:load` |
