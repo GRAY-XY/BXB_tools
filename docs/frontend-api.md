@@ -62,7 +62,7 @@ type AppInfo = {
   isPackaged: boolean;
   version: string;
   platform: string;
-  updateChannel: "Windows preview";
+  updateChannel: "Windows stable";
   userDataRoot: string;
   dataRoot: string;
   workspaceDir: string;
@@ -99,19 +99,19 @@ window.bxb.openUpdateUrl(url: string): Promise<{ ok: true; url: string }>
 
 The Windows updater checks GitHub Releases, downloads the matched installer into the local update cache, verifies file size and SHA256, then lets the user restart into the installer from inside the app. Keep the release page link as a manual fallback.
 
-Windows preview releases are identified by release title, not tag name:
+Windows stable releases are identified by release title, not tag name:
 
 ```text
-BXB Homework Win v<major>.<minor>.<patch>-pre
+BXB Homework v<major>.<minor>.<patch>
 ```
 
-Historical titles such as `BXB Homework Win v1.1.0-pre.3` may still be parsed for compatibility, but new releases should increment `major.minor.patch` and keep `-pre` as the preview-channel marker.
+Historical preview titles such as `BXB Homework Win v1.1.0-pre.3` may still be parsed for compatibility, but update checks should only consider normal GitHub Releases, not prereleases. New releases increment `major.minor.patch` without `-pre` and should be marked as latest.
 
 ```ts
 type UpdateCheckResult = {
   ok: boolean;
   currentVersion: string;
-  currentChannel: "Windows preview";
+  currentChannel: "Windows stable";
   hasUpdate: boolean;
   latestVersion?: string;
   latestTitle?: string;
@@ -152,7 +152,7 @@ type UpdateState = {
 };
 ```
 
-Application-internal installation requires the release to include a SHA256 asset named like the installer plus `.sha256`, for example `BXB Homework Setup 1.1.3-pre.exe.sha256`.
+Application-internal installation requires the release to include a SHA256 asset named like the installer plus `.sha256`, for example `BXB Homework Setup 1.1.7.exe.sha256`.
 
 ## Session
 

@@ -359,11 +359,12 @@ Path card:
 
 Software update card:
 
-- Channel: Windows preview.
+- Channel: Windows stable.
 - Show the current Electron app version.
-- Check GitHub Releases for non-draft prereleases whose title starts with `BXB Homework Win v`.
-- Current title/tag convention uses `BXB Homework Win v<major>.<minor>.<patch>-pre`.
-- Keep parsing older titles like `BXB Homework Win v1.1.0-pre.3` for compatibility.
+- Check GitHub Releases for non-draft normal releases whose title starts with `BXB Homework v`.
+- Current title/tag convention uses `BXB Homework v<major>.<minor>.<patch>` and `bxb-homework-v<major>.<minor>.<patch>`.
+- New releases should be marked as latest and must not be marked as prerelease.
+- Keep parsing older titles like `BXB Homework Win v1.1.0-pre.3` only for compatibility; do not use prereleases as update targets.
 - Show latest version, installer size, publish time, and release notes when an update is found.
 - In-app download/install is allowed only when the release has both the `.exe` installer and matching `.sha256` asset.
 - Download into the local update cache.
