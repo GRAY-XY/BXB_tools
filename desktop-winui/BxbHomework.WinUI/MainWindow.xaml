@@ -1,0 +1,463 @@
+<Window
+    x:Class="BxbHomework.WinUI.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    Title="BXB Homework">
+
+    <Grid Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="48" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="32" />
+        </Grid.RowDefinitions>
+
+        <Grid x:Name="AppTitleBar" Grid.Row="0" Padding="16,0,136,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="10">
+                <Border Width="28" Height="28" CornerRadius="6" Background="{ThemeResource AccentFillColorDefaultBrush}">
+                    <TextBlock Text="BXB" Foreground="White" FontSize="10" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                </Border>
+                <TextBlock Text="BXB Homework" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center" />
+            </StackPanel>
+            <TextBlock
+                x:Name="BackendStateText"
+                Grid.Column="2"
+                VerticalAlignment="Center"
+                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                Text="后端未连接" />
+        </Grid>
+
+        <NavigationView
+            x:Name="RootNavigation"
+            Grid.Row="1"
+            IsBackButtonVisible="Collapsed"
+            IsSettingsVisible="True"
+            PaneDisplayMode="Left"
+            SelectionChanged="OnNavigationSelectionChanged">
+            <NavigationView.MenuItems>
+                <NavigationViewItem Content="主页" Tag="home">
+                    <NavigationViewItem.Icon><SymbolIcon Symbol="Home" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="助手" Tag="agent">
+                    <NavigationViewItem.Icon><SymbolIcon Symbol="Message" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="作业" Tag="homework">
+                    <NavigationViewItem.Icon><SymbolIcon Symbol="Library" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="工作区" Tag="workspace">
+                    <NavigationViewItem.Icon><SymbolIcon Symbol="Folder" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="私信" Tag="messages">
+                    <NavigationViewItem.Icon><SymbolIcon Symbol="Contact" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="草稿" Tag="drafts">
+                    <NavigationViewItem.Icon><SymbolIcon Symbol="Edit" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+            </NavigationView.MenuItems>
+
+            <Grid Padding="28,24,28,28" RowSpacing="18">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <StackPanel Spacing="4">
+                    <TextBlock x:Name="PageTitleText" Text="主页" FontSize="30" FontWeight="SemiBold" />
+                    <TextBlock x:Name="PageSubtitleText" Text="WinUI 3 native shell" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                </StackPanel>
+
+                <Border x:Name="ToolbarCard" Grid.Row="1" Padding="14" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                    <StackPanel Spacing="10">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <ComboBox x:Name="PrimaryComboBox" Width="260" SelectionChanged="OnPrimaryComboChanged" Visibility="Collapsed" />
+                            <ComboBox x:Name="FilterComboBox" Width="180" SelectionChanged="OnFilterComboChanged" Visibility="Collapsed" />
+                            <Button x:Name="PrimaryActionButton" Content="刷新" Click="OnPrimaryActionClick" />
+                            <Button x:Name="SecondaryActionButton" Content="操作" Click="OnSecondaryActionClick" Visibility="Collapsed" />
+                            <Button x:Name="ThirdActionButton" Content="操作" Click="OnThirdActionClick" Visibility="Collapsed" />
+                            <Button x:Name="FourthActionButton" Content="操作" Click="OnFourthActionClick" Visibility="Collapsed" />
+                            <Button x:Name="DangerActionButton" Content="删除" Click="OnDangerActionClick" Visibility="Collapsed" />
+                        </StackPanel>
+                        <TextBox
+                            x:Name="CommandInputBox"
+                            AcceptsReturn="True"
+                            MinHeight="76"
+                            PlaceholderText="输入内容"
+                            TextWrapping="Wrap"
+                            Visibility="Collapsed" />
+                    </StackPanel>
+                </Border>
+
+                <Grid x:Name="HomePanel" Grid.Row="2" ColumnSpacing="14" Visibility="Collapsed">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Border Padding="18" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                        <StackPanel Spacing="14">
+                            <TextBlock Text="登录" FontSize="18" FontWeight="SemiBold" />
+                            <TextBlock Text="使用现有 Playwright 登录流程。登录状态保存在本机应用数据目录。" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                            <TextBlock x:Name="HomeRuntimeText" Text="UI Runtime: WinUI" FontWeight="SemiBold" />
+                        </StackPanel>
+                    </Border>
+                    <Border Grid.Column="1" Padding="18" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                        <Grid RowSpacing="10">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Text="当前会话" FontSize="18" FontWeight="SemiBold" />
+                            <Grid Grid.Row="1" ColumnSpacing="18" RowSpacing="14">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <StackPanel Spacing="3">
+                                    <TextBlock Text="登录状态" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    <TextBlock x:Name="HomeSessionStatusText" Text="读取中" FontSize="22" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Spacing="3">
+                                    <TextBlock Text="待处理作业" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    <TextBlock x:Name="HomePendingTaskText" Text="-" FontSize="22" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <StackPanel Grid.Row="1" Spacing="3">
+                                    <TextBlock Text="用户" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    <TextBlock x:Name="HomeUserText" Text="-" FontWeight="SemiBold" TextWrapping="WrapWholeWords" />
+                                </StackPanel>
+                                <StackPanel Grid.Row="1" Grid.Column="1" Spacing="3">
+                                    <TextBlock Text="班级 / 课程" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    <TextBlock x:Name="HomeScopeText" Text="-" FontWeight="SemiBold" TextWrapping="WrapWholeWords" />
+                                </StackPanel>
+                                <StackPanel Grid.Row="2" Spacing="3">
+                                    <TextBlock Text="学期" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    <TextBlock x:Name="HomeTermText" Text="-" TextWrapping="WrapWholeWords" />
+                                </StackPanel>
+                                <StackPanel Grid.Row="2" Grid.Column="1" Spacing="3">
+                                    <TextBlock Text="会话文件" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    <TextBlock x:Name="HomeSessionFileText" Text="-" TextWrapping="WrapWholeWords" MaxLines="3" />
+                                </StackPanel>
+                            </Grid>
+                        </Grid>
+                    </Border>
+                </Grid>
+
+                <Grid x:Name="AgentPanel" Grid.Row="2" ColumnSpacing="14" MinHeight="480" Visibility="Collapsed">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="1.45*" MinWidth="420" />
+                        <ColumnDefinition Width="0.85*" MinWidth="300" />
+                    </Grid.ColumnDefinitions>
+                    <Border Padding="14" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                        <Grid RowSpacing="10">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <ComboBox x:Name="ConversationComboBox" Width="360" SelectionChanged="OnConversationComboChanged" />
+                                <Button Content="新建" Click="OnAgentNewConversationClick" />
+                                <Button Content="删除" Click="OnAgentDeleteConversationClick" />
+                            </StackPanel>
+                            <Grid x:Name="AgentMarkdownHost" Grid.Row="1">
+                                <TextBox
+                                    x:Name="AgentMarkdownFallbackTextBox"
+                                    AcceptsReturn="True"
+                                    IsReadOnly="True"
+                                    TextWrapping="Wrap"
+                                    ScrollViewer.VerticalScrollBarVisibility="Auto" />
+                            </Grid>
+                            <StackPanel Grid.Row="2" Spacing="8">
+                                <TextBox
+                                    x:Name="AgentInputBox"
+                                    AcceptsReturn="True"
+                                    MinHeight="74"
+                                    PlaceholderText="输入消息，或 /compact 压缩上下文..."
+                                    TextWrapping="Wrap" />
+                                <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                                    <Button Content="压缩上下文" Click="OnAgentCompactClick" />
+                                    <Button Content="发送" Click="OnAgentSendClick" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                    <Border Grid.Column="1" Padding="14" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                        <Grid RowSpacing="10">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Text="工作过程" FontSize="18" FontWeight="SemiBold" />
+                            <TextBox
+                                x:Name="AgentStepsTextBox"
+                                Grid.Row="1"
+                                IsReadOnly="True"
+                                AcceptsReturn="True"
+                                TextWrapping="Wrap" />
+                        </Grid>
+                    </Border>
+                </Grid>
+
+                <Grid x:Name="SplitPanel" Grid.Row="2" ColumnSpacing="14" MinHeight="480" Visibility="Collapsed">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition x:Name="SplitLeftColumn" Width="360" MinWidth="260" />
+                        <ColumnDefinition Width="*" MinWidth="420" />
+                    </Grid.ColumnDefinitions>
+
+                    <Border Padding="0" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <TextBlock x:Name="ListTitleText" Text="列表" Margin="14,14,14,8" FontSize="18" FontWeight="SemiBold" />
+                            <ListView x:Name="MainListView" Grid.Row="1" Margin="8,0,8,8" SelectionChanged="OnMainListSelectionChanged">
+                                <ListView.ItemTemplate>
+                                    <DataTemplate x:DataType="local:DisplayItem" xmlns:local="using:BxbHomework.WinUI">
+                                        <StackPanel Spacing="3" Padding="4">
+                                            <TextBlock Text="{x:Bind Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Text="{x:Bind Subtitle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="WrapWholeWords" MaxLines="2" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                        </Grid>
+                    </Border>
+
+                    <Border Grid.Column="1" Padding="14" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                        <Grid RowSpacing="10">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <TextBlock x:Name="DetailTitleText" Text="详情" FontSize="18" FontWeight="SemiBold" />
+                            <TextBox
+                                x:Name="DetailTextBox"
+                                Grid.Row="1"
+                                AcceptsReturn="True"
+                                IsReadOnly="True"
+                                TextWrapping="Wrap" />
+                            <TextBox
+                                x:Name="EditorTextBox"
+                                Grid.Row="1"
+                                AcceptsReturn="True"
+                                TextWrapping="Wrap"
+                                Visibility="Collapsed" />
+                            <ListView
+                                x:Name="PrivateThreadListView"
+                                Grid.Row="1"
+                                IsItemClickEnabled="False"
+                                SelectionMode="None"
+                                Visibility="Collapsed">
+                                <ListView.ItemTemplate>
+                                    <DataTemplate x:DataType="local:PrivateThreadMessage" xmlns:local="using:BxbHomework.WinUI">
+                                        <Grid Padding="6,4">
+                                            <Border
+                                                MaxWidth="560"
+                                                Padding="11,9"
+                                                CornerRadius="8"
+                                                BorderThickness="1"
+                                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                                HorizontalAlignment="{x:Bind Alignment}">
+                                                <StackPanel Spacing="5">
+                                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                                        <TextBlock Text="{x:Bind Sender}" FontSize="12" FontWeight="SemiBold" />
+                                                        <TextBlock Text="{x:Bind Time}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                    </StackPanel>
+                                                    <TextBlock Text="{x:Bind Content}" TextWrapping="WrapWholeWords" />
+                                                </StackPanel>
+                                            </Border>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                            <ScrollViewer
+                                x:Name="DetailImageScrollViewer"
+                                Grid.Row="1"
+                                HorizontalScrollBarVisibility="Disabled"
+                                VerticalScrollBarVisibility="Auto"
+                                Visibility="Collapsed">
+                                <StackPanel Spacing="10" HorizontalAlignment="Center">
+                                    <Image
+                                        x:Name="WorkspaceImagePreview"
+                                        MaxWidth="860"
+                                        MaxHeight="560"
+                                        Stretch="Uniform"
+                                        HorizontalAlignment="Center" />
+                                    <TextBlock
+                                        x:Name="DetailImageCaption"
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                        TextWrapping="Wrap" />
+                                </StackPanel>
+                            </ScrollViewer>
+                            <StackPanel x:Name="PrivateMessageComposerPanel" Grid.Row="2" Spacing="8" Visibility="Collapsed">
+                                <TextBox
+                                    x:Name="PrivateMessageInputBox"
+                                    AcceptsReturn="True"
+                                    MinHeight="72"
+                                    PlaceholderText="输入要发送给当前联系人的文本私信"
+                                    TextWrapping="Wrap" />
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+                                    <Button Content="发送" Click="OnPrivateMessageSendClick" />
+                                </StackPanel>
+                            </StackPanel>
+                            <StackPanel x:Name="DetailActionPanel" Grid.Row="2" Orientation="Horizontal" Spacing="8">
+                                <Button x:Name="DetailPrimaryButton" Content="确认" Click="OnDetailPrimaryClick" Visibility="Collapsed" />
+                                <Button x:Name="DetailSecondaryButton" Content="取消" Click="OnDetailSecondaryClick" Visibility="Collapsed" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                </Grid>
+
+                <ScrollViewer x:Name="SettingsPanel" Grid.Row="2" Visibility="Collapsed">
+                    <Grid ColumnSpacing="14" RowSpacing="14">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="1.08*" MinWidth="420" />
+                            <ColumnDefinition Width="0.92*" MinWidth="360" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <TextBox x:Name="SettingsMainTextBox" Visibility="Collapsed" />
+
+                        <Border Padding="14" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                            <StackPanel Spacing="10">
+                                <TextBlock Text="模型配置" FontSize="18" FontWeight="SemiBold" />
+                                <PasswordBox x:Name="SettingsApiKeyBox" Header="API Key" PlaceholderText="留空则保留已保存的 Key" />
+                                <TextBox x:Name="SettingsBaseUrlBox" Header="调用链接" PlaceholderText="https://api.example.com/v1" />
+                                <TextBlock Text="模型名称" FontWeight="SemiBold" />
+                                <TextBox x:Name="SettingsModelNameBox" PlaceholderText="手动输入，或先读取模型列表后选择" />
+                                <ComboBox x:Name="SettingsModelComboBox" Visibility="Collapsed" SelectionChanged="OnSettingsModelSelectionChanged" />
+                                <TextBox x:Name="SettingsContextLengthBox" Header="上下文长度" InputScope="Number" />
+                                <Grid ColumnSpacing="10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox x:Name="SettingsChatTemperatureBox" Header="助手对话 Temperature" InputScope="Number" />
+                                    <TextBox x:Name="SettingsCompactTemperatureBox" Grid.Column="1" Header="压缩上下文 Temperature" InputScope="Number" />
+                                </Grid>
+                                <TextBlock x:Name="SettingsModelStatusText" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Button Content="保存配置" Click="OnSettingsSaveConfigClick" />
+                                    <Button Content="测试连通性" Click="OnSettingsTestConfigClick" />
+                                    <Button Content="清除配置" Click="OnSettingsClearConfigClick" />
+                                    <Button Content="读取模型" Click="OnSettingsLoadModelsClick" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Column="1" Padding="14" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                            <StackPanel Spacing="12">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="软件更新" FontSize="18" FontWeight="SemiBold" />
+                                        <TextBlock Text="Windows 正式版" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    </StackPanel>
+                                    <TextBlock x:Name="SettingsVersionBadgeText" Grid.Column="1" FontWeight="SemiBold" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                                </Grid>
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="当前版本" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        <TextBlock x:Name="SettingsCurrentVersionText" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1">
+                                        <TextBlock Text="最新版本" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        <TextBlock x:Name="SettingsLatestVersionText" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="状态" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        <TextBlock x:Name="SettingsUpdateStatusText" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </Grid>
+                                <TextBlock x:Name="SettingsUpdateNotesText" TextWrapping="WrapWholeWords" />
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Button Content="检查更新" Click="OnSettingsCheckUpdatesClick" />
+                                    <Button Content="打开 Release 页面" Click="OnSettingsOpenReleaseClick" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Row="1" Padding="14" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                            <StackPanel Spacing="10">
+                                <TextBlock Text="界面与 Agent" FontSize="18" FontWeight="SemiBold" />
+                                <ComboBox x:Name="SettingsThemeComboBox" Header="主题">
+                                    <ComboBoxItem Content="浅色" Tag="light" />
+                                    <ComboBoxItem Content="深色" Tag="dark" />
+                                </ComboBox>
+                                <TextBox x:Name="SettingsMaxToolRoundsBox" Header="最大工具轮次" InputScope="Number" />
+                                <TextBox x:Name="SettingsLongPasteThresholdBox" Header="长文本粘贴阈值" InputScope="Number" />
+                                <TextBlock Text="粘贴文本达到该字数时，将保存为工作区 TXT 文件，而不是直接放入输入框。" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                                <TextBox x:Name="SettingsSystemPromptBox" Header="AI 系统提示词" MinHeight="132" AcceptsReturn="True" TextWrapping="Wrap" />
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Button Content="保存设置" Click="OnSettingsSaveConfigClick" />
+                                    <Button Content="恢复默认提示词" Click="OnSettingsRestoreDefaultPromptClick" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Row="1" Grid.Column="1" Padding="14" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                            <Grid RowSpacing="10">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+                                <TextBlock Text="路径" FontSize="18" FontWeight="SemiBold" />
+                                <TextBlock Grid.Row="1" Text="只展示默认目录的用途，不显示完整应用诊断 JSON。" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                                <ListView x:Name="SettingsPathListView" Grid.Row="2" IsItemClickEnabled="False" SelectionMode="None">
+                                    <ListView.ItemTemplate>
+                                        <DataTemplate x:DataType="local:DisplayItem" xmlns:local="using:BxbHomework.WinUI">
+                                            <Grid Padding="4" ColumnSpacing="10">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Spacing="3">
+                                                    <TextBlock Text="{x:Bind Title}" FontWeight="SemiBold" />
+                                                    <TextBlock Text="{x:Bind Subtitle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="WrapWholeWords" />
+                                                    <TextBlock Text="{x:Bind Path}" FontFamily="Consolas" FontSize="12" TextWrapping="WrapWholeWords" />
+                                                </StackPanel>
+                                                <Button Grid.Column="1" Content="打开路径" Tag="{x:Bind Id}" Click="OnSettingsPathItemOpenClick" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListView.ItemTemplate>
+                                </ListView>
+                                <Button x:Name="SettingsOpenPathButton" Visibility="Collapsed" />
+                            </Grid>
+                        </Border>
+                    </Grid>
+                </ScrollViewer>
+            </Grid>
+        </NavigationView>
+
+        <Border Grid.Row="2" BorderThickness="0,1,0,0" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}">
+            <TextBlock x:Name="StatusText" Margin="18,0" VerticalAlignment="Center" Text="Ready" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+        </Border>
+    </Grid>
+</Window>

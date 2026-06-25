@@ -38,7 +38,8 @@ const PASTED_IMAGE_EXTENSION_BY_MIME = new Map([
 ]);
 const RELEASES_API_URL = "https://api.github.com/repos/GRAY-XY/BXB_tools/releases?per_page=30";
 const RELEASES_PAGE_URL = "https://github.com/GRAY-XY/BXB_tools/releases";
-const WINDOWS_PREVIEW_TITLE_PREFIX = "BXB Homework Win v";
+const WINDOWS_RELEASE_TITLE_PREFIX = "BXB Homework v";
+const LEGACY_WINDOWS_PREVIEW_TITLE_PREFIX = "BXB Homework Win v";
 const DEFAULT_SYSTEM_PROMPT =
   "你是伴学邦桌面助手。需要真实数据时必须调用工具，不要猜测。需要联网资料时先调用 web_search；需要阅读某个搜索结果时再调用 read_web_page。用户提到工作区文件时，先调用 list_workspace_files 定位文件，再按需调用 read_workspace_file；需要整理文件名时可调用 rename_workspace_file。不要上传、提交、私信或删除任何内容。处理作业草稿时先调用 collect_task_submission_context；信息不足就说明缺什么；信息足够才调用 draft_task_submission 保存草稿等待用户审核。如果作业已过期且可能无法补交，可以在草稿提示字段中建议用户私信老师，但只能保存草稿等待用户审核。给出或保存草稿正文时，draft_text 必须是纯文本正文，不要使用 Markdown 标题、列表、表格、代码块、加粗、引用或其他 Markdown 格式；如果需要给用户说明保存状态，可以在助手回复里用 Markdown，但草稿正文内容本身必须保持纯文本。";
 const LEGACY_DEFAULT_SYSTEM_PROMPTS = new Set([
@@ -108,12 +109,14 @@ function compareAppVersions(left, right) {
   return 0;
 }
 
-function extractWindowsPreviewVersion(release) {
+function extractWindowsReleaseVersion(release) {
   const title = String(release?.name || "").trim();
-  if (!title.startsWith(WINDOWS_PREVIEW_TITLE_PREFIX)) {
-    return null;
-  }
-  const version = title.slice(WINDOWS_PREVIEW_TITLE_PREFIX.length).trim();
+  const version = title.startsWith(WINDOWS_RELEASE_TITLE_PREFIX)
+    ? title.slice(WINDOWS_RELEASE_TITLE_PREFIX.length).trim()
+    : title.startsWith(LEGACY_WINDOWS_PREVIEW_TITLE_PREFIX)
+      ? title.slice(LEGACY_WINDOWS_PREVIEW_TITLE_PREFIX.length).trim()
+      : null;
+  if (!version) return null;
   return parseAppVersion(version);
 }
 
@@ -1340,8 +1343,8 @@ async function checkForUpdates() {
 
     const releases = text ? JSON.parse(text) : [];
     const candidates = (Array.isArray(releases) ? releases : [])
-      .filter((release) => !release?.draft && release?.prerelease)
-      .map((release) => ({ release, version: extractWindowsPreviewVersion(release) }))
+      .filter((release) => !release?.draft && !release?.prerelease)
+      .map((release) => ({ release, version: extractWindowsReleaseVersion(release) }))
       .filter((item) => item.version)
       .sort((left, right) => compareAppVersions(right.version, left.version));
     const latest = candidates[0] || null;
@@ -1350,9 +1353,9 @@ async function checkForUpdates() {
       return {
         ok: true,
         currentVersion,
-        currentChannel: "Windows preview",
+        currentChannel: "Windows stable",
         hasUpdate: false,
-        message: "No Windows preview release was found.",
+        message: "No Windows stable release was found.",
         releasesUrl: RELEASES_PAGE_URL,
       };
     }
@@ -1367,7 +1370,7 @@ async function checkForUpdates() {
     return {
       ok: true,
       currentVersion,
-      currentChannel: "Windows preview",
+      currentChannel: "Windows stable",
       latestVersion,
       latestTitle: latest.release.name,
       latestTag: latest.release.tag_name,
@@ -1390,13 +1393,13 @@ async function checkForUpdates() {
           }
         : null,
       releasesUrl: RELEASES_PAGE_URL,
-      message: hasUpdate ? `Found ${latest.release.name}.` : "Already on the latest Windows preview version.",
+      message: hasUpdate ? `Found ${latest.release.name}.` : "Already on the latest Windows stable version.",
     };
   } catch (error) {
     return {
       ok: false,
       currentVersion,
-      currentChannel: "Windows preview",
+      currentChannel: "Windows stable",
       hasUpdate: false,
       message: error?.name === "AbortError" ? "Update check timed out." : error.message,
       releasesUrl: RELEASES_PAGE_URL,
@@ -1621,7 +1624,7 @@ ipcMain.handle("app:info", async () => ({
   isPackaged: app.isPackaged,
   version: app.getVersion(),
   platform: process.platform,
-  updateChannel: "Windows preview",
+  updateChannel: "Windows stable",
   userDataRoot,
   dataRoot,
   workspaceDir,

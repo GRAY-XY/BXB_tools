@@ -6,7 +6,7 @@ This document records the Windows in-app updater design and baseline implementat
 
 1. The user opens `设置 -> 软件更新`.
 2. The user clicks `检查更新`.
-3. If a newer Windows preview release exists, the app shows version, size, publish time, and release notes.
+3. If a newer Windows stable release exists, the app shows version, size, publish time, and release notes.
 4. The user clicks `下载并安装`.
 5. The app downloads the `.exe` installer into the local update cache.
 6. The app verifies file size and SHA256.
@@ -17,30 +17,33 @@ This document records the Windows in-app updater design and baseline implementat
 
 ## Release Asset Requirements
 
-Each Windows preview release should upload:
+Each Windows stable release should upload:
 
 ```text
-BXB Homework Setup 1.1.3-pre.exe
-BXB Homework Setup 1.1.3-pre.exe.blockmap
-BXB Homework Setup 1.1.3-pre.exe.sha256
+BXB Homework Setup 1.1.7.exe
+BXB Homework Setup 1.1.7.exe.sha256
 ```
+
+If the packager generates a `.blockmap` file, upload it as an additional asset. The in-app updater only requires the `.exe` installer and matching `.sha256` file.
 
 Release title rule:
 
 ```text
-BXB Homework Win v<major>.<minor>.<patch>-pre
+BXB Homework v<major>.<minor>.<patch>
 ```
 
 Tag rule:
 
 ```text
-pre-bxb-electron-v<major>.<minor>.<patch>-pre
+bxb-homework-v<major>.<minor>.<patch>
 ```
+
+The GitHub Release must be a normal release, not a prerelease, and should be marked as the latest release.
 
 The `.sha256` file should contain the installer hash, for example:
 
 ```text
-<sha256>  BXB Homework Setup 1.1.3-pre.exe
+<sha256>  BXB Homework Setup 1.1.7.exe
 ```
 
 ## Local Cache
@@ -55,9 +58,9 @@ Suggested files:
 
 ```text
 updates/
-  BXB Homework Setup 1.1.3-pre.exe.download
-  BXB Homework Setup 1.1.3-pre.exe
-  BXB Homework Setup 1.1.3-pre.exe.meta.json
+  BXB Homework Setup 1.1.7.exe.download
+  BXB Homework Setup 1.1.7.exe
+  BXB Homework Setup 1.1.7.exe.meta.json
   pending-update.json
 ```
 
