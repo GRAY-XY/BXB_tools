@@ -71,7 +71,7 @@
 
                 <StackPanel Spacing="4">
                     <TextBlock x:Name="PageTitleText" Text="主页" FontSize="30" FontWeight="SemiBold" />
-                    <TextBlock x:Name="PageSubtitleText" Text="WinUI 3 native shell" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                    <TextBlock x:Name="PageSubtitleText" Visibility="Collapsed" />
                 </StackPanel>
 
                 <Border x:Name="ToolbarCard" Grid.Row="1" Padding="14" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
@@ -104,7 +104,15 @@
                         <StackPanel Spacing="14">
                             <TextBlock Text="登录" FontSize="18" FontWeight="SemiBold" />
                             <TextBlock Text="使用现有 Playwright 登录流程。登录状态保存在本机应用数据目录。" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                            <TextBlock x:Name="HomeRuntimeText" Text="UI Runtime: WinUI" FontWeight="SemiBold" />
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="当前学期" FontWeight="SemiBold" />
+                                <ComboBox x:Name="HomeTermComboBox" MinWidth="280" PlaceholderText="读取学期中" />
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Button Content="切换学期" Click="OnHomeTermApplyClick" />
+                                    <Button Content="刷新学期" Click="OnHomeTermRefreshClick" />
+                                </StackPanel>
+                            </StackPanel>
+                            <TextBlock x:Name="HomeRuntimeText" Text="BXB Homework" FontWeight="SemiBold" />
                         </StackPanel>
                     </Border>
                     <Border Grid.Column="1" Padding="18" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
@@ -169,6 +177,7 @@
                             <StackPanel Orientation="Horizontal" Spacing="8">
                                 <ComboBox x:Name="ConversationComboBox" Width="360" SelectionChanged="OnConversationComboChanged" />
                                 <Button Content="新建" Click="OnAgentNewConversationClick" />
+                                <Button Content="重命名" Click="OnAgentRenameConversationClick" />
                                 <Button Content="删除" Click="OnAgentDeleteConversationClick" />
                             </StackPanel>
                             <Grid x:Name="AgentMarkdownHost" Grid.Row="1">
@@ -256,6 +265,14 @@
                                 AcceptsReturn="True"
                                 TextWrapping="Wrap"
                                 Visibility="Collapsed" />
+                            <ScrollViewer
+                                x:Name="HomeworkDetailScrollViewer"
+                                Grid.Row="1"
+                                HorizontalScrollBarVisibility="Disabled"
+                                VerticalScrollBarVisibility="Auto"
+                                Visibility="Collapsed">
+                                <StackPanel x:Name="HomeworkDetailStackPanel" Spacing="12" />
+                            </ScrollViewer>
                             <ListView
                                 x:Name="PrivateThreadListView"
                                 Grid.Row="1"

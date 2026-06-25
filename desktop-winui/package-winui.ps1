@@ -93,7 +93,7 @@ Remove-WorkspaceDirectory $distRoot
 New-Item -ItemType Directory -Path $unpackedDir -Force | Out-Null
 
 Get-ChildItem -LiteralPath $buildOutput -Force | ForEach-Object {
-  if ($_.Name -eq "BxbHomework.WinUI.exe.WebView2") {
+  if ($_.Name -eq "BXBHomework.exe.WebView2") {
     return
   }
   if ($_.Extension -eq ".pdb") {

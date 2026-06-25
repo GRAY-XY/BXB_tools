@@ -46,8 +46,8 @@ Section "Install"
   Delete "$SMPROGRAMS\BXB Homework WinUI\BXB Homework WinUI.lnk"
   RMDir "$SMPROGRAMS\BXB Homework WinUI"
   CreateDirectory "$SMPROGRAMS\BXB Homework"
-  CreateShortcut "$SMPROGRAMS\BXB Homework\BXB Homework.lnk" "$INSTDIR\BxbHomework.WinUI.exe"
-  CreateShortcut "$DESKTOP\BXB Homework.lnk" "$INSTDIR\BxbHomework.WinUI.exe"
+  CreateShortcut "$SMPROGRAMS\BXB Homework\BXB Homework.lnk" "$INSTDIR\BXBHomework.exe"
+  CreateShortcut "$DESKTOP\BXB Homework.lnk" "$INSTDIR\BXBHomework.exe"
 SectionEnd
 
 Section "Uninstall"

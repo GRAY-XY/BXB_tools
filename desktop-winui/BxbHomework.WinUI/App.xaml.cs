@@ -37,7 +37,7 @@ public partial class App : Application
         {
             var directory = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "BXBHomeworkWinUIPrototype");
+                "BXBHomework");
             Directory.CreateDirectory(directory);
             File.AppendAllText(
                 Path.Combine(directory, "app.log"),
