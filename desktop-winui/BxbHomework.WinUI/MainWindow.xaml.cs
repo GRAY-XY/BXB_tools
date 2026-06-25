@@ -4,6 +4,7 @@ using System.Text.Json;
 using BxbHomework.WinUI.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.Storage.Streams;
 
@@ -35,6 +36,8 @@ public sealed class PrivateThreadMessage
 }
 
 internal sealed record AgentChatMessage(string Role, string Text);
+
+internal sealed record AttachmentDownloadRequest(string TaskId, string FileId, string FileName);
 
 public sealed partial class MainWindow : Window
 {
@@ -167,6 +170,8 @@ public sealed partial class MainWindow : Window
         DetailTextBox.Visibility = Visibility.Visible;
         EditorTextBox.Text = "";
         EditorTextBox.Visibility = Visibility.Collapsed;
+        HomeworkDetailScrollViewer.Visibility = Visibility.Collapsed;
+        HomeworkDetailStackPanel.Children.Clear();
         PrivateThreadListView.Visibility = Visibility.Collapsed;
         PrivateMessageComposerPanel.Visibility = Visibility.Collapsed;
         PrivateMessageInputBox.Text = "";
@@ -175,6 +180,8 @@ public sealed partial class MainWindow : Window
         DetailImageCaption.Text = "";
         CommandInputBox.Text = "";
         CommandInputBox.Visibility = Visibility.Collapsed;
+        HomeTermComboBox.Items.Clear();
+        HomeTermComboBox.IsEnabled = true;
         ToolbarCard.Visibility = Visibility.Visible;
         HomePanel.Visibility = Visibility.Collapsed;
         AgentPanel.Visibility = Visibility.Collapsed;
@@ -396,6 +403,8 @@ public sealed partial class MainWindow : Window
             HomePendingTaskText.Text = "-";
             HomeTermText.Text = "-";
             HomeSessionFileText.Text = "等待后端返回当前登录状态。";
+            HomeTermComboBox.Items.Clear();
+            HomeTermComboBox.PlaceholderText = "未读取到学期";
             return;
         }
 
@@ -404,7 +413,7 @@ public sealed partial class MainWindow : Window
         var user = GetString(value, "user.name", "未知用户");
         var className = GetString(value, "currentClass.name", "未知班级");
         var subject = GetString(value, "currentSubject.name", "未知课程");
-        var term = FirstString(value, "currentTermName", "currentTermId");
+        var term = CurrentTermLabel(value);
         var pending = GetString(value, "currentSubject.unSubmitCount", "0");
         var sessionFile = GetString(value, "sessionFile", "");
 
@@ -414,6 +423,63 @@ public sealed partial class MainWindow : Window
         HomePendingTaskText.Text = pending;
         HomeTermText.Text = string.IsNullOrWhiteSpace(term) ? "未知学期" : term;
         HomeSessionFileText.Text = string.IsNullOrWhiteSpace(sessionFile) ? "-" : sessionFile;
+        PopulateHomeTermCombo(value);
+    }
+
+    private void PopulateHomeTermCombo(JsonElement session)
+    {
+        var currentTermId = GetString(session, "currentTermId", "");
+        _suppressComboEvents = true;
+        HomeTermComboBox.Items.Clear();
+
+        if (session.TryGetProperty("availableTerms", out var terms) && terms.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var term in terms.EnumerateArray())
+            {
+                var id = GetString(term, "id", "");
+                var name = FirstString(term, "name", "termName", "id");
+                if (string.IsNullOrWhiteSpace(id) && string.IsNullOrWhiteSpace(name)) continue;
+                HomeTermComboBox.Items.Add(new ComboItem
+                {
+                    Key = string.IsNullOrWhiteSpace(id) ? name : id,
+                    Label = string.IsNullOrWhiteSpace(name) ? id : name,
+                    Data = term.Clone(),
+                });
+            }
+        }
+
+        HomeTermComboBox.PlaceholderText = HomeTermComboBox.Items.Count == 0 ? "未读取到学期" : "选择学期";
+        HomeTermComboBox.IsEnabled = HomeTermComboBox.Items.Count > 0;
+        for (var index = 0; index < HomeTermComboBox.Items.Count; index += 1)
+        {
+            if ((HomeTermComboBox.Items[index] as ComboItem)?.Key == currentTermId)
+            {
+                HomeTermComboBox.SelectedIndex = index;
+                break;
+            }
+        }
+        if (HomeTermComboBox.SelectedIndex < 0 && HomeTermComboBox.Items.Count > 0)
+        {
+            HomeTermComboBox.SelectedIndex = 0;
+        }
+        _suppressComboEvents = false;
+    }
+
+    private static string CurrentTermLabel(JsonElement session)
+    {
+        var currentTermId = GetString(session, "currentTermId", "");
+        if (session.TryGetProperty("availableTerms", out var terms) && terms.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var term in terms.EnumerateArray())
+            {
+                if (GetString(term, "id", "") == currentTermId)
+                {
+                    return FirstString(term, "name", "termName", "id");
+                }
+            }
+        }
+
+        return FirstString(session, "currentTermName", "currentTermId");
     }
 
     private async Task LoadConversationsAsync(int loadVersion = 0)
@@ -1144,9 +1210,25 @@ public sealed partial class MainWindow : Window
     {
         await RunUiAsync(async () =>
         {
+            _deleteConversationArmed = false;
             await InvokeAsync("agent:conversations:create", new { title = "新对话" });
             AgentInputBox.Text = "";
             AgentStepsTextBox.Text = "已开始新对话。";
+            await LoadConversationsAsync();
+        });
+    }
+
+    private async void OnAgentRenameConversationClick(object sender, RoutedEventArgs args)
+    {
+        await RunUiAsync(async () =>
+        {
+            if (ConversationComboBox.SelectedItem is not ComboItem item) return;
+            _deleteConversationArmed = false;
+            var nextTitle = await PromptConversationTitleAsync(item.Label);
+            if (nextTitle is null) return;
+            await InvokeAsync("agent:conversations:rename", new { conversationId = item.Key, title = nextTitle });
+            AgentStepsTextBox.Text = "对话已重命名。";
+            SetStatus("对话已重命名");
             await LoadConversationsAsync();
         });
     }
@@ -1167,6 +1249,41 @@ public sealed partial class MainWindow : Window
             AgentStepsTextBox.Text = "对话已删除。";
             await LoadConversationsAsync();
         });
+    }
+
+    private async Task<string?> PromptConversationTitleAsync(string currentTitle)
+    {
+        var input = new TextBox
+        {
+            Text = currentTitle,
+            MaxLength = 80,
+            PlaceholderText = "输入新的对话名称",
+        };
+        input.Loaded += (_, _) =>
+        {
+            input.Focus(FocusState.Programmatic);
+            input.SelectAll();
+        };
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = RootNavigation.XamlRoot,
+            Title = "重命名对话",
+            Content = input,
+            PrimaryButtonText = "保存",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Primary,
+        };
+
+        var result = await dialog.ShowAsync();
+        if (result != ContentDialogResult.Primary) return null;
+        var title = input.Text.Trim();
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            SetStatus("对话名称不能为空");
+            return null;
+        }
+        return title;
     }
 
     private async void OnAgentCompactClick(object sender, RoutedEventArgs args)
@@ -1220,7 +1337,7 @@ public sealed partial class MainWindow : Window
                     break;
                 case "homework":
                     var detail = await ToolAsync("read_task_content", new { task_id = item.Id, max_chars = 6000 });
-                    SetDetail(FormatTaskDetail(detail));
+                    ShowHomeworkDetail(detail);
                     break;
                 case "workspace":
                     await OpenWorkspaceItemAsync(item);
@@ -1527,6 +1644,42 @@ public sealed partial class MainWindow : Window
         SettingsModelNameBox.Text = (item.Tag?.ToString() ?? item.Content?.ToString() ?? "").Replace("（当前）", "");
     }
 
+    private async void OnHomeTermApplyClick(object sender, RoutedEventArgs args)
+    {
+        await RunUiAsync(async () =>
+        {
+            if (_currentPage != "home" || HomeTermComboBox.SelectedItem is not ComboItem item) return;
+            await ToolAsync("set_current_term", new { term_id = item.Key });
+            await RefreshSessionAsync();
+            SetStatus($"已切换学期：{item.Label}");
+        });
+    }
+
+    private async void OnHomeTermRefreshClick(object sender, RoutedEventArgs args)
+    {
+        await RunUiAsync(async () =>
+        {
+            if (_currentPage != "home") return;
+            await ToolAsync("refresh_context");
+            await RefreshSessionAsync();
+            SetStatus("学期列表已刷新");
+        });
+    }
+
+    private async void OnHomeworkAttachmentDownloadClick(object sender, RoutedEventArgs args)
+    {
+        if ((sender as Button)?.Tag is not AttachmentDownloadRequest request) return;
+        await RunUiAsync(async () =>
+        {
+            await ToolAsync("download_task_attachment", new { task_id = request.TaskId, file_id = request.FileId });
+            SetStatus($"已下载附件：{request.FileName}");
+            if (_currentPage == "workspace")
+            {
+                await LoadWorkspaceFilesAsync();
+            }
+        });
+    }
+
     private async Task SetDetailImageAsync(JsonElement image, string fallbackTitle)
     {
         var fileName = GetString(image, "fileName", fallbackTitle);
@@ -1537,6 +1690,7 @@ public sealed partial class MainWindow : Window
         DetailTitleText.Text = fileName;
         DetailTextBox.Visibility = Visibility.Collapsed;
         EditorTextBox.Visibility = Visibility.Collapsed;
+        HomeworkDetailScrollViewer.Visibility = Visibility.Collapsed;
         PrivateThreadListView.Visibility = Visibility.Collapsed;
         DetailImageScrollViewer.Visibility = Visibility.Visible;
         DetailImageCaption.Text = $"{mimeType}\n{path}";
@@ -1635,6 +1789,230 @@ public sealed partial class MainWindow : Window
         RenderAgentMessages(_agentPreviewMessages);
     }
 
+    private void ShowHomeworkDetail(JsonElement detail)
+    {
+        var taskId = GetString(detail, "taskId", "");
+        var title = FirstString(detail, "taskSummary.activityName", "taskSummary.title", "taskSummary.name", "taskTitle");
+        var course = FirstString(detail, "taskSummary.courseName", "context.currentSubject.name", "subjectName");
+        var deadline = FirstString(detail, "taskSummary.endTime", "taskSummary.deadline", "taskSummary.endDate");
+        var releaseTime = FirstString(detail, "taskSummary.releaseTime", "releaseTime", "createTime");
+        var creator = FirstString(detail, "taskSummary.createName", "teacherName", "creatorName");
+        var scoreType = FirstString(detail, "taskSummary.scoreTypeName", "taskSummary.scoreCategory", "taskSummary.homeworkType");
+        var status = FormatHomeworkStatus(detail);
+        var content = FirstString(detail, "content", "readableText", "text", "taskText");
+        var answer = FirstString(detail, "answer", "answerText", "referenceAnswer");
+
+        DetailTitleText.Text = "作业详情";
+        DetailTextBox.Visibility = Visibility.Collapsed;
+        EditorTextBox.Visibility = Visibility.Collapsed;
+        PrivateThreadListView.Visibility = Visibility.Collapsed;
+        DetailImageScrollViewer.Visibility = Visibility.Collapsed;
+        WorkspaceImagePreview.Source = null;
+        DetailImageCaption.Text = "";
+        HomeworkDetailScrollViewer.Visibility = Visibility.Visible;
+        HomeworkDetailStackPanel.Children.Clear();
+
+        HomeworkDetailStackPanel.Children.Add(CreateHomeworkSection(
+            "基本信息",
+            CreateHomeworkMetadataGrid(
+                ("作业名称", EmptyDash(title)),
+                ("课程", EmptyDash(course)),
+                ("截止时间", EmptyDash(deadline)),
+                ("发布时间", EmptyDash(releaseTime)),
+                ("发布人", EmptyDash(creator)),
+                ("状态", EmptyDash(status)),
+                ("评分方式", EmptyDash(scoreType)),
+                ("Task ID", EmptyDash(taskId)))));
+
+        HomeworkDetailStackPanel.Children.Add(CreateHomeworkSection(
+            "作业内容",
+            CreateHomeworkText(string.IsNullOrWhiteSpace(content) ? "暂无可读取正文。" : content)));
+
+        HomeworkDetailStackPanel.Children.Add(CreateHomeworkSection(
+            "附件",
+            CreateHomeworkAttachmentList(detail, taskId)));
+
+        if (!string.IsNullOrWhiteSpace(answer))
+        {
+            HomeworkDetailStackPanel.Children.Add(CreateHomeworkSection("参考内容 / 答案", CreateHomeworkText(answer)));
+        }
+
+        var readRows = new List<(string Label, string Value)>
+        {
+            ("作业正文字数", EmptyDash(GetString(detail, "contentLength", ""))),
+            ("参考内容字数", EmptyDash(GetString(detail, "answerLength", ""))),
+            ("正文是否截断", GetString(detail, "contentTruncated", "false") == "true" ? "是" : "否"),
+            ("参考是否截断", GetString(detail, "answerTruncated", "false") == "true" ? "是" : "否"),
+        };
+        HomeworkDetailStackPanel.Children.Add(CreateHomeworkSection("读取状态", CreateHomeworkMetadataGrid(readRows.ToArray())));
+    }
+
+    private static string FormatHomeworkStatus(JsonElement detail)
+    {
+        var direct = FirstString(detail, "taskSummary.__statusText", "taskSummary.statusText", "taskSummary.score", "taskSummary.scoreLevel");
+        if (!string.IsNullOrWhiteSpace(direct)) return direct;
+
+        var participated = GetString(detail, "taskSummary.isParticipate", "");
+        var correction = GetString(detail, "taskSummary.correction", "");
+        var rows = new[]
+        {
+            participated == "true" ? "已参与" : participated == "false" ? "未参与" : null,
+            correction == "true" ? "允许订正/补交" : correction == "false" ? "未开放订正/补交" : null,
+        };
+        return string.Join(" · ", rows.Where(row => !string.IsNullOrWhiteSpace(row)));
+    }
+
+    private static Border CreateHomeworkSection(string title, UIElement content)
+    {
+        var stack = new StackPanel { Spacing = 9 };
+        stack.Children.Add(new TextBlock
+        {
+            Text = title,
+            FontSize = 17,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+        });
+        stack.Children.Add(content);
+
+        return new Border
+        {
+            Padding = new Thickness(14),
+            CornerRadius = new CornerRadius(8),
+            BorderThickness = new Thickness(1),
+            BorderBrush = ThemeBrush("CardStrokeColorDefaultBrush"),
+            Background = ThemeBrush("CardBackgroundFillColorDefaultBrush"),
+            Child = stack,
+        };
+    }
+
+    private static TextBlock CreateHomeworkText(string text)
+    {
+        return new TextBlock
+        {
+            Text = text,
+            TextWrapping = TextWrapping.WrapWholeWords,
+            LineHeight = 22,
+        };
+    }
+
+    private static Grid CreateHomeworkMetadataGrid(params (string Label, string Value)[] rows)
+    {
+        var grid = new Grid { ColumnSpacing = 12, RowSpacing = 8 };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(118) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        for (var index = 0; index < rows.Length; index += 1)
+        {
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+            var label = new TextBlock
+            {
+                Text = rows[index].Label,
+                Foreground = ThemeBrush("TextFillColorSecondaryBrush"),
+                TextWrapping = TextWrapping.Wrap,
+            };
+            Grid.SetRow(label, index);
+            Grid.SetColumn(label, 0);
+            grid.Children.Add(label);
+
+            var value = new TextBlock
+            {
+                Text = string.IsNullOrWhiteSpace(rows[index].Value) ? "-" : rows[index].Value,
+                TextWrapping = TextWrapping.WrapWholeWords,
+            };
+            Grid.SetRow(value, index);
+            Grid.SetColumn(value, 1);
+            grid.Children.Add(value);
+        }
+
+        return grid;
+    }
+
+    private UIElement CreateHomeworkAttachmentList(JsonElement detail, string taskId)
+    {
+        var stack = new StackPanel { Spacing = 8 };
+        if (!detail.TryGetProperty("attachments", out var attachments) || attachments.ValueKind != JsonValueKind.Array)
+        {
+            stack.Children.Add(CreateHomeworkText("暂无附件。"));
+            return stack;
+        }
+
+        var rows = attachments.EnumerateArray().ToList();
+        if (rows.Count == 0)
+        {
+            stack.Children.Add(CreateHomeworkText("暂无附件。"));
+            return stack;
+        }
+
+        foreach (var attachment in rows)
+        {
+            var fileId = FirstString(attachment, "fileId", "id");
+            var name = FirstString(attachment, "fileName", "name", "filename");
+            var fileExt = FirstString(attachment, "fileExt", "ext");
+            var source = FormatAttachmentSource(FirstString(attachment, "source"));
+            var size = FirstString(attachment, "fileSize", "size", "sizeBytes");
+            var createTime = FirstString(attachment, "createTime", "uploaddate");
+            var meta = string.Join(" · ", new[] { source, fileExt, string.IsNullOrWhiteSpace(size) ? null : $"{size} bytes", createTime, string.IsNullOrWhiteSpace(fileId) ? null : $"ID {fileId}" }.Where(value => !string.IsNullOrWhiteSpace(value)));
+
+            var row = new Grid { ColumnSpacing = 12 };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            var textStack = new StackPanel { Spacing = 3 };
+            textStack.Children.Add(new TextBlock
+            {
+                Text = string.IsNullOrWhiteSpace(name) ? "未命名附件" : name,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                TextWrapping = TextWrapping.WrapWholeWords,
+            });
+            textStack.Children.Add(new TextBlock
+            {
+                Text = string.IsNullOrWhiteSpace(meta) ? "附件" : meta,
+                Foreground = ThemeBrush("TextFillColorSecondaryBrush"),
+                TextWrapping = TextWrapping.WrapWholeWords,
+            });
+            Grid.SetColumn(textStack, 0);
+            row.Children.Add(textStack);
+
+            var button = new Button
+            {
+                Content = "下载到工作区",
+                IsEnabled = !string.IsNullOrWhiteSpace(fileId),
+                Tag = new AttachmentDownloadRequest(taskId, fileId, string.IsNullOrWhiteSpace(name) ? "附件" : name),
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            button.Click += OnHomeworkAttachmentDownloadClick;
+            Grid.SetColumn(button, 1);
+            row.Children.Add(button);
+
+            stack.Children.Add(new Border
+            {
+                Padding = new Thickness(10),
+                CornerRadius = new CornerRadius(6),
+                BorderThickness = new Thickness(1),
+                BorderBrush = ThemeBrush("CardStrokeColorDefaultBrush"),
+                Child = row,
+            });
+        }
+
+        return stack;
+    }
+
+    private static string FormatAttachmentSource(string source) => source switch
+    {
+        "task" => "作业附件",
+        "reference" => "参考附件",
+        "my-submission" => "我的提交",
+        "submitted" => "其他提交",
+        _ => source,
+    };
+
+    private static string EmptyDash(string value) => string.IsNullOrWhiteSpace(value) ? "-" : value;
+
+    private static Brush? ThemeBrush(string key)
+    {
+        return Application.Current.Resources.TryGetValue(key, out var value) ? value as Brush : null;
+    }
+
     private void ShowDraft(JsonElement draft)
     {
         DetailTitleText.Text = GetString(draft, "taskTitle", $"任务 {GetString(draft, "taskId", "")}");
@@ -1643,6 +2021,7 @@ public sealed partial class MainWindow : Window
         SetDraftActionButtons(true);
         DetailTextBox.Visibility = Visibility.Collapsed;
         EditorTextBox.Visibility = Visibility.Visible;
+        HomeworkDetailScrollViewer.Visibility = Visibility.Collapsed;
         PrivateThreadListView.Visibility = Visibility.Collapsed;
         DetailImageScrollViewer.Visibility = Visibility.Collapsed;
         EditorTextBox.Text = GetString(draft, "draftText", "");
@@ -1654,6 +2033,7 @@ public sealed partial class MainWindow : Window
         DetailTitleText.Text = PrivateContactLabel(item.Data);
         DetailTextBox.Visibility = Visibility.Collapsed;
         EditorTextBox.Visibility = Visibility.Collapsed;
+        HomeworkDetailScrollViewer.Visibility = Visibility.Collapsed;
         DetailImageScrollViewer.Visibility = Visibility.Collapsed;
         WorkspaceImagePreview.Source = null;
         DetailImageCaption.Text = "";
@@ -1849,6 +2229,8 @@ public sealed partial class MainWindow : Window
     {
         DetailTextBox.Visibility = Visibility.Visible;
         EditorTextBox.Visibility = Visibility.Collapsed;
+        HomeworkDetailScrollViewer.Visibility = Visibility.Collapsed;
+        HomeworkDetailStackPanel.Children.Clear();
         PrivateThreadListView.Visibility = Visibility.Collapsed;
         DetailImageScrollViewer.Visibility = Visibility.Collapsed;
         WorkspaceImagePreview.Source = null;
