@@ -5,6 +5,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { fetch as undiciFetch, ProxyAgent } from "undici";
 import { BanxuebangClient } from "../src/banxuebang-client.js";
 import { SessionStore } from "../src/session-store.js";
 import { createToolDefinitions, executeTool } from "../src/tool-definitions.js";
@@ -59,6 +60,7 @@ let updateState = {
   filePath: null,
   message: "",
 };
+const updateProxyAgents = new Map();
 
 process.env.BANXUEBANG_SESSION_FILE = sessionFile;
 process.env.BANXUEBANG_DRAFT_DIR = draftDir;
@@ -66,6 +68,114 @@ process.env.BANXUEBANG_WORKSPACE_DIR = workspaceDir;
 
 function writeResponse(response) {
   process.stdout.write(`${JSON.stringify(response)}\n`);
+}
+
+function updateProxyCandidates() {
+  const explicitProxy = String(process.env.BXB_UPDATE_PROXY || "").trim();
+  if (/^(direct|none|off)$/i.test(explicitProxy)) {
+    return [null];
+  }
+
+  const configured = [
+    explicitProxy,
+    process.env.HTTPS_PROXY,
+    process.env.https_proxy,
+    process.env.HTTP_PROXY,
+    process.env.http_proxy,
+    ...readWindowsSystemProxyUrls(),
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+
+  return [...new Set(configured), null];
+}
+
+function readWindowsSystemProxyUrls() {
+  if (process.platform !== "win32") {
+    return [];
+  }
+
+  try {
+    const proxyEnable = queryWindowsInternetSetting("ProxyEnable");
+    if (!/\b0x1\b|\b1\b/.test(proxyEnable)) {
+      return [];
+    }
+
+    const proxyServer = queryWindowsInternetSetting("ProxyServer");
+    return parseWindowsProxyServer(proxyServer);
+  } catch {
+    return [];
+  }
+}
+
+function queryWindowsInternetSetting(name) {
+  const result = spawnSync(
+    "reg.exe",
+    ["query", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings", "/v", name],
+    { encoding: "utf8", windowsHide: true },
+  );
+  if (result.status !== 0) return "";
+  return `${result.stdout || ""}\n${result.stderr || ""}`;
+}
+
+function parseWindowsProxyServer(value) {
+  const match = String(value || "").match(/ProxyServer\s+REG_\w+\s+(.+)/i);
+  const raw = (match?.[1] || "").trim();
+  if (!raw) return [];
+
+  const entries = raw.split(";").map((entry) => entry.trim()).filter(Boolean);
+  const keyed = new Map();
+  const plain = [];
+  for (const entry of entries) {
+    const separator = entry.indexOf("=");
+    if (separator > 0) {
+      keyed.set(entry.slice(0, separator).toLowerCase(), entry.slice(separator + 1));
+    } else {
+      plain.push(entry);
+    }
+  }
+
+  return [
+    keyed.get("https"),
+    keyed.get("http"),
+    keyed.get("all"),
+    ...plain,
+  ]
+    .map(normalizeHttpProxyUrl)
+    .filter(Boolean);
+}
+
+function normalizeHttpProxyUrl(value) {
+  const text = String(value || "").trim();
+  if (!text || /^socks/i.test(text)) return "";
+  if (/^https?:\/\//i.test(text)) return text;
+  return `http://${text}`;
+}
+
+function updateProxyAgent(proxyUrl) {
+  if (!proxyUrl) return undefined;
+  if (!updateProxyAgents.has(proxyUrl)) {
+    updateProxyAgents.set(proxyUrl, new ProxyAgent(proxyUrl));
+  }
+  return updateProxyAgents.get(proxyUrl);
+}
+
+async function fetchUpdateUrl(url, options = {}) {
+  const candidates = updateProxyCandidates();
+  const failures = [];
+  for (const proxyUrl of candidates) {
+    try {
+      const init = { ...options };
+      const dispatcher = updateProxyAgent(proxyUrl);
+      if (dispatcher) init.dispatcher = dispatcher;
+      return await undiciFetch(url, init);
+    } catch (error) {
+      failures.push(`${proxyUrl || "direct"}: ${error?.message || error}`);
+    }
+  }
+
+  const detail = failures.length ? `；已尝试 ${failures.join("；")}` : "";
+  throw new Error(`无法连接 GitHub 更新服务${detail}`);
 }
 
 async function readJson(filePath, fallback) {
@@ -843,7 +953,7 @@ async function readPackageVersion() {
 async function checkForUpdates() {
   const currentVersion = await readPackageVersion();
   const currentParsed = parseAppVersion(currentVersion);
-  const response = await fetch(RELEASES_API_URL, { headers: { Accept: "application/vnd.github+json", "User-Agent": "BXB-Homework" } });
+  const response = await fetchUpdateUrl(RELEASES_API_URL, { headers: { Accept: "application/vnd.github+json", "User-Agent": "BXB-Homework" } });
   const text = await response.text();
   if (!response.ok) throw new Error(`GitHub returned HTTP ${response.status}: ${text.slice(0, 500)}`);
   const releases = text ? JSON.parse(text) : [];
@@ -893,7 +1003,7 @@ async function sha256File(filePath) {
 }
 
 async function downloadText(url) {
-  const response = await fetch(url, { headers: { "User-Agent": "BXB-Homework-WinUI" } });
+  const response = await fetchUpdateUrl(url, { headers: { "User-Agent": "BXB-Homework-WinUI" } });
   const text = await response.text();
   if (!response.ok) throw new Error(`下载失败 HTTP ${response.status}: ${text.slice(0, 300)}`);
   return text;
@@ -908,7 +1018,7 @@ async function downloadUpdate() {
   const finalPath = path.join(updateDir, path.basename(update.installerAsset.name).replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_"));
   const tempPath = `${finalPath}.download`;
   setUpdateState({ status: "downloading", update, filePath: finalPath, totalBytes: update.installerAsset.size || 0, downloadedBytes: 0, percent: 0, message: "正在下载安装包..." });
-  const response = await fetch(update.installerAsset.downloadUrl, { headers: { "User-Agent": "BXB-Homework-WinUI" } });
+  const response = await fetchUpdateUrl(update.installerAsset.downloadUrl, { headers: { "User-Agent": "BXB-Homework-WinUI" } });
   if (!response.ok) throw new Error(`安装包下载失败 HTTP ${response.status}`);
   const file = createWriteStream(tempPath);
   let downloaded = 0;
