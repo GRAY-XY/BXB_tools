@@ -13,7 +13,7 @@
 - UI 只负责展示与交互
 - Agent 负责最近几轮对话、工具选择和多步编排
 - 后端能力通过接口层注入
-- 当前默认后端是 `scripts/direct-tool.js`
+- 当前默认后端是 `backend/cli/direct-tool.js`
 - 后端装配通过 `banxuebang_homework/backend_factory.py` 统一管理
 - 后续可以替换为 `MCP`、`Agent`、`PowerShell` 或其他宿主
 

@@ -36,24 +36,24 @@
     ],
     "extraResources": [
       {
-        "from": "../src",
-        "to": "payload/src"
+        "from": "../../backend/src",
+        "to": "payload/backend/src"
       },
       {
-        "from": "../node_modules",
+        "from": "../../node_modules",
         "to": "payload/node_modules"
       },
       {
-        "from": "../package.json",
+        "from": "../../package.json",
         "to": "payload/package.json"
       },
       {
-        "from": "../build_assets/ms-playwright-browsers.zip",
+        "from": "../../build_assets/ms-playwright-browsers.zip",
         "to": "payload/runtime/ms-playwright-browsers.zip"
       }
     ],
     "directories": {
-      "output": "../dist-electron-app"
+      "output": "../../dist-electron-app"
     },
     "win": {
       "signAndEditExecutable": false,

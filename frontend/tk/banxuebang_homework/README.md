@@ -8,7 +8,7 @@
 - 不再自动 `pip install`
 - 不再保存明文密码
 - 不再直接依赖独立 Python Playwright 登录实现
-- 默认通过 `scripts/direct-tool.js` 复用 `main` 分支已经存在的能力
+- 默认通过 `backend/cli/direct-tool.js` 复用 `main` 分支已经存在的能力
 
 ## Current Architecture
 
@@ -17,7 +17,7 @@ Tkinter UI
   -> llm_agent.py
       -> backend_factory.py
           -> DirectToolBackend
-              -> node scripts/direct-tool.js
+              -> node backend/cli/direct-tool.js
               -> main-branch Banxuebang client
 ```
 
@@ -73,31 +73,31 @@ Tkinter UI
 在仓库根目录执行：
 
 ```bash
-python -m UI.banxuebang_homework.run
+python -m frontend.tk.banxuebang_homework.run
 ```
 
 也可以显式指定后端或仓库路径：
 
 ```bash
-python -m UI.banxuebang_homework.run --backend direct-tool --repo-root D:\MCP_Server
+python -m frontend.tk.banxuebang_homework.run --backend direct-tool --repo-root D:\MCP_Server
 ```
 
 只测试工具后端，不启动界面：
 
 ```bash
-python -m UI.banxuebang_homework.smoke_test --tool session_status
+python -m frontend.tk.banxuebang_homework.smoke_test --tool session_status
 ```
 
 测试 Agent 编排：
 
 ```bash
-python -m UI.banxuebang_homework.agent_smoke_test
+python -m frontend.tk.banxuebang_homework.agent_smoke_test
 ```
 
 测试 LLM 工具调用链：
 
 ```bash
-python -m UI.banxuebang_homework.llm_agent_smoke_test
+python -m frontend.tk.banxuebang_homework.llm_agent_smoke_test
 ```
 
 ## Model Config
@@ -130,5 +130,5 @@ UI 里新增了“模型”页，支持填写：
 
 - 已安装 Python 3.10+
 - 已安装 Node.js
-- 仓库根目录下的 `scripts/direct-tool.js` 可以正常运行
+- 仓库根目录下的 `backend/cli/direct-tool.js` 可以正常运行
 - 如果需要浏览器登录或截图能力，请先准备 Playwright Chromium

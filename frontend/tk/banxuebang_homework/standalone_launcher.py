@@ -11,12 +11,12 @@ from tkinter import messagebox, ttk
 import zipfile
 import ttkbootstrap as ttkb
 
-from UI.banxuebang_homework.backend_factory import create_backend
-from UI.banxuebang_homework.tk_app import HomeworkUiApp
+from frontend.tk.banxuebang_homework.backend_factory import create_backend
+from frontend.tk.banxuebang_homework.tk_app import HomeworkUiApp
 
 
 APP_NAME = "BXB Homework UI"
-PAYLOAD_VERSION = "standalone-2026-04-28-3"
+PAYLOAD_VERSION = "standalone-2026-06-28-frontend-backend"
 NODE_DIST = "node-v22.15.0-win-x64"
 NODE_ZIP_NAME = f"{NODE_DIST}.zip"
 BROWSER_ARCHIVE_NAME = "ms-playwright-browsers.zip"
@@ -117,7 +117,7 @@ def _log(message: str) -> None:
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    return Path(__file__).resolve().parents[3]
 
 
 def _resource_root() -> Path:
@@ -163,7 +163,7 @@ def _copy_payload(status: BootstrapWindow) -> Path:
     version_file = _payload_version_file(target_root)
     current_version = version_file.read_text(encoding="utf-8").strip() if version_file.exists() else None
 
-    if current_version == PAYLOAD_VERSION and (target_root / "src").exists() and (target_root / "scripts").exists():
+    if current_version == PAYLOAD_VERSION and (target_root / "backend" / "src").exists() and (target_root / "backend" / "cli").exists():
         status.set_status("Runtime payload is ready.", str(target_root))
         return target_root
 
@@ -172,7 +172,7 @@ def _copy_payload(status: BootstrapWindow) -> Path:
         shutil.rmtree(target_root, ignore_errors=True)
     target_root.mkdir(parents=True, exist_ok=True)
 
-    for relative in ("src", "scripts", "node_modules", "package.json", "package-lock.json", "README.md"):
+    for relative in ("backend", "node_modules", "package.json", "package-lock.json", "README.md"):
         source = source_root / relative
         target = target_root / relative
         if not source.exists():

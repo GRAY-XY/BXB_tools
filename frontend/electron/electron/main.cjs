@@ -7,7 +7,7 @@ const { spawn, spawnSync } = require("node:child_process");
 const { pathToFileURL } = require("node:url");
 
 const isDev = !app.isPackaged;
-const repoRoot = path.resolve(__dirname, "..", "..");
+const repoRoot = path.resolve(__dirname, "..", "..", "..");
 const payloadRoot = isDev ? repoRoot : path.join(process.resourcesPath, "payload");
 const userDataRoot = app.getPath("userData");
 const dataRoot = path.join(userDataRoot, ".banxuebang");
@@ -590,7 +590,7 @@ async function getToolRuntime() {
     process.env.BANXUEBANG_DRAFT_DIR = draftDir;
     process.env.BANXUEBANG_WORKSPACE_DIR = workspaceDir;
 
-    const srcRoot = path.join(payloadRoot, "src");
+    const srcRoot = path.join(payloadRoot, "backend", "src");
     const [{ BanxuebangClient }, { SessionStore }, { createToolDefinitions, executeTool }] = await Promise.all([
       import(pathToFileURL(path.join(srcRoot, "banxuebang-client.js")).href),
       import(pathToFileURL(path.join(srcRoot, "session-store.js")).href),

@@ -73,7 +73,7 @@ public sealed class NodeBackendClient : IAsyncDisposable
             }
 
             var runtime = FindBackendRuntime();
-            var backendScript = Path.Combine(runtime.PayloadRoot, "scripts", "winui-backend.js");
+            var backendScript = Path.Combine(runtime.PayloadRoot, "backend", "bridge", "winui-backend.js");
             if (!File.Exists(backendScript))
             {
                 throw new FileNotFoundException("Cannot find WinUI backend script.", backendScript);
@@ -215,7 +215,7 @@ public sealed class NodeBackendClient : IAsyncDisposable
         var appDirectory = AppContext.BaseDirectory;
         var packagedPayload = Path.Combine(appDirectory, "resources", "payload");
         var packagedNode = Path.Combine(appDirectory, "resources", "node", "node.exe");
-        if (File.Exists(Path.Combine(packagedPayload, "scripts", "winui-backend.js")) && File.Exists(packagedNode))
+        if (File.Exists(Path.Combine(packagedPayload, "backend", "bridge", "winui-backend.js")) && File.Exists(packagedNode))
         {
             return new BackendRuntime(packagedPayload, packagedNode, true);
         }
@@ -230,7 +230,7 @@ public sealed class NodeBackendClient : IAsyncDisposable
         while (directory is not null)
         {
             if (File.Exists(Path.Combine(directory.FullName, "package.json"))
-                && File.Exists(Path.Combine(directory.FullName, "scripts", "winui-backend.js")))
+                && File.Exists(Path.Combine(directory.FullName, "backend", "bridge", "winui-backend.js")))
             {
                 return directory.FullName;
             }
@@ -243,7 +243,7 @@ public sealed class NodeBackendClient : IAsyncDisposable
         while (directory is not null)
         {
             if (File.Exists(Path.Combine(directory.FullName, "package.json"))
-                && File.Exists(Path.Combine(directory.FullName, "scripts", "winui-backend.js")))
+                && File.Exists(Path.Combine(directory.FullName, "backend", "bridge", "winui-backend.js")))
             {
                 return directory.FullName;
             }

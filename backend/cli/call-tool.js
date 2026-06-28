@@ -8,11 +8,11 @@ const serverEntry = path.resolve(scriptDir, "..", "src", "index.js");
 
 function printUsage() {
   console.error(
-    "Usage: node scripts/call-tool.js <tool_name> [json_args | key=value ...]\n" +
-      'Example: node scripts/call-tool.js session_status\n' +
-      'Example: node scripts/call-tool.js set_current_subject \'{"subject_id":"c5029...","class_id":"8931..."}\'\n' +
-      "Example: node scripts/call-tool.js set_current_subject subject_name=国际公民素养\n" +
-      "Example: node scripts/call-tool.js set_current_term term_name=2025-2026下学期",
+    "Usage: node backend/cli/call-tool.js <tool_name> [json_args | key=value ...]\n" +
+      'Example: node backend/cli/call-tool.js session_status\n' +
+      'Example: node backend/cli/call-tool.js set_current_subject \'{"subject_id":"c5029...","class_id":"8931..."}\'\n' +
+      "Example: node backend/cli/call-tool.js set_current_subject subject_name=国际公民素养\n" +
+      "Example: node backend/cli/call-tool.js set_current_term term_name=2025-2026下学期",
   );
 }
 

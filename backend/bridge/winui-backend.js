@@ -11,7 +11,7 @@ import { SessionStore } from "../src/session-store.js";
 import { createToolDefinitions, executeTool } from "../src/tool-definitions.js";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(scriptDir, "..");
+const repoRoot = path.resolve(scriptDir, "..", "..");
 const isPackaged = process.env.BXB_WINUI_PACKAGED === "1";
 const electronUserDataRoot = path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "bxb-homework-electron");
 const dataRoot = path.join(electronUserDataRoot, ".banxuebang");
@@ -947,7 +947,7 @@ function chooseAsset(release, suffix, version) {
 
 async function readPackageVersion() {
   try {
-    return JSON.parse(await fs.readFile(path.join(repoRoot, "desktop", "package.json"), "utf8")).version || "0.0.0";
+    return JSON.parse(await fs.readFile(path.join(repoRoot, "frontend", "electron", "package.json"), "utf8")).version || "0.0.0";
   } catch {
     try {
       return JSON.parse(await fs.readFile(path.join(repoRoot, "package.json"), "utf8")).version || "0.0.0";
