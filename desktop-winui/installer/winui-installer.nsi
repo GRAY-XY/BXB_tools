@@ -13,6 +13,9 @@ RequestExecutionLevel user
 !ifndef OUT_FILE
   !error "OUT_FILE is required"
 !endif
+!ifndef ICON_FILE
+  !error "ICON_FILE is required"
+!endif
 
 !define PRODUCT_NAME "BXB Homework"
 !define PRODUCT_PUBLISHER "GRAY-XY"
@@ -20,6 +23,8 @@ RequestExecutionLevel user
 
 Name "${PRODUCT_NAME}"
 OutFile "${OUT_FILE}"
+Icon "${ICON_FILE}"
+UninstallIcon "${ICON_FILE}"
 InstallDir "$LOCALAPPDATA\Programs\BXB Homework"
 InstallDirRegKey HKCU "${PRODUCT_KEY}" "InstallDir"
 ShowInstDetails nevershow
@@ -46,8 +51,8 @@ Section "Install"
   Delete "$SMPROGRAMS\BXB Homework WinUI\BXB Homework WinUI.lnk"
   RMDir "$SMPROGRAMS\BXB Homework WinUI"
   CreateDirectory "$SMPROGRAMS\BXB Homework"
-  CreateShortcut "$SMPROGRAMS\BXB Homework\BXB Homework.lnk" "$INSTDIR\BXBHomework.exe"
-  CreateShortcut "$DESKTOP\BXB Homework.lnk" "$INSTDIR\BXBHomework.exe"
+  CreateShortcut "$SMPROGRAMS\BXB Homework\BXB Homework.lnk" "$INSTDIR\BXBHomework.exe" "" "$INSTDIR\BXBHomework.exe"
+  CreateShortcut "$DESKTOP\BXB Homework.lnk" "$INSTDIR\BXBHomework.exe" "" "$INSTDIR\BXBHomework.exe"
 SectionEnd
 
 Section "Uninstall"

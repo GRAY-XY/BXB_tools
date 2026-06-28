@@ -7,7 +7,7 @@
     mc:Ignorable="d"
     Title="BXB Homework">
 
-    <Grid Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+    <Grid x:Name="RootGrid" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
         <Grid.RowDefinitions>
             <RowDefinition Height="48" />
             <RowDefinition Height="*" />
@@ -423,7 +423,7 @@
                         <Border Grid.Row="1" Padding="14" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
                             <StackPanel Spacing="10">
                                 <TextBlock Text="界面与 Agent" FontSize="18" FontWeight="SemiBold" />
-                                <ComboBox x:Name="SettingsThemeComboBox" Header="主题">
+                                <ComboBox x:Name="SettingsThemeComboBox" Header="主题" SelectionChanged="OnSettingsThemeSelectionChanged">
                                     <ComboBoxItem Content="浅色" Tag="light" />
                                     <ComboBoxItem Content="深色" Tag="dark" />
                                 </ComboBox>
