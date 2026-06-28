@@ -2,7 +2,7 @@
 
 This directory is a native Windows UI prototype for BXB Homework.
 
-It does not replace the current Electron client in `desktop/`. The goal is to prove the WinUI path first:
+This is the current primary native Windows client. The older Electron client lives in `frontend/electron/`.
 
 - WinUI 3 native window.
 - Windows App SDK `NavigationView` shell.
@@ -30,14 +30,14 @@ After installing the tooling, build with Visual Studio MSBuild, not plain `dotne
 WinUI / Windows App SDK projects need VS AppxPackaging tasks that the standalone .NET SDK MSBuild does not provide.
 
 ```powershell
-cd <repo>\desktop-winui
+cd <repo>\frontend\winui
 .\build.ps1
 ```
 
 The debug executable is generated at:
 
 ```text
-<repo>\desktop-winui\BxbHomework.WinUI\bin\x64\Debug\net8.0-windows10.0.19041.0\BxbHomework.WinUI.exe
+<repo>\frontend\winui\BxbHomework.WinUI\bin\x64\Debug\net8.0-windows10.0.19041.0\BXBHomework.exe
 ```
 
 ## Package For Users
@@ -45,13 +45,13 @@ The debug executable is generated at:
 The user-facing WinUI build is packaged as a per-user NSIS installer. It includes:
 
 - The WinUI self-contained output.
-- `resources\payload` with `src`, `scripts`, root `package.json`, desktop version metadata, root `node_modules`, and the Playwright browser archive.
+- `resources\payload` with `backend\src`, `backend\bridge`, root `package.json`, frontend version metadata, root `node_modules`, and the Playwright browser archive.
 - `resources\node\node.exe`, so end users do not need to install Node.js.
 
 Build the installer from the repository root:
 
 ```powershell
-.\desktop-winui\package-winui.ps1 -Configuration Release
+.\frontend\winui\package-winui.ps1 -Configuration Release
 ```
 
 Outputs:
@@ -75,13 +75,13 @@ It creates desktop and Start Menu shortcuts named `BXB Homework`. The app curren
 In development mode, the app starts:
 
 ```powershell
-node <repo>\scripts\winui-backend.js
+node <repo>\backend\bridge\winui-backend.js
 ```
 
 In packaged mode, the app starts:
 
 ```text
-resources\node\node.exe resources\payload\scripts\winui-backend.js
+resources\node\node.exe resources\payload\backend\bridge\winui-backend.js
 ```
 
 Each request is one JSON line:

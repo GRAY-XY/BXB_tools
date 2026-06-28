@@ -2,7 +2,7 @@
 
 BXB Homework is a local desktop assistant for the Banxuebang student portal. It brings homework, attachments, grades, private messages, workspace files, and an AI assistant into one desktop app.
 
-The current primary client is the Electron + React app in `desktop/`. The local capability layer in `src/` handles Banxuebang login state, course and homework APIs, attachment reading, workspace file operations, browser-based web search, and MCP-compatible tool access.
+The current primary client is the WinUI app in `frontend/winui/`. The Electron + React app remains in `frontend/electron/`, and the legacy Tk shell remains in `frontend/tk/`. The local capability layer in `backend/src/` handles Banxuebang login state, course and homework APIs, attachment reading, workspace file operations, browser-based web search, and MCP-compatible tool access.
 
 Older UI experiments remain in the repository for reference, but they are not the active desktop baseline.
 
@@ -39,32 +39,31 @@ npm install
 Install desktop dependencies:
 
 ```powershell
-cd desktop
+cd frontend/electron
 npm install
 ```
 
 Start the desktop development app:
 
 ```powershell
-cd desktop
+cd frontend/electron
 npm run start
 ```
 
 Build the desktop frontend:
 
 ```powershell
-cd desktop
+cd frontend/electron
 npm run build
 ```
 
 Package the Windows desktop app:
 
 ```powershell
-cd desktop
-npm run dist
+.\frontend\winui\package-winui.ps1 -Configuration Release
 ```
 
-The packaged Windows app is generated under `dist-electron-app/`.
+The packaged Windows app is generated under `dist-winui-app/`.
 
 ## Local Tool Layer
 
@@ -115,7 +114,8 @@ The local tool layer includes:
 
 ## Maintainer Notes
 
-- Desktop UI work should usually happen in `desktop/`.
-- Shared Banxuebang capability work should usually happen in `src/`.
+- Native Windows UI work should usually happen in `frontend/winui/`.
+- Legacy Electron UI work should usually happen in `frontend/electron/`.
+- Shared Banxuebang capability work should usually happen in `backend/src/`.
 - New renderer-facing capabilities should be exposed through `window.bxb` and Electron IPC, not direct Node access from the renderer.
 - Do not commit local sessions, model configs, attachments, drafts, build outputs, or browser caches.

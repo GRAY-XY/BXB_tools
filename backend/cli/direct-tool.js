@@ -5,11 +5,11 @@ import { createToolDefinitions, executeTool } from "../src/tool-definitions.js";
 
 function printUsage() {
   console.error(
-    "Usage: node scripts/direct-tool.js <tool_name> [json_args | key=value ...]\n" +
+    "Usage: node backend/cli/direct-tool.js <tool_name> [json_args | key=value ...]\n" +
       "Calls BanxuebangClient directly without MCP.\n" +
-      'Example: node scripts/direct-tool.js session_status\n' +
-      'Example: node scripts/direct-tool.js set_current_subject \'{"subject_name":"国际公民素养"}\'\n' +
-      "Example: node scripts/direct-tool.js set_current_term term_name=2025-2026下学期",
+      'Example: node backend/cli/direct-tool.js session_status\n' +
+      'Example: node backend/cli/direct-tool.js set_current_subject \'{"subject_name":"国际公民素养"}\'\n' +
+      "Example: node backend/cli/direct-tool.js set_current_term term_name=2025-2026下学期",
   );
 }
 

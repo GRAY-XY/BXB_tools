@@ -2,7 +2,7 @@
 
 This document is the current frontend baseline for the BXB Homework desktop client.
 
-The active frontend is the Electron + React app in `desktop/`. The older Tk UI and archived Flutter prototype are reference material only.
+The active frontend is the WinUI app in `frontend/winui/`. The Electron + React app in `frontend/electron/` and the older Tk UI in `frontend/tk/` are retained for reference and compatibility work.
 
 ## Product Principles
 
@@ -399,7 +399,7 @@ Frontend must enforce:
 Local development:
 
 ```powershell
-cd desktop
+cd frontend/electron
 npm install
 npm run dev
 ```
@@ -407,7 +407,7 @@ npm run dev
 Production build:
 
 ```powershell
-cd desktop
+cd frontend/electron
 npm run build
 npm run dist
 ```
@@ -415,9 +415,9 @@ npm run dist
 Required checks before release packaging:
 
 - `npm run check` from the repository root.
-- `npm run check` from `desktop/`.
+- `npm run check` from `frontend/electron/`.
 - `npm run scan:publish` from the repository root.
-- `cd desktop; npm run dist`.
+- `.\frontend\winui\package-winui.ps1 -Configuration Release` from the repository root.
 - Start `dist-electron-app/win-unpacked/BXB Homework.exe`.
 
 Manual smoke checklist:
