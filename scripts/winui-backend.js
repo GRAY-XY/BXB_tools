@@ -322,6 +322,10 @@ function normalizeLongPasteThreshold(value, fallback = 4000) {
   return Math.min(100000, Math.max(500, threshold));
 }
 
+function normalizeTheme(value) {
+  return String(value || "").trim().toLowerCase() === "dark" ? "dark" : "light";
+}
+
 function chatTemperature(config, fallback) {
   return modelRequiresTemperatureOne(config) ? 1 : fallback;
 }
@@ -336,6 +340,7 @@ async function loadModelConfig() {
     compactTemperature: 0.1,
     longPasteThreshold: 4000,
     maxToolRounds: 6,
+    theme: "light",
     systemPrompt: DEFAULT_SYSTEM_PROMPT,
   });
   return {
@@ -343,6 +348,7 @@ async function loadModelConfig() {
     chatTemperature: normalizeTemperature(config.chatTemperature, 0.2),
     compactTemperature: normalizeTemperature(config.compactTemperature, 0.1),
     longPasteThreshold: normalizeLongPasteThreshold(config.longPasteThreshold, 4000),
+    theme: normalizeTheme(config.theme),
     systemPrompt: String(config.systemPrompt || "").trim() || DEFAULT_SYSTEM_PROMPT,
     defaultSystemPrompt: DEFAULT_SYSTEM_PROMPT,
     apiKeyMasked: maskKey(config.apiKey),
@@ -371,6 +377,7 @@ async function saveModelConfig(config) {
     compactTemperature: normalizeTemperature(config?.compactTemperature ?? existing.compactTemperature, 0.1),
     longPasteThreshold: normalizeLongPasteThreshold(config?.longPasteThreshold ?? existing.longPasteThreshold, 4000),
     maxToolRounds: Math.max(1, Number.parseInt(config?.maxToolRounds ?? existing.maxToolRounds ?? 6, 10) || 6),
+    theme: normalizeTheme(config?.theme ?? existing.theme),
     systemPrompt: String(config?.systemPrompt ?? existing.systemPrompt ?? "").trim() || DEFAULT_SYSTEM_PROMPT,
   };
   await writeJson(modelConfigPath, normalized);

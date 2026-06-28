@@ -19,6 +19,7 @@ $buildOutput = Join-Path $PSScriptRoot "BxbHomework.WinUI\bin\x64\$Configuration
 $nodeZip = Join-Path $repoRootPath "build_assets\node-v22.15.0-win-x64.zip"
 $browserZip = Join-Path $repoRootPath "build_assets\ms-playwright-browsers.zip"
 $nsiScript = Join-Path $PSScriptRoot "installer\winui-installer.nsi"
+$iconFile = Join-Path $PSScriptRoot "BxbHomework.WinUI\Assets\BxbIcon.ico"
 
 function Remove-WorkspaceDirectory {
   param([string] $Path)
@@ -88,6 +89,9 @@ if (-not (Test-Path -LiteralPath $nodeZip)) {
 if (-not (Test-Path -LiteralPath $browserZip)) {
   throw "Bundled Playwright browser archive was not found: $browserZip"
 }
+if (-not (Test-Path -LiteralPath $iconFile)) {
+  throw "Application icon was not found: $iconFile"
+}
 
 Remove-WorkspaceDirectory $distRoot
 New-Item -ItemType Directory -Path $unpackedDir -Force | Out-Null
@@ -131,7 +135,7 @@ try {
 if (-not $SkipInstaller) {
   $makensis = Find-Makensis
   $installerPath = Join-Path $distRoot "BXB Homework Setup $Version.exe"
-  & $makensis "/DAPP_VERSION=$Version" "/DAPP_VERSION_NUMERIC=$numericVersion" "/DSOURCE_DIR=$unpackedDir" "/DOUT_FILE=$installerPath" $nsiScript
+  & $makensis "/DAPP_VERSION=$Version" "/DAPP_VERSION_NUMERIC=$numericVersion" "/DSOURCE_DIR=$unpackedDir" "/DOUT_FILE=$installerPath" "/DICON_FILE=$iconFile" $nsiScript
   if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
   }

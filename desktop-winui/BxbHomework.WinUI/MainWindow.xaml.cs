@@ -2,6 +2,8 @@ using System.Collections.ObjectModel;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text.Json;
 using BxbHomework.WinUI.Services;
+using Microsoft.UI;
+using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
@@ -64,12 +66,14 @@ public sealed partial class MainWindow : Window
     private bool _settingsHasApiKey;
     private string _settingsDefaultSystemPrompt = "";
     private bool _suppressSettingsModelCombo;
+    private bool _suppressSettingsThemeCombo;
 
     public MainWindow()
     {
         InitializeComponent();
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
+        SetWindowIcon();
         MainListView.ItemsSource = _items;
         SettingsPathListView.ItemsSource = _settingsPathItems;
         PrivateThreadListView.ItemsSource = _privateThreadMessages;
@@ -81,6 +85,26 @@ public sealed partial class MainWindow : Window
         _ = InitializeAsync();
     }
 
+    private void SetWindowIcon()
+    {
+        try
+        {
+            var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "BxbIcon.ico");
+            if (!File.Exists(iconPath))
+            {
+                return;
+            }
+
+            var windowHandle = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            var windowId = Win32Interop.GetWindowIdFromWindow(windowHandle);
+            AppWindow.GetFromWindowId(windowId).SetIcon(iconPath);
+        }
+        catch
+        {
+            // Icon setup is cosmetic and should never prevent the app from opening.
+        }
+    }
+
     private async Task InitializeAsync()
     {
         try
@@ -89,6 +113,8 @@ public sealed partial class MainWindow : Window
             await _backend.EnsureStartedAsync();
             _appInfo = await InvokeAsync("app:info");
             BackendStateText.Text = $"Node {_appInfo.Value.GetProperty("nodeVersion").GetString()}";
+            var config = await InvokeAsync("config:model:load");
+            ApplyTheme(GetString(config, "theme", "light"));
             await RefreshSessionAsync();
             SetStatus("Ready");
         }
@@ -856,7 +882,7 @@ public sealed partial class MainWindow : Window
         SettingsMaxToolRoundsBox.Text = GetString(config, "maxToolRounds", "6");
         SettingsLongPasteThresholdBox.Text = GetString(config, "longPasteThreshold", "4000");
         SettingsSystemPromptBox.Text = GetString(config, "systemPrompt", "");
-        SettingsThemeComboBox.SelectedIndex = SettingsThemeComboBox.SelectedIndex < 0 ? 0 : SettingsThemeComboBox.SelectedIndex;
+        SelectSettingsTheme(GetString(config, "theme", "light"));
         SettingsModelStatusText.Text = _settingsHasApiKey ? "API Key 已保存。留空保存不会覆盖已保存 Key。" : "API Key 未配置。";
 
         if (SettingsModelComboBox.Visibility == Visibility.Visible)
@@ -925,6 +951,7 @@ public sealed partial class MainWindow : Window
             ["maxToolRounds"] = SettingsMaxToolRoundsBox.Text.Trim(),
             ["longPasteThreshold"] = SettingsLongPasteThresholdBox.Text.Trim(),
             ["systemPrompt"] = SettingsSystemPromptBox.Text.Trim(),
+            ["theme"] = GetCurrentSettingsTheme(),
         };
 
         if (!string.IsNullOrWhiteSpace(SettingsApiKeyBox.Password))
@@ -943,6 +970,50 @@ public sealed partial class MainWindow : Window
         }
 
         return SettingsModelNameBox.Text.Trim();
+    }
+
+    private string GetCurrentSettingsTheme()
+    {
+        if (SettingsThemeComboBox.SelectedItem is ComboBoxItem item)
+        {
+            var value = (item.Tag?.ToString() ?? item.Content?.ToString() ?? "").Trim().ToLowerInvariant();
+            return value == "dark" ? "dark" : "light";
+        }
+
+        return "light";
+    }
+
+    private void SelectSettingsTheme(string theme)
+    {
+        var normalized = string.Equals(theme, "dark", StringComparison.OrdinalIgnoreCase) ? "dark" : "light";
+        _suppressSettingsThemeCombo = true;
+        try
+        {
+            foreach (var item in SettingsThemeComboBox.Items.OfType<ComboBoxItem>())
+            {
+                if (string.Equals(item.Tag?.ToString(), normalized, StringComparison.OrdinalIgnoreCase))
+                {
+                    SettingsThemeComboBox.SelectedItem = item;
+                    break;
+                }
+            }
+        }
+        finally
+        {
+            _suppressSettingsThemeCombo = false;
+        }
+        ApplyTheme(normalized);
+    }
+
+    private void ApplyTheme(string theme)
+    {
+        RootGrid.RequestedTheme = string.Equals(theme, "dark", StringComparison.OrdinalIgnoreCase)
+            ? ElementTheme.Dark
+            : ElementTheme.Light;
+        if (AgentPanel.Visibility == Visibility.Visible)
+        {
+            RenderAgentMessages(_agentPreviewMessages);
+        }
     }
 
     private void SelectSettingsModel(string modelName)
@@ -1644,6 +1715,13 @@ public sealed partial class MainWindow : Window
         SettingsModelNameBox.Text = (item.Tag?.ToString() ?? item.Content?.ToString() ?? "").Replace("（当前）", "");
     }
 
+    private void OnSettingsThemeSelectionChanged(object sender, SelectionChangedEventArgs args)
+    {
+        if (_suppressSettingsThemeCombo) return;
+        ApplyTheme(GetCurrentSettingsTheme());
+        SetStatus("主题已切换，点击保存设置后下次启动继续生效");
+    }
+
     private async void OnHomeTermApplyClick(object sender, RoutedEventArgs args)
     {
         await RunUiAsync(async () =>
@@ -1739,7 +1817,7 @@ public sealed partial class MainWindow : Window
             {
                 return;
             }
-            _agentMarkdownWebView.NavigateToString(MarkdownHtmlRenderer.RenderConversation(messages.Select(message => (message.Role, message.Text))));
+            _agentMarkdownWebView.NavigateToString(MarkdownHtmlRenderer.RenderConversation(messages.Select(message => (message.Role, message.Text)), GetCurrentUiTheme()));
             AgentMarkdownFallbackTextBox.Visibility = Visibility.Collapsed;
             _agentMarkdownWebView.Visibility = Visibility.Visible;
         }
@@ -1761,6 +1839,11 @@ public sealed partial class MainWindow : Window
         var webView = new WebView2();
         AgentMarkdownHost.Children.Insert(0, webView);
         return webView;
+    }
+
+    private string GetCurrentUiTheme()
+    {
+        return RootGrid.RequestedTheme == ElementTheme.Dark ? "dark" : "light";
     }
 
     private void RenderAgentFallback(IReadOnlyList<AgentChatMessage> messages)

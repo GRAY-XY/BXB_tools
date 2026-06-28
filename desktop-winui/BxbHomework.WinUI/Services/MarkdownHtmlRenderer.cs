@@ -7,8 +7,9 @@ internal static class MarkdownHtmlRenderer
 {
     private const string EmptyState = "暂无消息。";
 
-    public static string RenderConversation(IEnumerable<(string Role, string Text)> messages)
+    public static string RenderConversation(IEnumerable<(string Role, string Text)> messages, string theme = "light")
     {
+        var normalizedTheme = string.Equals(theme, "dark", StringComparison.OrdinalIgnoreCase) ? "dark" : "light";
         var rows = messages.Select(message => new
         {
             role = message.Role == "user" ? "user" : "assistant",
@@ -29,7 +30,7 @@ internal static class MarkdownHtmlRenderer
 
         return $$"""
 <!doctype html>
-<html>
+<html data-theme="{{normalizedTheme}}">
 <head>
   <meta charset="utf-8" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: file:; style-src 'unsafe-inline'; font-src file: data:; script-src 'unsafe-inline';">
@@ -38,7 +39,18 @@ internal static class MarkdownHtmlRenderer
   </style>
   <style>
     :root {
-      color-scheme: light dark;
+      color-scheme: light;
+      --bg: #ffffff;
+      --fg: #1b1b1b;
+      --muted: #5f5f5f;
+      --border: rgba(0,0,0,.12);
+      --code-bg: rgba(0,0,0,.055);
+      --assistant-bg: rgba(0,0,0,.025);
+      --user-bg: rgba(0, 120, 212, .10);
+      --link: #0067c0;
+    }
+    html[data-theme="dark"] {
+      color-scheme: dark;
       --bg: #202020;
       --fg: #f3f3f3;
       --muted: #b8b8b8;
@@ -47,18 +59,6 @@ internal static class MarkdownHtmlRenderer
       --assistant-bg: rgba(255,255,255,.035);
       --user-bg: rgba(16, 124, 16, .16);
       --link: #65baff;
-    }
-    @media (prefers-color-scheme: light) {
-      :root {
-        --bg: #ffffff;
-        --fg: #1b1b1b;
-        --muted: #5f5f5f;
-        --border: rgba(0,0,0,.12);
-        --code-bg: rgba(0,0,0,.055);
-        --assistant-bg: rgba(0,0,0,.025);
-        --user-bg: rgba(0, 120, 212, .10);
-        --link: #0067c0;
-      }
     }
     html, body {
       margin: 0;
