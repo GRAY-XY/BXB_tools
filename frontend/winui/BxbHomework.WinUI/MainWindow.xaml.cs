@@ -1715,11 +1715,17 @@ public sealed partial class MainWindow : Window
         SettingsModelNameBox.Text = (item.Tag?.ToString() ?? item.Content?.ToString() ?? "").Replace("（当前）", "");
     }
 
-    private void OnSettingsThemeSelectionChanged(object sender, SelectionChangedEventArgs args)
+    private async void OnSettingsThemeSelectionChanged(object sender, SelectionChangedEventArgs args)
     {
         if (_suppressSettingsThemeCombo) return;
-        ApplyTheme(GetCurrentSettingsTheme());
-        SetStatus("主题已切换，点击保存设置后下次启动继续生效");
+        var theme = GetCurrentSettingsTheme();
+        ApplyTheme(theme);
+        SetStatus("正在保存主题...");
+        await RunUiAsync(async () =>
+        {
+            await InvokeAsync("config:model:save", new { theme });
+            SetStatus("主题已保存");
+        });
     }
 
     private async void OnHomeTermApplyClick(object sender, RoutedEventArgs args)
