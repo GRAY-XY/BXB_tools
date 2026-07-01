@@ -640,9 +640,11 @@ function summarizeLocalFile(filePath, workspaceDir, fileStat) {
             ? "pdf"
             : extension === ".docx"
               ? "docx"
-              : TEXT_FILE_EXTENSIONS.has(extension)
-                ? "text"
-                : "file",
+              : extension === ".doc"
+                ? "doc"
+                : TEXT_FILE_EXTENSIONS.has(extension)
+                  ? "text"
+                  : "file",
   };
 }
 

@@ -37,7 +37,7 @@ public sealed class PrivateThreadMessage
     public HorizontalAlignment Alignment { get; init; } = HorizontalAlignment.Left;
 }
 
-internal sealed record AgentChatMessage(string Role, string Text);
+internal sealed record AgentChatMessage(string Id, string Role, string Text, JsonElement? Steps = null, bool IsRunning = false);
 
 internal sealed record AttachmentDownloadRequest(string TaskId, string FileId, string FileName);
 
@@ -58,6 +58,7 @@ public sealed partial class MainWindow : Window
     private WebView2? _agentMarkdownWebView;
     private bool _agentMarkdownWebViewUnavailable;
     private int _agentMarkdownRenderVersion;
+    private string _selectedAgentMessageId = "";
     private bool _suppressComboEvents;
     private bool _deleteDraftArmed;
     private bool _deleteConversationArmed;
@@ -204,6 +205,8 @@ public sealed partial class MainWindow : Window
         DetailImageScrollViewer.Visibility = Visibility.Collapsed;
         WorkspaceImagePreview.Source = null;
         DetailImageCaption.Text = "";
+        DetailDocumentWebView.Visibility = Visibility.Collapsed;
+        DetailDocumentWebView.Source = new Uri("about:blank");
         CommandInputBox.Text = "";
         CommandInputBox.Visibility = Visibility.Collapsed;
         HomeTermComboBox.Items.Clear();
@@ -222,7 +225,7 @@ public sealed partial class MainWindow : Window
         DetailPrimaryButton.Visibility = Visibility.Collapsed;
         DetailSecondaryButton.Visibility = Visibility.Collapsed;
         SetAgentTranscriptPlain("");
-        AgentStepsTextBox.Text = "";
+        SetAgentStepsMessage("");
         AgentInputBox.Text = "";
         ConversationComboBox.Items.Clear();
         SettingsMainTextBox.Text = "";
@@ -251,6 +254,7 @@ public sealed partial class MainWindow : Window
         SecondaryActionButton.Visibility = Visibility.Visible;
         ThirdActionButton.Content = "打开数据目录";
         ThirdActionButton.Visibility = Visibility.Visible;
+        _backend.ProgressReceived += OnBackendProgressReceived;
         SetHomeSessionBlocks(_session);
     }
 
@@ -262,7 +266,7 @@ public sealed partial class MainWindow : Window
         PageSubtitleText.Text = "对话列表、聊天输入和上下文压缩沿用 Electron 的 agent 流程。";
         ToolbarCard.Visibility = Visibility.Collapsed;
         AgentPanel.Visibility = Visibility.Visible;
-        AgentStepsTextBox.Text = "等待执行。";
+        SetAgentStepsMessage("点击一条助手消息查看执行过程。");
     }
 
     private void RenderHomework()
@@ -512,8 +516,10 @@ public sealed partial class MainWindow : Window
     {
         loadVersion = loadVersion == 0 ? _pageLoadVersion : loadVersion;
         if (!IsCurrentPageLoad("agent", loadVersion)) return;
+        var selectedMessageId = _selectedAgentMessageId;
         SetAgentTranscriptPlain("正在加载对话...");
-        AgentStepsTextBox.Text = "等待执行。";
+        _selectedAgentMessageId = selectedMessageId;
+        SetAgentStepsMessage("点击一条助手消息查看执行过程。");
         var result = await InvokeAsync("agent:conversations:list");
         if (!IsCurrentPageLoad("agent", loadVersion)) return;
         _items.Clear();
@@ -548,6 +554,7 @@ public sealed partial class MainWindow : Window
             ConversationComboBox.SelectedIndex = 0;
         }
         _suppressComboEvents = false;
+        _selectedAgentMessageId = selectedMessageId;
         if (result.TryGetProperty("activeConversation", out var active))
         {
             ShowConversation(active);
@@ -1284,7 +1291,7 @@ public sealed partial class MainWindow : Window
             _deleteConversationArmed = false;
             await InvokeAsync("agent:conversations:create", new { title = "新对话" });
             AgentInputBox.Text = "";
-            AgentStepsTextBox.Text = "已开始新对话。";
+            SetAgentStepsMessage("已开始新对话。");
             await LoadConversationsAsync();
         });
     }
@@ -1298,7 +1305,7 @@ public sealed partial class MainWindow : Window
             var nextTitle = await PromptConversationTitleAsync(item.Label);
             if (nextTitle is null) return;
             await InvokeAsync("agent:conversations:rename", new { conversationId = item.Key, title = nextTitle });
-            AgentStepsTextBox.Text = "对话已重命名。";
+            SetAgentStepsMessage("对话已重命名。");
             SetStatus("对话已重命名");
             await LoadConversationsAsync();
         });
@@ -1317,7 +1324,7 @@ public sealed partial class MainWindow : Window
             }
             await InvokeAsync("agent:conversations:delete", new { conversationId = item.Key });
             _deleteConversationArmed = false;
-            AgentStepsTextBox.Text = "对话已删除。";
+            SetAgentStepsMessage("对话已删除。");
             await LoadConversationsAsync();
         });
     }
@@ -1361,9 +1368,9 @@ public sealed partial class MainWindow : Window
     {
         await RunUiAsync(async () =>
         {
-            AgentStepsTextBox.Text = "正在压缩上下文...";
+            SetAgentStepsMessage("正在压缩上下文...");
             await InvokeAsync("agent:compact", new { conversationId = (ConversationComboBox.SelectedItem as ComboItem)?.Key });
-            AgentStepsTextBox.Text = "上下文已压缩。";
+            SetAgentStepsMessage("上下文已压缩。");
             await LoadConversationsAsync();
         });
     }
@@ -1436,23 +1443,31 @@ public sealed partial class MainWindow : Window
         {
             await InvokeAsync("agent:compact", new { conversationId = (ConversationComboBox.SelectedItem as ComboItem)?.Key });
             AgentInputBox.Text = "";
-            AgentStepsTextBox.Text = "上下文已压缩。";
+            SetAgentStepsMessage("上下文已压缩。");
             await LoadConversationsAsync();
             return;
         }
         AgentInputBox.Text = "";
-        _agentPreviewMessages.Add(new AgentChatMessage("user", text));
-        _agentPreviewMessages.Add(new AgentChatMessage("assistant", "执行中..."));
+        var userMessageId = NewAgentMessageId();
+        var assistantMessageId = NewAgentMessageId();
+        _selectedAgentMessageId = assistantMessageId;
+        _agentPreviewMessages.Add(new AgentChatMessage(userMessageId, "user", text));
+        _agentPreviewMessages.Add(new AgentChatMessage(assistantMessageId, "assistant", "执行中...", null, true));
         RenderAgentMessages(_agentPreviewMessages);
-        AgentStepsTextBox.Text = "正在请求模型...";
-        var result = await InvokeAsync("agent:chat", new { text, conversationId = (ConversationComboBox.SelectedItem as ComboItem)?.Key });
-        _agentPreviewMessages[^1] = new AgentChatMessage("assistant", GetString(result, "message", "执行完成。"));
-        RenderAgentMessages(_agentPreviewMessages);
-        if (result.TryGetProperty("steps", out var steps))
+        SetAgentStepsMessage("正在请求模型...");
+        var result = await InvokeAsync("agent:chat", new
         {
-            AgentStepsTextBox.Text = FormatJson(steps);
-        }
+            text,
+            conversationId = (ConversationComboBox.SelectedItem as ComboItem)?.Key,
+            userMessageId,
+            assistantMessageId,
+        });
+        var finalSteps = result.TryGetProperty("steps", out var resultSteps) ? resultSteps.Clone() : (JsonElement?)null;
+        _agentPreviewMessages[^1] = new AgentChatMessage(assistantMessageId, "assistant", GetString(result, "message", "执行完成。"), finalSteps, false);
+        RenderAgentMessages(_agentPreviewMessages);
+        ShowSelectedAgentSteps();
         await LoadConversationsAsync();
+        ShowSelectedAgentSteps();
     }
 
     private async Task OpenWorkspaceItemAsync(DisplayItem item)
@@ -1460,10 +1475,17 @@ public sealed partial class MainWindow : Window
         var category = GetString(item.Data, "category", "");
         var extension = GetString(item.Data, "extension", "").ToLowerInvariant();
         var isImage = category == "image" || new[] { ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".avif" }.Contains(extension);
+        var isPdf = category == "pdf" || extension == ".pdf";
+        var isDocx = category == "docx" || extension == ".docx";
         if (isImage)
         {
             var image = await InvokeAsync("workspace:image-data-url", new { filePath = GetString(item.Data, "path", "") });
             await SetDetailImageAsync(image, item.Title);
+            return;
+        }
+        if (isPdf || isDocx)
+        {
+            await SetDetailDocumentAsync(GetString(item.Data, "path", ""), item.Title);
             return;
         }
         var result = await ToolAsync("read_workspace_file", new { file = GetString(item.Data, "relativePath", item.Title), max_chars = 8000 });
@@ -1776,6 +1798,8 @@ public sealed partial class MainWindow : Window
         EditorTextBox.Visibility = Visibility.Collapsed;
         HomeworkDetailScrollViewer.Visibility = Visibility.Collapsed;
         PrivateThreadListView.Visibility = Visibility.Collapsed;
+        DetailDocumentWebView.Visibility = Visibility.Collapsed;
+        DetailDocumentWebView.Source = new Uri("about:blank");
         DetailImageScrollViewer.Visibility = Visibility.Visible;
         DetailImageCaption.Text = $"{mimeType}\n{path}";
 
@@ -1796,10 +1820,46 @@ public sealed partial class MainWindow : Window
         WorkspaceImagePreview.Source = bitmap;
     }
 
+    private async Task SetDetailDocumentAsync(string filePath, string fallbackTitle)
+    {
+        var resolvedPath = Path.GetFullPath(filePath);
+        if (!File.Exists(resolvedPath))
+        {
+            throw new FileNotFoundException("预览文件不存在。", resolvedPath);
+        }
+        var extension = Path.GetExtension(resolvedPath).ToLowerInvariant();
+        if (extension is not ".pdf" and not ".docx")
+        {
+            throw new InvalidOperationException("只能直接预览 .pdf 或 .docx 文件。");
+        }
+
+        DetailTitleText.Text = string.IsNullOrWhiteSpace(fallbackTitle) ? Path.GetFileName(resolvedPath) : fallbackTitle;
+        DetailTextBox.Visibility = Visibility.Collapsed;
+        EditorTextBox.Visibility = Visibility.Collapsed;
+        HomeworkDetailScrollViewer.Visibility = Visibility.Collapsed;
+        HomeworkDetailStackPanel.Children.Clear();
+        PrivateThreadListView.Visibility = Visibility.Collapsed;
+        DetailImageScrollViewer.Visibility = Visibility.Collapsed;
+        WorkspaceImagePreview.Source = null;
+        DetailImageCaption.Text = "";
+        DetailDocumentWebView.Visibility = Visibility.Visible;
+        await DetailDocumentWebView.EnsureCoreWebView2Async();
+        if (extension == ".docx")
+        {
+            var preview = await InvokeAsync("workspace:docx-preview", new { filePath = resolvedPath });
+            DetailTitleText.Text = GetString(preview, "fileName", DetailTitleText.Text);
+            DetailDocumentWebView.NavigateToString(GetString(preview, "html", "<p>文档没有可预览内容。</p>"));
+            return;
+        }
+
+        DetailDocumentWebView.Source = new Uri(resolvedPath);
+    }
+
     private void SetAgentTranscriptPlain(string text)
     {
         _agentPreviewMessages.Clear();
-        RenderAgentMessages(new[] { new AgentChatMessage("assistant", text) });
+        _selectedAgentMessageId = "";
+        RenderAgentMessages(new[] { new AgentChatMessage(NewAgentMessageId(), "assistant", text) });
     }
 
     private void RenderAgentMessages(IReadOnlyList<AgentChatMessage> messages)
@@ -1823,7 +1883,14 @@ public sealed partial class MainWindow : Window
             {
                 return;
             }
-            _agentMarkdownWebView.NavigateToString(MarkdownHtmlRenderer.RenderConversation(messages.Select(message => (message.Role, message.Text)), GetCurrentUiTheme()));
+            _agentMarkdownWebView.NavigateToString(MarkdownHtmlRenderer.RenderConversation(
+                messages.Select(message => (
+                    message.Id,
+                    message.Role,
+                    message.Text,
+                    IsSelected: message.Id == _selectedAgentMessageId,
+                    message.IsRunning)),
+                GetCurrentUiTheme()));
             AgentMarkdownFallbackTextBox.Visibility = Visibility.Collapsed;
             _agentMarkdownWebView.Visibility = Visibility.Visible;
         }
@@ -1843,6 +1910,7 @@ public sealed partial class MainWindow : Window
     private WebView2 CreateAgentMarkdownWebView()
     {
         var webView = new WebView2();
+        webView.WebMessageReceived += (_, args) => OnAgentMarkdownWebMessageReceived(args.WebMessageAsJson);
         AgentMarkdownHost.Children.Insert(0, webView);
         return webView;
     }
@@ -1860,8 +1928,381 @@ public sealed partial class MainWindow : Window
             messages.Select(message =>
             {
                 var label = message.Role == "user" ? "你" : "助手";
-                return $"{label}:\n{message.Text}";
+                var selected = message.Id == _selectedAgentMessageId ? "（已选中）" : "";
+                return $"{label}{selected}:\n{message.Text}";
             }));
+    }
+
+    private void OnAgentMarkdownWebMessageReceived(string json)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+            if (GetString(root, "type", "") != "select-message") return;
+            SelectAgentMessage(GetString(root, "id", ""));
+        }
+        catch (Exception error)
+        {
+            App.LogException(error);
+        }
+    }
+
+    private void OnBackendProgressReceived(object? sender, BackendProgressEventArgs args)
+    {
+        var progress = args.Result;
+        if (progress.ValueKind != JsonValueKind.Object || GetString(progress, "type", "") != "agent-step")
+        {
+            return;
+        }
+
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            var messageId = GetString(progress, "messageId", "");
+            if (string.IsNullOrWhiteSpace(messageId)) return;
+            if (progress.TryGetProperty("steps", out var steps))
+            {
+                SetAgentMessageSteps(messageId, steps.Clone(), isRunning: true);
+                if (_selectedAgentMessageId == messageId)
+                {
+                    SetAgentStepsFromSteps(steps);
+                }
+            }
+        });
+    }
+
+    private void SelectAgentMessage(string messageId)
+    {
+        if (string.IsNullOrWhiteSpace(messageId)) return;
+        var message = _agentPreviewMessages.FirstOrDefault(item => item.Id == messageId && item.Role == "assistant");
+        if (message is null) return;
+        _selectedAgentMessageId = messageId;
+        ShowSelectedAgentSteps();
+        if (_agentMarkdownWebViewUnavailable || _agentMarkdownWebView is null || _agentMarkdownWebView.Visibility != Visibility.Visible)
+        {
+            RenderAgentFallback(_agentPreviewMessages);
+        }
+    }
+
+    private void ShowSelectedAgentSteps()
+    {
+        var message = _agentPreviewMessages.FirstOrDefault(item => item.Id == _selectedAgentMessageId && item.Role == "assistant");
+        if (message is null)
+        {
+            SetAgentStepsMessage("点击一条助手消息查看执行过程。");
+            return;
+        }
+
+        if (message.IsRunning && (!message.Steps.HasValue || message.Steps.Value.ValueKind != JsonValueKind.Array || message.Steps.Value.GetArrayLength() == 0))
+        {
+            SetAgentStepsMessage("正在请求模型...");
+            return;
+        }
+
+        if (message.Steps.HasValue && message.Steps.Value.ValueKind == JsonValueKind.Array)
+        {
+            SetAgentStepsFromSteps(message.Steps.Value);
+        }
+        else
+        {
+            SetAgentStepsMessage("这条助手消息没有记录执行过程。");
+        }
+    }
+
+    private void SetAgentMessageSteps(string messageId, JsonElement steps, bool isRunning)
+    {
+        for (var index = 0; index < _agentPreviewMessages.Count; index += 1)
+        {
+            if (_agentPreviewMessages[index].Id == messageId)
+            {
+                _agentPreviewMessages[index] = _agentPreviewMessages[index] with { Steps = steps.Clone(), IsRunning = isRunning };
+                return;
+            }
+        }
+    }
+
+    private void SetAgentStepsMessage(string message)
+    {
+        AgentStepsTextBox.Text = message;
+        AgentStepsStackPanel.Children.Clear();
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return;
+        }
+
+        AgentStepsStackPanel.Children.Add(CreateAgentStepBlock("工作过程", message));
+    }
+
+    private void SetAgentStepsFromSteps(JsonElement steps)
+    {
+        AgentStepsTextBox.Text = FormatAgentSteps(steps);
+        AgentStepsStackPanel.Children.Clear();
+        if (steps.ValueKind != JsonValueKind.Array || steps.GetArrayLength() == 0)
+        {
+            SetAgentStepsMessage("这条助手消息没有记录执行过程。");
+            return;
+        }
+
+        var index = 1;
+        foreach (var step in steps.EnumerateArray())
+        {
+            AgentStepsStackPanel.Children.Add(CreateAgentStepBlock(index, step));
+            index += 1;
+        }
+    }
+
+    private static UIElement CreateAgentStepBlock(int index, JsonElement step)
+    {
+        var title = FirstString(step, "title", "kind");
+        var kind = FirstString(step, "kind");
+        var at = FirstString(step, "at", "time");
+        var detail = FirstString(step, "detail", "message");
+
+        var body = new StackPanel { Spacing = 8 };
+        body.Children.Add(new TextBlock
+        {
+            Text = $"{index}. {title}",
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            TextWrapping = TextWrapping.WrapWholeWords,
+        });
+
+        var meta = string.Join(" · ", new[] { StepKindLabel(kind), at }.Where(value => !string.IsNullOrWhiteSpace(value)));
+        if (!string.IsNullOrWhiteSpace(meta))
+        {
+            body.Children.Add(new TextBlock
+            {
+                Text = meta,
+                FontSize = 12,
+                Foreground = ThemeBrush("TextFillColorSecondaryBrush"),
+                TextWrapping = TextWrapping.WrapWholeWords,
+            });
+        }
+
+        foreach (var element in CreateAgentStepDetailElements(detail))
+        {
+            body.Children.Add(element);
+        }
+
+        return WrapAgentStepBlock(body);
+    }
+
+    private static UIElement CreateAgentStepBlock(string title, string message)
+    {
+        var body = new StackPanel { Spacing = 6 };
+        body.Children.Add(new TextBlock
+        {
+            Text = title,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+        });
+        body.Children.Add(new TextBlock
+        {
+            Text = message,
+            TextWrapping = TextWrapping.WrapWholeWords,
+            Foreground = ThemeBrush("TextFillColorSecondaryBrush"),
+        });
+        return WrapAgentStepBlock(body);
+    }
+
+    private static UIElement WrapAgentStepBlock(UIElement child)
+    {
+        return new Border
+        {
+            Padding = new Thickness(12),
+            CornerRadius = new CornerRadius(8),
+            BorderThickness = new Thickness(1),
+            BorderBrush = ThemeBrush("CardStrokeColorDefaultBrush"),
+            Background = ThemeBrush("CardBackgroundFillColorDefaultBrush"),
+            Child = child,
+        };
+    }
+
+    private static IEnumerable<UIElement> CreateAgentStepDetailElements(string detail)
+    {
+        if (string.IsNullOrWhiteSpace(detail))
+        {
+            yield break;
+        }
+
+        using var document = TryParseJson(detail);
+        if (document is not null)
+        {
+            foreach (var element in CreateJsonSummaryElements(document.RootElement))
+            {
+                yield return element;
+            }
+            yield break;
+        }
+
+        yield return new TextBlock
+        {
+            Text = detail,
+            TextWrapping = TextWrapping.WrapWholeWords,
+        };
+    }
+
+    private static IEnumerable<UIElement> CreateJsonSummaryElements(JsonElement value)
+    {
+        if (value.ValueKind == JsonValueKind.Object)
+        {
+            var rows = value.EnumerateObject()
+                .Where(property => property.Name is not "raw" and not "html")
+                .Take(12)
+                .Select(property => (Name: AgentStepFieldLabel(property.Name), Value: SummarizeJsonValue(property.Value)))
+                .Where(row => !string.IsNullOrWhiteSpace(row.Value))
+                .ToList();
+
+            if (rows.Count == 0)
+            {
+                yield return new TextBlock { Text = "结果为空。", Foreground = ThemeBrush("TextFillColorSecondaryBrush") };
+                yield break;
+            }
+
+            foreach (var row in rows)
+            {
+                yield return CreateKeyValueText(row.Name, row.Value);
+            }
+            yield break;
+        }
+
+        if (value.ValueKind == JsonValueKind.Array)
+        {
+            var items = value.EnumerateArray().Take(6).Select(SummarizeJsonValue).Where(item => !string.IsNullOrWhiteSpace(item)).ToList();
+            yield return new TextBlock
+            {
+                Text = items.Count == 0 ? "列表为空。" : string.Join("\n", items.Select((item, index) => $"{index + 1}. {item}")),
+                TextWrapping = TextWrapping.WrapWholeWords,
+            };
+            yield break;
+        }
+
+        yield return new TextBlock
+        {
+            Text = SummarizeJsonValue(value),
+            TextWrapping = TextWrapping.WrapWholeWords,
+        };
+    }
+
+    private static UIElement CreateKeyValueText(string name, string value)
+    {
+        var panel = new StackPanel { Spacing = 2 };
+        panel.Children.Add(new TextBlock
+        {
+            Text = name,
+            FontSize = 12,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Foreground = ThemeBrush("TextFillColorSecondaryBrush"),
+        });
+        panel.Children.Add(new TextBlock
+        {
+            Text = value,
+            TextWrapping = TextWrapping.WrapWholeWords,
+        });
+        return panel;
+    }
+
+    private static string SummarizeJsonValue(JsonElement value)
+    {
+        return value.ValueKind switch
+        {
+            JsonValueKind.String => TruncateStepText(value.GetString() ?? ""),
+            JsonValueKind.Number => value.ToString(),
+            JsonValueKind.True => "是",
+            JsonValueKind.False => "否",
+            JsonValueKind.Null => "",
+            JsonValueKind.Array => SummarizeJsonArray(value),
+            JsonValueKind.Object => SummarizeJsonObject(value),
+            _ => "",
+        };
+    }
+
+    private static string SummarizeJsonArray(JsonElement value)
+    {
+        var count = value.GetArrayLength();
+        if (count == 0) return "空列表";
+
+        var primitiveItems = value.EnumerateArray()
+            .Take(5)
+            .Select(item => item.ValueKind is JsonValueKind.Object or JsonValueKind.Array ? "" : SummarizeJsonValue(item))
+            .Where(item => !string.IsNullOrWhiteSpace(item))
+            .ToList();
+        if (primitiveItems.Count > 0)
+        {
+            var suffix = count > primitiveItems.Count ? $" 等 {count} 项" : "";
+            return $"{string.Join("、", primitiveItems)}{suffix}";
+        }
+
+        return $"{count} 项";
+    }
+
+    private static string SummarizeJsonObject(JsonElement value)
+    {
+        foreach (var key in new[] { "message", "title", "name", "status", "ok", "error", "summary", "text" })
+        {
+            if (value.TryGetProperty(key, out var property))
+            {
+                var summary = SummarizeJsonValue(property);
+                if (!string.IsNullOrWhiteSpace(summary)) return summary;
+            }
+        }
+
+        var fields = value.EnumerateObject()
+            .Where(property => property.Value.ValueKind is JsonValueKind.String or JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False)
+            .Take(5)
+            .Select(property => $"{AgentStepFieldLabel(property.Name)}：{SummarizeJsonValue(property.Value)}")
+            .Where(item => !string.IsNullOrWhiteSpace(item))
+            .ToList();
+        return fields.Count > 0 ? string.Join("；", fields) : "对象";
+    }
+
+    private static JsonDocument? TryParseJson(string text)
+    {
+        try
+        {
+            return JsonDocument.Parse(text);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string TruncateStepText(string text)
+    {
+        var normalized = text.Replace("\r", "\n").Trim();
+        return normalized.Length > 800 ? $"{normalized[..800]}..." : normalized;
+    }
+
+    private static string StepKindLabel(string kind)
+    {
+        return kind switch
+        {
+            "llm" => "模型",
+            "tool" => "工具",
+            "done" => "完成",
+            _ => kind,
+        };
+    }
+
+    private static string AgentStepFieldLabel(string name)
+    {
+        return name switch
+        {
+            "task_id" or "taskId" => "Task ID",
+            "draft_id" or "draftId" => "草稿 ID",
+            "filePath" or "path" => "路径",
+            "fileName" or "name" => "名称",
+            "title" => "标题",
+            "message" => "信息",
+            "status" => "状态",
+            "ok" => "成功",
+            "error" => "错误",
+            "text" or "content" => "内容",
+            "count" => "数量",
+            "total" => "总数",
+            "page" => "页码",
+            "size" => "大小",
+            _ => name,
+        };
     }
 
     private void ShowConversation(JsonElement conversation)
@@ -1872,10 +2313,21 @@ public sealed partial class MainWindow : Window
             foreach (var message in messages.EnumerateArray())
             {
                 var role = GetString(message, "role", "") == "user" ? "user" : "assistant";
-                _agentPreviewMessages.Add(new AgentChatMessage(role, FirstString(message, "text", "content", "message")));
+                var id = FirstString(message, "id");
+                var steps = message.TryGetProperty("steps", out var messageSteps) ? messageSteps.Clone() : (JsonElement?)null;
+                _agentPreviewMessages.Add(new AgentChatMessage(
+                    string.IsNullOrWhiteSpace(id) ? NewAgentMessageId() : id,
+                    role,
+                    FirstString(message, "text", "content", "message"),
+                    steps));
             }
         }
+        if (!_agentPreviewMessages.Any(message => message.Id == _selectedAgentMessageId))
+        {
+            _selectedAgentMessageId = _agentPreviewMessages.LastOrDefault(message => message.Role == "assistant")?.Id ?? "";
+        }
         RenderAgentMessages(_agentPreviewMessages);
+        ShowSelectedAgentSteps();
     }
 
     private void ShowHomeworkDetail(JsonElement detail)
@@ -1896,6 +2348,8 @@ public sealed partial class MainWindow : Window
         EditorTextBox.Visibility = Visibility.Collapsed;
         PrivateThreadListView.Visibility = Visibility.Collapsed;
         DetailImageScrollViewer.Visibility = Visibility.Collapsed;
+        DetailDocumentWebView.Visibility = Visibility.Collapsed;
+        DetailDocumentWebView.Source = new Uri("about:blank");
         WorkspaceImagePreview.Source = null;
         DetailImageCaption.Text = "";
         HomeworkDetailScrollViewer.Visibility = Visibility.Visible;
@@ -2113,6 +2567,8 @@ public sealed partial class MainWindow : Window
         HomeworkDetailScrollViewer.Visibility = Visibility.Collapsed;
         PrivateThreadListView.Visibility = Visibility.Collapsed;
         DetailImageScrollViewer.Visibility = Visibility.Collapsed;
+        DetailDocumentWebView.Visibility = Visibility.Collapsed;
+        DetailDocumentWebView.Source = new Uri("about:blank");
         EditorTextBox.Text = GetString(draft, "draftText", "");
         SetStatus($"{FormatDraftStatus(GetString(draft, "status", ""))} · {GetString(draft, "subjectName", "未知课程")}");
     }
@@ -2124,6 +2580,8 @@ public sealed partial class MainWindow : Window
         EditorTextBox.Visibility = Visibility.Collapsed;
         HomeworkDetailScrollViewer.Visibility = Visibility.Collapsed;
         DetailImageScrollViewer.Visibility = Visibility.Collapsed;
+        DetailDocumentWebView.Visibility = Visibility.Collapsed;
+        DetailDocumentWebView.Source = new Uri("about:blank");
         WorkspaceImagePreview.Source = null;
         DetailImageCaption.Text = "";
         PrivateThreadListView.Visibility = Visibility.Visible;
@@ -2229,7 +2687,44 @@ public sealed partial class MainWindow : Window
         };
     }
 
+    private static string NewAgentMessageId() => Guid.NewGuid().ToString("N");
+
     private static string FormatJson(JsonElement element) => JsonSerializer.Serialize(element, PrettyJsonOptions);
+
+    private static string FormatAgentSteps(JsonElement steps)
+    {
+        if (steps.ValueKind != JsonValueKind.Array || steps.GetArrayLength() == 0)
+        {
+            return "这条助手消息没有记录执行过程。";
+        }
+
+        var rows = new List<string>();
+        var index = 1;
+        foreach (var step in steps.EnumerateArray())
+        {
+            var title = FirstString(step, "title", "kind");
+            var kind = FirstString(step, "kind");
+            var at = FirstString(step, "at", "time");
+            var detail = FirstString(step, "detail", "message");
+            var header = $"{index}. {title}";
+            if (!string.IsNullOrWhiteSpace(kind))
+            {
+                header += $" [{kind}]";
+            }
+            if (!string.IsNullOrWhiteSpace(at))
+            {
+                header += $"\n   {at}";
+            }
+            if (!string.IsNullOrWhiteSpace(detail))
+            {
+                header += $"\n\n{detail}";
+            }
+            rows.Add(header);
+            index += 1;
+        }
+
+        return string.Join("\n\n----------------\n\n", rows);
+    }
 
     private static string FormatSessionSummary(JsonElement session)
     {
@@ -2302,7 +2797,7 @@ public sealed partial class MainWindow : Window
         if (_currentPage == "agent")
         {
             SetAgentTranscriptPlain(cleanMessage);
-            AgentStepsTextBox.Text = "加载失败。";
+            SetAgentStepsMessage("加载失败。");
             return;
         }
         if (_currentPage == "settings")
@@ -2322,6 +2817,8 @@ public sealed partial class MainWindow : Window
         HomeworkDetailStackPanel.Children.Clear();
         PrivateThreadListView.Visibility = Visibility.Collapsed;
         DetailImageScrollViewer.Visibility = Visibility.Collapsed;
+        DetailDocumentWebView.Visibility = Visibility.Collapsed;
+        DetailDocumentWebView.Source = new Uri("about:blank");
         WorkspaceImagePreview.Source = null;
         DetailImageCaption.Text = "";
         DetailTextBox.Text = text;

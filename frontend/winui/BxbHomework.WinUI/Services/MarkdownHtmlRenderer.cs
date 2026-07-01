@@ -7,18 +7,21 @@ internal static class MarkdownHtmlRenderer
 {
     private const string EmptyState = "暂无消息。";
 
-    public static string RenderConversation(IEnumerable<(string Role, string Text)> messages, string theme = "light")
+    public static string RenderConversation(IEnumerable<(string Id, string Role, string Text, bool IsSelected, bool IsRunning)> messages, string theme = "light")
     {
         var normalizedTheme = string.Equals(theme, "dark", StringComparison.OrdinalIgnoreCase) ? "dark" : "light";
         var rows = messages.Select(message => new
         {
+            id = message.Id,
             role = message.Role == "user" ? "user" : "assistant",
             label = message.Role == "user" ? "你" : "助手",
             text = message.Text,
+            selected = message.IsSelected,
+            running = message.IsRunning,
         }).ToList();
 
         var payload = rows.Count == 0
-            ? JsonSerializer.Serialize(new[] { new { role = "assistant", label = "助手", text = EmptyState } })
+            ? JsonSerializer.Serialize(new[] { new { id = "", role = "assistant", label = "助手", text = EmptyState, selected = false, running = false } })
             : JsonSerializer.Serialize(rows);
 
         var assets = ResolveAssets();
@@ -77,6 +80,16 @@ internal static class MarkdownHtmlRenderer
       background: var(--assistant-bg);
     }
     .message.user { background: var(--user-bg); }
+    .message.assistant { cursor: pointer; }
+    .message.selected {
+      border-color: var(--link);
+      box-shadow: inset 3px 0 0 var(--link);
+    }
+    .message.running .role::after {
+      content: " · 执行中";
+      color: var(--link);
+      font-weight: 600;
+    }
     .role {
       color: var(--muted);
       font-size: 12px;
@@ -175,7 +188,10 @@ internal static class MarkdownHtmlRenderer
         ADD_ATTR: ['display', 'encoding', 'class', 'style', 'aria-hidden']
       });
       const role = message.role === "user" ? "user" : "assistant";
-      return `<section class="message ${role}"><div class="role">${escapeHtml(message.label || "")}</div><div class="content">${clean}</div></section>`;
+      const selected = message.selected ? " selected" : "";
+      const running = message.running ? " running" : "";
+      const id = escapeHtml(message.id || "");
+      return `<section class="message ${role}${selected}${running}" data-id="${id}" data-role="${role}"><div class="role">${escapeHtml(message.label || "")}</div><div class="content">${clean}</div></section>`;
     }
 
     function escapeHtml(text) {
@@ -191,10 +207,21 @@ internal static class MarkdownHtmlRenderer
     document.getElementById("app").innerHTML = messages.map(renderMessage).join("");
     document.addEventListener("click", (event) => {
       const link = event.target.closest && event.target.closest("a[href]");
-      if (!link) return;
-      event.preventDefault();
-      if (window.chrome && window.chrome.webview) {
-        window.chrome.webview.postMessage({ type: "open-link", href: link.href });
+      if (link) {
+        event.preventDefault();
+        if (window.chrome && window.chrome.webview) {
+          window.chrome.webview.postMessage({ type: "open-link", href: link.href });
+        }
+        return;
+      }
+
+      const message = event.target.closest && event.target.closest(".message.assistant[data-id]");
+      if (!message) return;
+      const id = message.getAttribute("data-id") || "";
+      if (id && window.chrome && window.chrome.webview) {
+        document.querySelectorAll(".message.selected").forEach((node) => node.classList.remove("selected"));
+        message.classList.add("selected");
+        window.chrome.webview.postMessage({ type: "select-message", id });
       }
     });
     requestAnimationFrame(() => window.scrollTo(0, document.body.scrollHeight));
