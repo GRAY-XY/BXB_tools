@@ -209,12 +209,17 @@
                                 <RowDefinition Height="*" />
                             </Grid.RowDefinitions>
                             <TextBlock Text="工作过程" FontSize="18" FontWeight="SemiBold" />
-                            <TextBox
-                                x:Name="AgentStepsTextBox"
-                                Grid.Row="1"
-                                IsReadOnly="True"
-                                AcceptsReturn="True"
-                                TextWrapping="Wrap" />
+                            <Grid Grid.Row="1">
+                                <TextBox
+                                    x:Name="AgentStepsTextBox"
+                                    Visibility="Collapsed"
+                                    IsReadOnly="True"
+                                    AcceptsReturn="True"
+                                    TextWrapping="Wrap" />
+                                <ScrollViewer x:Name="AgentStepsScrollViewer" VerticalScrollBarVisibility="Auto">
+                                    <StackPanel x:Name="AgentStepsStackPanel" Spacing="10" />
+                                </ScrollViewer>
+                            </Grid>
                         </Grid>
                     </Border>
                 </Grid>
@@ -321,6 +326,10 @@
                                         TextWrapping="Wrap" />
                                 </StackPanel>
                             </ScrollViewer>
+                            <WebView2
+                                x:Name="DetailDocumentWebView"
+                                Grid.Row="1"
+                                Visibility="Collapsed" />
                             <StackPanel x:Name="PrivateMessageComposerPanel" Grid.Row="2" Spacing="8" Visibility="Collapsed">
                                 <TextBox
                                     x:Name="PrivateMessageInputBox"

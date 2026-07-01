@@ -429,6 +429,18 @@ function newConversation(title = "新对话") {
   return { id: safeId(), title, createdAt: timestamp, updatedAt: timestamp, messages: [], turns: [] };
 }
 
+function normalizeConversationMessage(message) {
+  const source = message && typeof message === "object" ? message : {};
+  return {
+    ...source,
+    id: String(source.id || safeId()),
+    role: String(source.role || "") === "user" ? "user" : "assistant",
+    text: String(source.text ?? source.content ?? source.message ?? ""),
+    at: String(source.at || source.createdAt || nowIso()),
+    steps: Array.isArray(source.steps) ? source.steps : [],
+  };
+}
+
 function normalizeConversation(raw) {
   const fallback = newConversation();
   return {
@@ -436,7 +448,7 @@ function normalizeConversation(raw) {
     title: String(raw?.title || "新对话"),
     createdAt: String(raw?.createdAt || fallback.createdAt),
     updatedAt: String(raw?.updatedAt || raw?.createdAt || fallback.updatedAt),
-    messages: Array.isArray(raw?.messages) ? raw.messages : [],
+    messages: Array.isArray(raw?.messages) ? raw.messages.map(normalizeConversationMessage) : [],
     turns: Array.isArray(raw?.turns) ? raw.turns : [],
   };
 }
@@ -715,7 +727,7 @@ function safeToolSchemas() {
   }));
 }
 
-async function runAgent({ text, conversationId } = {}) {
+async function runAgent({ text, conversationId, userMessageId, assistantMessageId } = {}, { emitProgress } = {}) {
   const config = await loadModelConfig();
   const prompt = String(text || "").trim();
   if (!prompt) throw new Error("消息不能为空。");
@@ -725,7 +737,19 @@ async function runAgent({ text, conversationId } = {}) {
 
   const { state, conversation } = await getActiveConversation(conversationId);
   const steps = [];
-  const pushStep = (kind, title, detail = "") => steps.push({ kind, title, detail, at: nowIso() });
+  const userId = String(userMessageId || safeId());
+  const assistantId = String(assistantMessageId || safeId());
+  const pushStep = (kind, title, detail = "") => {
+    const step = { kind, title, detail, at: nowIso() };
+    steps.push(step);
+    emitProgress?.({
+      type: "agent-step",
+      conversationId: conversation.id,
+      messageId: assistantId,
+      step,
+      steps,
+    });
+  };
   const messages = [
     { role: "system", content: String(config.systemPrompt || "").trim() || DEFAULT_SYSTEM_PROMPT },
     ...conversation.turns,
@@ -757,14 +781,18 @@ async function runAgent({ text, conversationId } = {}) {
     if (!toolCalls.length) {
       const content = typeof message.content === "string" ? message.content : "执行完成。";
       const timestamp = nowIso();
+      const assistantTimestamp = nowIso();
+      pushStep("done", "模型已生成最终回答");
       conversation.turns.push({ role: "user", content: prompt }, { role: "assistant", content });
-      conversation.messages.push({ role: "user", text: prompt, at: timestamp }, { role: "assistant", text: content, at: nowIso() });
+      conversation.messages.push(
+        { id: userId, role: "user", text: prompt, at: timestamp, steps: [] },
+        { id: assistantId, role: "assistant", text: content, at: assistantTimestamp, steps },
+      );
       if (conversation.title === "新对话") conversation.title = prompt.slice(0, 28) || "新对话";
       conversation.updatedAt = nowIso();
       state.activeId = conversation.id;
       await saveConversationState(state);
-      pushStep("done", "模型已生成最终回答");
-      return { message: content, steps, usage, conversation: conversationSummary(conversation) };
+      return { message: content, messageId: assistantId, steps, usage, conversation: conversationSummary(conversation) };
     }
 
     messages.push({ role: "assistant", content: message.content || "", tool_calls: toolCalls });
@@ -909,6 +937,137 @@ async function getWorkspaceImageDataUrl(filePath) {
   if (fileStat.size > MAX_INLINE_IMAGE_BYTES) throw new Error("Image is too large to preview inline.");
   const buffer = await fs.readFile(resolved);
   return { fileName: path.basename(resolved), path: resolved, mimeType, sizeBytes: buffer.byteLength, dataUrl: `data:${mimeType};base64,${buffer.toString("base64")}` };
+}
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  })[character]);
+}
+
+function buildDocxPreviewHtml({ fileName, path: filePath, bodyHtml, messages }) {
+  const warnings = Array.isArray(messages)
+    ? messages
+        .map((message) => message?.message || String(message || ""))
+        .filter(Boolean)
+    : [];
+  const warningHtml = warnings.length
+    ? `<section class="warnings"><strong>转换提示</strong>${warnings.map((warning) => `<p>${escapeHtml(warning)}</p>`).join("")}</section>`
+    : "";
+
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${escapeHtml(fileName)}</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif;
+      background: Canvas;
+      color: CanvasText;
+    }
+    body {
+      margin: 0;
+      padding: 28px;
+      line-height: 1.65;
+      overflow-wrap: anywhere;
+    }
+    main {
+      max-width: 920px;
+      margin: 0 auto;
+    }
+    header {
+      margin-bottom: 22px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid color-mix(in srgb, CanvasText 16%, transparent);
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 20px;
+      line-height: 1.35;
+    }
+    .path {
+      margin: 0;
+      color: color-mix(in srgb, CanvasText 62%, transparent);
+      font-size: 12px;
+    }
+    .warnings {
+      margin: 0 0 18px;
+      padding: 12px 14px;
+      border: 1px solid color-mix(in srgb, CanvasText 16%, transparent);
+      border-radius: 8px;
+      background: color-mix(in srgb, CanvasText 5%, transparent);
+    }
+    .warnings p {
+      margin: 6px 0 0;
+      color: color-mix(in srgb, CanvasText 72%, transparent);
+      font-size: 13px;
+    }
+    img {
+      max-width: 100%;
+      height: auto;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 14px 0;
+    }
+    td, th {
+      border: 1px solid color-mix(in srgb, CanvasText 22%, transparent);
+      padding: 6px 8px;
+      vertical-align: top;
+    }
+    p {
+      margin: 0 0 10px;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>${escapeHtml(fileName)}</h1>
+      <p class="path">${escapeHtml(filePath)}</p>
+    </header>
+    ${warningHtml}
+    <article>${bodyHtml || "<p>文档没有可预览内容。</p>"}</article>
+  </main>
+</body>
+</html>`;
+}
+
+async function getWorkspaceDocxPreview(filePath) {
+  const resolved = assertWorkspacePath(filePath);
+  const extension = path.extname(resolved).toLowerCase();
+  if (extension !== ".docx") throw new Error("Only .docx files can be converted for preview.");
+  const fileStat = await fs.stat(resolved);
+  if (!fileStat.isFile()) throw new Error("DOCX preview target is not a file.");
+
+  const buffer = await fs.readFile(resolved);
+  const mammothModule = await import("mammoth");
+  const mammoth = mammothModule.default || mammothModule;
+  const result = await mammoth.convertToHtml({ buffer });
+  const fileName = path.basename(resolved);
+
+  return {
+    fileName,
+    path: resolved,
+    extension,
+    sizeBytes: fileStat.size,
+    converter: "mammoth",
+    messages: result.messages || [],
+    html: buildDocxPreviewHtml({
+      fileName,
+      path: resolved,
+      bodyHtml: result.value || "",
+      messages: result.messages || [],
+    }),
+  };
 }
 
 function parseAppVersion(value) {
@@ -1119,7 +1278,7 @@ async function appInfo() {
   };
 }
 
-async function handleRequest(request) {
+async function handleRequest(request, emitProgress) {
   const method = String(request?.method || "");
   const params = request?.params && typeof request.params === "object" ? request.params : {};
   if (method === "app.info" || method === "app:info") return appInfo();
@@ -1139,7 +1298,7 @@ async function handleRequest(request) {
   if (method === "conversation.select" || method === "agent:conversations:select") return selectConversation(params.conversationId);
   if (method === "conversation.rename" || method === "agent:conversations:rename") return renameConversation(params.conversationId, params.title);
   if (method === "conversation.delete" || method === "agent:conversations:delete") return deleteConversation(params.conversationId);
-  if (method === "agent.chat" || method === "agent:chat") return runAgent(params);
+  if (method === "agent.chat" || method === "agent:chat") return runAgent(params, { emitProgress });
   if (method === "agent.compact" || method === "agent:compact") return compactAgentContext(params.conversationId);
   if (method === "agent.reset" || method === "agent:reset") {
     const { state, conversation } = await getActiveConversation(params.conversationId);
@@ -1153,6 +1312,7 @@ async function handleRequest(request) {
   if (method === "workspace.savePastes" || method === "workspace:save-pastes") return saveWorkspacePastes(params.items);
   if (method === "workspace.open" || method === "workspace:open") return openAppPath("workspaceDir");
   if (method === "workspace.imageDataUrl" || method === "workspace:image-data-url") return getWorkspaceImageDataUrl(params.filePath);
+  if (method === "workspace.docxPreview" || method === "workspace:docx-preview") return getWorkspaceDocxPreview(params.filePath);
   if (method === "update.check" || method === "update:check") {
     const result = await checkForUpdates();
     setUpdateState({ status: result.ok && result.hasUpdate ? "available" : result.ok ? "idle" : "error", update: result.ok && result.hasUpdate ? result : null, message: result.message, totalBytes: result.installerAsset?.size || 0 });
@@ -1183,7 +1343,8 @@ async function handleRequestLine(line) {
   activeRequests += 1;
   try {
     request = JSON.parse(line);
-    const result = await handleRequest(request);
+    const emitProgress = (result) => writeResponse({ id: request.id ?? null, method: request.method ?? "", event: "progress", result });
+    const result = await handleRequest(request, emitProgress);
     writeResponse({ id: request.id ?? null, ok: true, result });
   } catch (error) {
     writeResponse({ id: request?.id ?? null, ok: false, error: { message: error?.message || String(error), stack: error?.stack || "" } });

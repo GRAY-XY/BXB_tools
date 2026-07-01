@@ -6,6 +6,13 @@ using System.Text.Json.Serialization;
 
 namespace BxbHomework.WinUI.Services;
 
+public sealed class BackendProgressEventArgs : EventArgs
+{
+    public string Id { get; init; } = "";
+    public string Method { get; init; } = "";
+    public JsonElement Result { get; init; }
+}
+
 public sealed class NodeBackendClient : IAsyncDisposable
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -21,6 +28,7 @@ public sealed class NodeBackendClient : IAsyncDisposable
     private int _nextId;
 
     public event EventHandler<string>? LogReceived;
+    public event EventHandler<BackendProgressEventArgs>? ProgressReceived;
 
     public bool IsRunning => _process is { HasExited: false };
 
@@ -168,6 +176,21 @@ public sealed class NodeBackendClient : IAsyncDisposable
         using var document = JsonDocument.Parse(line);
         var root = document.RootElement;
         var id = root.TryGetProperty("id", out var idElement) ? idElement.GetString() : null;
+        if (root.TryGetProperty("event", out var eventElement))
+        {
+            var eventName = eventElement.GetString();
+            if (eventName == "progress")
+            {
+                ProgressReceived?.Invoke(this, new BackendProgressEventArgs
+                {
+                    Id = id ?? "",
+                    Method = root.TryGetProperty("method", out var methodElement) ? methodElement.GetString() ?? "" : "",
+                    Result = root.TryGetProperty("result", out var resultElement) ? resultElement.Clone() : default,
+                });
+                return;
+            }
+        }
+
         if (string.IsNullOrWhiteSpace(id) || !_pending.TryRemove(id, out var completion))
         {
             LogReceived?.Invoke(this, line);
