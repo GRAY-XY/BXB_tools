@@ -1,3 +1,5 @@
+import { t } from '../locales.js';
+
 export function Toolbar({ app, state }) {
   const { session } = state;
   const subjects = session?.availableSubjects || [];
@@ -12,7 +14,7 @@ export function Toolbar({ app, state }) {
         <div class="toolbar-select-wrapper">
           <span class="toolbar-icon">📚</span>
           <select class="toolbar-select" id="subjectSelect">
-            <option value="">选择科目</option>
+            <option value="">${t('sidebar.schedule')}</option>
             ${subjects.map(subject => `
               <option value="${subject.name}" ${currentSubject?.id === subject.id ? 'selected' : ''}>
                 ${subject.name}
@@ -25,7 +27,7 @@ export function Toolbar({ app, state }) {
         <div class="toolbar-select-wrapper">
           <span class="toolbar-icon">📆</span>
           <select class="toolbar-select" id="termSelect">
-            <option value="">选择学期</option>
+            <option value="">${t('settings.currentTerm')}</option>
             ${terms.map(term => `
               <option value="${term.id}" ${currentTermId === term.id ? 'selected' : ''}>
                 ${term.name}
@@ -35,12 +37,12 @@ export function Toolbar({ app, state }) {
         </div>
 
         <!-- 刷新按钮 -->
-        <button class="toolbar-btn" id="refreshBtn" title="刷新数据">
+        <button class="toolbar-btn" id="refreshBtn" title="${t('sidebar.riskHomework')}">
           <span class="toolbar-icon">🔄</span>
         </button>
 
         <!-- 退出按钮 -->
-        <button class="toolbar-btn" id="logoutBtn" title="退出登录">
+        <button class="toolbar-btn" id="logoutBtn" title="${t('settings.logout')}">
           <span class="toolbar-icon">🚪</span>
         </button>
       </div>

@@ -19,7 +19,8 @@
     "tool": "node scripts/call-tool.js",
     "tool:direct": "node scripts/direct-tool.js",
     "tool:mcp": "node scripts/call-tool.js",
-    "scan:publish": "node scripts/publish-scan.js"
+    "scan:publish": "node scripts/publish-scan.js",
+    "clean": "bash scripts/clean.sh"
   },
   "engines": {
     "node": ">=22"

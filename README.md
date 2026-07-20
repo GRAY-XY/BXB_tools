@@ -14,23 +14,15 @@
 
 ## Repo Layout
 
+详细的项目结构说明请参考 [PROJECT_STRUCTURE.md](./PROJECT_STRUCTURE.md)
+
 ```text
-src/
-  index.js                 MCP server entry
-  banxuebang-client.js     Banxuebang session + API client
-  session-store.js         local session persistence
-  tool-definitions.js      shared tool registry for MCP + direct CLI
-scripts/
-  call-tool.js             local CLI for calling MCP tools over stdio
-  direct-tool.js           local CLI that bypasses MCP and calls the client directly
-  publish-scan.js          pre-publish safety scan
-README.md
-PROMPTS.md
-UI/
-  banxuebang_flutter/     Flutter desktop app + installer scripts
-desktop-shell/            bundled bridge/runtime layer + legacy shell assets
-desktop-client/           earlier standalone desktop client project
-package.json
+src/                      MCP server 核心代码
+scripts/                  工具脚本
+UI/banxuebang_flutter/   Flutter 桌面应用
+desktop-shell/           运行时桥接层
+web-app/                 Web 应用（localhost:5173，活跃开发中）
+docs/                    项目文档
 ```
 
 ## Flutter Desktop Packaging
@@ -130,25 +122,6 @@ npm run tool:direct -- session_status
 
 如果你需要给上层模型一套更稳定的调用提示词，可直接参考 [PROMPTS.md](./PROMPTS.md)。
 如果你想查看从 `client` 分支拆出的独立 UI 壳层，可直接参考 [UI/README.md](./UI/README.md)。
-如果你想查看完整的独立桌面客户端项目，可直接参考 [desktop-client/README.md](./desktop-client/README.md)。
-
-## Standalone Desktop Client
-
-This repository now also includes a full standalone desktop client project under:
-
-```text
-desktop-client/
-```
-
-That project includes:
-
-- Tkinter desktop GUI
-- standalone CLI
-- macOS packaging scripts
-- Windows packaging scripts
-- GitHub Releases oriented documentation
-
-For desktop end users, the recommended distribution path is GitHub Releases instead of running from source.
 
 ## Login Flow
 

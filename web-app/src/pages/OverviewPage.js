@@ -1,14 +1,21 @@
 export function OverviewPage({ app, state }) {
   const { dashboard, session } = state;
+  
+  // 从 dashboard.session 获取完整数据
+  const sessionData = dashboard?.session || session || {};
+  const user = sessionData?.user || {};
+  const currentTerm = sessionData?.availableTerms?.find(t => t.id === sessionData?.currentTermId);
+  const currentSubject = sessionData?.currentSubject;
+  
   const pendingHomework = dashboard?.pendingHomework || [];
   const achievement = dashboard?.achievement;
-  const courses = dashboard?.courses || [];
+  const courses = dashboard?.courses || sessionData?.availableSubjects || [];
 
   return `
     <div class="page-container">
       <div class="page-header">
-        <h1 class="page-title">工作台</h1>
-        <p class="page-subtitle">首页只放摘要，待办、通知、学业和课程概况都会收在这里。</p>
+        <h1 class="page-title">📊 工作台</h1>
+        <p class="page-subtitle">欢迎回来，${user.name || '同学'}！当前学期：${currentTerm?.name || '未知'}</p>
       </div>
 
       <div class="overview-grid">
@@ -33,9 +40,9 @@ export function OverviewPage({ app, state }) {
                       <span class="homework-preview-time">${formatDeadline(hw.endTime)}</span>
                     </div>
                     <div class="homework-preview-title">${hw.activityName}</div>
-                    ${hw.days && hw.hours ? `
+                    ${hw.days !== null && hw.hours !== null ? `
                       <div class="homework-preview-countdown ${getUrgencyClass(hw.days, hw.hours)}">
-                        ⏰ 剩余 ${hw.days}天 ${hw.hours}小时
+                        ⏰ ${hw.isEnd ? '已截止' : `剩余 ${hw.days}天 ${hw.hours}小时`}
                       </div>
                     ` : ''}
                   </div>
@@ -53,19 +60,19 @@ export function OverviewPage({ app, state }) {
         <!-- 成绩概览卡片 -->
         <div class="overview-card">
           <div class="card-header">
-            <h3 class="card-title">📊 成绩概览</h3>
+            <h3 class="card-title">📈 成绩概览</h3>
           </div>
           <div class="card-content">
-            ${achievement ? `
+            ${achievement && achievement.gpa ? `
               <div class="achievement-summary">
                 <div class="gpa-display">
-                  <div class="gpa-value">${achievement.gpa?.averageLevel || 'N/A'}</div>
-                  <div class="gpa-label">平均 GPA</div>
+                  <div class="gpa-value">${achievement.gpa.averageLevel || 'N/A'}</div>
+                  <div class="gpa-label">平均等级</div>
                 </div>
-                ${achievement.gpa?.gpa ? `
+                ${achievement.gpa.gpa ? `
                   <div class="gpa-details">
                     <div class="gpa-detail-item">
-                      <span class="gpa-detail-label">数值:</span>
+                      <span class="gpa-detail-label">GPA:</span>
                       <span class="gpa-detail-value">${achievement.gpa.gpa}</span>
                     </div>
                     ${achievement.gpa.averageScore ? `
@@ -79,7 +86,7 @@ export function OverviewPage({ app, state }) {
               </div>
             ` : `
               <div class="empty-state">
-                <div class="empty-icon">📈</div>
+                <div class="empty-icon">📊</div>
                 <p>暂无成绩数据</p>
               </div>
             `}
@@ -96,18 +103,18 @@ export function OverviewPage({ app, state }) {
             ${courses.length === 0 ? `
               <div class="empty-state">
                 <div class="empty-icon">📖</div>
-                <p>暂无课程</p>
+                <p>暂无课程数据</p>
               </div>
             ` : `
               <div class="course-grid">
                 ${courses.map(course => `
-                  <div class="course-card" data-course-name="${course.name}">
+                  <div class="course-card" data-course-name="${course.name || course.cnName}">
                     <div class="course-color" style="background-color: ${course.color || '#667eea'}"></div>
                     <div class="course-info">
-                      <div class="course-name">${course.name}</div>
+                      <div class="course-name">${course.name || course.cnName || '未命名课程'}</div>
                       ${course.teacherList && course.teacherList.length > 0 ? `
                         <div class="course-teacher">
-                          👤 ${course.teacherList.map(t => t.name || t.realName).join(', ')}
+                          👤 ${course.teacherList.map(t => t.userName || t.name || t.realName).join(', ')}
                         </div>
                       ` : ''}
                       ${course.unSubmitCount ? `
@@ -120,6 +127,33 @@ export function OverviewPage({ app, state }) {
                 `).join('')}
               </div>
             `}
+          </div>
+        </div>
+
+        <!-- 学期信息卡片 -->
+        <div class="overview-card">
+          <div class="card-header">
+            <h3 class="card-title">📅 学期信息</h3>
+          </div>
+          <div class="card-content">
+            <div class="status-list">
+              <div class="status-item">
+                <span class="status-label">当前学期:</span>
+                <span class="status-value ${currentTerm ? 'success' : ''}">${currentTerm?.name || '未知'}</span>
+              </div>
+              <div class="status-item">
+                <span class="status-label">当前科目:</span>
+                <span class="status-value">${currentSubject?.name || '未选择'}</span>
+              </div>
+              <div class="status-item">
+                <span class="status-label">班级:</span>
+                <span class="status-value">${sessionData?.currentClass?.name || '未知'}</span>
+              </div>
+              <div class="status-item">
+                <span class="status-label">学号:</span>
+                <span class="status-value">${user.loginName || '未知'}</span>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -149,33 +183,6 @@ export function OverviewPage({ app, state }) {
             </div>
           </div>
         </div>
-
-        <!-- 系统状态卡片 -->
-        <div class="overview-card">
-          <div class="card-header">
-            <h3 class="card-title">ℹ️ 系统状态</h3>
-          </div>
-          <div class="card-content">
-            <div class="status-list">
-              <div class="status-item">
-                <span class="status-label">登录状态:</span>
-                <span class="status-value success">✓ 已登录</span>
-              </div>
-              <div class="status-item">
-                <span class="status-label">当前学期:</span>
-                <span class="status-value">${session?.availableTerms?.find(t => t.id === session?.currentTermId)?.name || '未知'}</span>
-              </div>
-              <div class="status-item">
-                <span class="status-label">当前科目:</span>
-                <span class="status-value">${session?.currentSubject?.name || '未选择'}</span>
-              </div>
-              <div class="status-item">
-                <span class="status-label">用户名:</span>
-                <span class="status-value">${session?.user?.name || '未知'}</span>
-              </div>
-            </div>
-          </div>
-        </div>
       </div>
     </div>
   `;
@@ -195,7 +202,11 @@ function formatDeadline(endTime) {
 }
 
 function getUrgencyClass(days, hours) {
-  const totalHours = parseInt(days) * 24 + parseInt(hours);
+  const daysNum = parseInt(days) || 0;
+  const hoursNum = parseInt(hours) || 0;
+  const totalHours = daysNum * 24 + hoursNum;
+  
+  if (totalHours === 0) return 'urgent';
   if (totalHours < 24) return 'urgent';
   if (totalHours < 48) return 'warning';
   return 'normal';

@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>登录班学帮 - BXB Student</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    
+    .container {
+      background: white;
+      border-radius: 16px;
+      padding: 40px;
+      max-width: 700px;
+      width: 100%;
+      box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1);
+    }
+    
+    h1 {
+      font-size: 28px;
+      color: #667eea;
+      margin-bottom: 8px;
+      text-align: center;
+    }
+    
+    .subtitle {
+      text-align: center;
+      color: #718096;
+      margin-bottom: 32px;
+    }
+    
+    .step {
+      background: #f7fafc;
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 20px;
+      border-left: 4px solid #667eea;
+    }
+    
+    .step-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: #2d3748;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    
+    .step-content {
+      color: #4a5568;
+      line-height: 1.8;
+    }
+    
+    .btn {
+      width: 100%;
+      padding: 16px 32px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      border-radius: 12px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.2s;
+      margin-top: 12px;
+    }
+    
+    .btn:hover {
+      transform: translateY(-2px);
+    }
+    
+    .btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    
+    #resultSection {
+      display: none;
+    }
+    
+    .code-box {
+      background: #2d3748;
+      color: #68d391;
+      padding: 16px;
+      border-radius: 8px;
+      font-family: 'Monaco', 'Courier New', monospace;
+      font-size: 12px;
+      max-height: 300px;
+      overflow-y: auto;
+      word-break: break-all;
+      margin: 16px 0;
+      position: relative;
+    }
+    
+    .copy-btn {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      padding: 8px 16px;
+      background: #667eea;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    
+    .copy-btn:hover {
+      background: #5568d3;
+    }
+    
+    .success-msg {
+      background: #f0fff4;
+      color: #22543d;
+      padding: 16px;
+      border-radius: 8px;
+      margin-top: 16px;
+      border: 2px solid #9ae6b4;
+      text-align: center;
+      font-weight: 600;
+    }
+    
+    .warning {
+      background: #fffaf0;
+      color: #744210;
+      padding: 12px;
+      border-radius: 6px;
+      margin-top: 12px;
+      font-size: 14px;
+      border-left: 4px solid #ed8936;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🎓 登录班学帮</h1>
+    <p class="subtitle">请按照以下步骤完成登录</p>
+    
+    <!-- 步骤 1: 去登录 -->
+    <div id="step1Section">
+      <div class="step">
+        <div class="step-title">
+          <span>📝</span>
+          <span>第 1 步：前往班学帮登录</span>
+        </div>
+        <div class="step-content">
+          点击下方按钮，将在新标签页打开班学帮登录页面。<br>
+          使用您的账号密码登录。
+        </div>
+      </div>
+      
+      <button id="goToLoginBtn" class="btn">
+        🔗 前往班学帮登录
+      </button>
+      
+      <div class="warning">
+        ⚠️ 登录后请不要关闭班学帮页面，直接回到本页面
+      </div>
+    </div>
+    
+    <!-- 步骤 2: 显示结果 -->
+    <div id="resultSection">
+      <div class="step">
+        <div class="step-title">
+          <span>✓</span>
+          <span>第 2 步：复制下方代码</span>
+        </div>
+        <div class="step-content">
+          请复制下方显示的代码（点击"复制"按钮），然后回到主页面粘贴。
+        </div>
+      </div>
+      
+      <div class="code-box" id="codeBox">
+        <button class="copy-btn" id="copyBtn">复制</button>
+        <div id="codeContent">正在检测登录信息...</div>
+      </div>
+      
+      <div id="successMsg" class="success-msg" style="display: none;">
+        ✓ 代码已复制！请回到主页面粘贴
+      </div>
+      
+      <div class="warning">
+        💡 提示：复制完成后，您可以关闭本窗口
+      </div>
+    </div>
+  </div>
+  
+  <script>
+    const goToLoginBtn = document.getElementById('goToLoginBtn');
+    const step1Section = document.getElementById('step1Section');
+    const resultSection = document.getElementById('resultSection');
+    const codeBox = document.getElementById('codeBox');
+    const codeContent = document.getElementById('codeContent');
+    const copyBtn = document.getElementById('copyBtn');
+    const successMsg = document.getElementById('successMsg');
+    
+    let loginTabOpened = false;
+    let checkInterval = null;
+    
+    // 打开登录页面
+    goToLoginBtn.addEventListener('click', () => {
+      window.open('https://student.banxuebang.com/login', '_blank');
+      loginTabOpened = true;
+      
+      // 切换到等待界面
+      step1Section.style.display = 'none';
+      resultSection.style.display = 'block';
+      
+      // 开始检测登录
+      startChecking();
+    });
+    
+    // 开始检测登录信息
+    function startChecking() {
+      codeContent.textContent = '等待您在新标签页完成登录...\n\n请在新标签页登录班学帮后，回到本页面。';
+      
+      // 每 2 秒检测一次
+      checkInterval = setInterval(() => {
+        checkLogin();
+      }, 2000);
+      
+      // 立即检测一次
+      checkLogin();
+    }
+    
+    // 检测登录
+    function checkLogin() {
+      try {
+        // 尝试读取 localStorage
+        const storage = {};
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          storage[key] = localStorage.getItem(key);
+        }
+        
+        // 检查是否有登录信息
+        if (storage.tokens && storage.userInfo) {
+          // 找到登录信息了！
+          clearInterval(checkInterval);
+          displayResult(storage);
+        }
+      } catch (error) {
+        console.error('检测登录失败:', error);
+      }
+    }
+    
+    // 显示结果
+    function displayResult(storage) {
+      const jsonStr = JSON.stringify(storage, null, 2);
+      codeContent.textContent = jsonStr;
+      
+      // 自动复制到剪贴板
+      navigator.clipboard.writeText(jsonStr).then(() => {
+        successMsg.style.display = 'block';
+      }).catch(err => {
+        console.error('自动复制失败:', err);
+      });
+    }
+    
+    // 复制按钮
+    copyBtn.addEventListener('click', () => {
+      const text = codeContent.textContent;
+      navigator.clipboard.writeText(text).then(() => {
+        successMsg.style.display = 'block';
+        copyBtn.textContent = '已复制 ✓';
+        setTimeout(() => {
+          copyBtn.textContent = '复制';
+        }, 2000);
+      }).catch(err => {
+        alert('复制失败，请手动选择并复制');
+      });
+    });
+    
+    // 页面加载时检查是否已登录
+    window.addEventListener('load', () => {
+      // 检查 URL hash 参数
+      const hash = window.location.hash;
+      if (hash === '#check') {
+        // 从其他地方跳转回来，检查登录
+        step1Section.style.display = 'none';
+        resultSection.style.display = 'block';
+        checkLogin();
+      } else {
+        // 正常流程，先显示按钮
+        checkLogin();
+      }
+    });
+    
+    // 监听来自班学帮页面的消息（如果可能的话）
+    window.addEventListener('message', (event) => {
+      // 只接受来自班学帮的消息
+      if (event.origin === 'https://student.banxuebang.com') {
+        console.log('收到来自班学帮的消息:', event.data);
+        if (event.data && event.data.type === 'BXB_STORAGE') {
+          displayResult(event.data.storage);
+        }
+      }
+    });
+  </script>
+</body>
+</html>

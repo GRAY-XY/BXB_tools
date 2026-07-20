@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>捕获登录信息 - BXB Student</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    
+    .container {
+      background: white;
+      border-radius: 16px;
+      padding: 40px;
+      max-width: 600px;
+      box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1);
+      text-align: center;
+    }
+    
+    h1 {
+      font-size: 32px;
+      color: #667eea;
+      margin-bottom: 16px;
+    }
+    
+    .steps {
+      background: #f7fafc;
+      border-radius: 12px;
+      padding: 24px;
+      margin: 24px 0;
+      text-align: left;
+    }
+    
+    .steps ol {
+      margin-left: 20px;
+      line-height: 2;
+      color: #4a5568;
+    }
+    
+    .steps strong {
+      color: #2d3748;
+    }
+    
+    .btn {
+      padding: 16px 32px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      border-radius: 12px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.2s;
+      margin: 8px;
+    }
+    
+    .btn:hover {
+      transform: translateY(-2px);
+    }
+    
+    .btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    
+    .status {
+      margin-top: 24px;
+      padding: 16px;
+      border-radius: 8px;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    
+    .status.success {
+      background: #f0fff4;
+      color: #22543d;
+      border: 2px solid #9ae6b4;
+    }
+    
+    .status.error {
+      background: #fff5f5;
+      color: #742a2a;
+      border: 2px solid #feb2b2;
+    }
+    
+    .status.info {
+      background: #ebf8ff;
+      color: #2c5282;
+      border: 2px solid #90cdf4;
+    }
+    
+    .code {
+      background: #2d3748;
+      color: #68d391;
+      padding: 12px;
+      border-radius: 6px;
+      font-family: monospace;
+      font-size: 13px;
+      margin: 12px 0;
+      text-align: left;
+      overflow-x: auto;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🎓 捕获登录信息</h1>
+    <p style="color: #718096; margin-bottom: 24px;">
+      请按照以下步骤完成登录
+    </p>
+    
+    <div class="steps">
+      <ol>
+        <li>点击"打开班学帮登录"按钮</li>
+        <li>在<strong>新标签页</strong>中登录班学帮账号</li>
+        <li>登录成功后，<strong>回到本页面</strong></li>
+        <li>点击"发送登录信息"按钮</li>
+      </ol>
+    </div>
+    
+    <button id="openLoginBtn" class="btn">🔐 打开班学帮登录</button>
+    <button id="captureBtn" class="btn" style="display: none;">✓ 发送登录信息</button>
+    
+    <div id="status"></div>
+  </div>
+  
+  <script>
+    const openLoginBtn = document.getElementById('openLoginBtn');
+    const captureBtn = document.getElementById('captureBtn');
+    const statusEl = document.getElementById('status');
+    
+    let loginWindow = null;
+    
+    function showStatus(message, type) {
+      statusEl.innerHTML = `<div class="status ${type}">${message}</div>`;
+    }
+    
+    // 打开登录窗口
+    openLoginBtn.addEventListener('click', () => {
+      loginWindow = window.open('https://student.banxuebang.com/login', '_blank');
+      
+      if (!loginWindow) {
+        showStatus('❌ 无法打开新窗口，请允许浏览器弹窗', 'error');
+        return;
+      }
+      
+      openLoginBtn.style.display = 'none';
+      captureBtn.style.display = 'inline-block';
+      
+      showStatus(
+        '✓ 新标签页已打开<br>' +
+        '📱 请在新标签页中登录班学帮<br>' +
+        '⏳ 登录成功后，回到本页面点击"发送登录信息"',
+        'info'
+      );
+    });
+    
+    // 捕获并发送登录信息
+    captureBtn.addEventListener('click', async () => {
+      try {
+        showStatus('正在读取登录信息...', 'info');
+        
+        // 读取 localStorage（在同域下可以访问）
+        const storage = {};
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          storage[key] = localStorage.getItem(key);
+        }
+        
+        console.log('读取到的 localStorage keys:', Object.keys(storage));
+        
+        // 检查是否有登录信息
+        if (!storage.tokens || !storage.userInfo) {
+          showStatus(
+            '❌ 未检测到登录信息<br><br>' +
+            '请确保：<br>' +
+            '1. 已经在<strong>本页面</strong>登录过班学帮<br>' +
+            '2. 或者在同域的页面登录过<br><br>' +
+            '<strong>建议：</strong><br>' +
+            '请直接访问 <a href="https://student.banxuebang.com/login" target="_blank">班学帮登录页面</a>，<br>' +
+            '登录后再访问本页面',
+            'error'
+          );
+          return;
+        }
+        
+        showStatus('正在发送登录信息到主应用...', 'info');
+        
+        // 使用 postMessage 发送给父窗口
+        if (window.opener) {
+          window.opener.postMessage({
+            type: 'BXB_LOGIN_DATA',
+            storage: storage
+          }, 'http://localhost:5173');
+          
+          showStatus(
+            '✓ 登录信息已发送！<br>' +
+            '请查看主窗口，应该会自动登录<br><br>' +
+            '3 秒后自动关闭本窗口...',
+            'success'
+          );
+          
+          setTimeout(() => {
+            window.close();
+          }, 3000);
+        } else {
+          showStatus('❌ 无法找到主窗口，请从主应用打开本页面', 'error');
+        }
+        
+      } catch (error) {
+        console.error('捕获失败:', error);
+        showStatus('❌ 发生错误: ' + error.message, 'error');
+      }
+    });
+  </script>
+</body>
+</html>

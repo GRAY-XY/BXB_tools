@@ -980,24 +980,95 @@ export class BanxuebangClient {
       const context = await browser.newContext();
       const page = await context.newPage();
 
+      console.log('1. 导航到登录页面...');
       await page.goto(`${BASE_URL}/login`, {
         waitUntil: "networkidle",
         timeout: 60000,
       });
 
-      await page.getByPlaceholder("请输入账号").fill(String(username));
-      await page.getByPlaceholder("请输入密码").fill(String(password));
+      console.log('2. 等待页面加载完成...');
+      await page.waitForLoadState('domcontentloaded');
+      
+      console.log('3. 填写账号...');
+      const usernameInput = page.getByPlaceholder("请输入账号");
+      await usernameInput.waitFor({ state: 'visible', timeout: 10000 });
+      await usernameInput.fill(String(username));
+
+      console.log('4. 填写密码...');
+      const passwordInput = page.getByPlaceholder("请输入密码");
+      await passwordInput.waitFor({ state: 'visible', timeout: 10000 });
+      await passwordInput.fill(String(password));
 
       if (agreeTerms) {
+        console.log('5. 处理同意条款复选框...');
         const checkbox = page.locator('input[type="checkbox"]').first();
         if ((await checkbox.count()) > 0 && !(await checkbox.isChecked())) {
-          await checkbox.check({ force: true });
+          try {
+            await checkbox.evaluate(el => el.click());
+            console.log('   复选框已勾选（通过 JS）');
+          } catch (e) {
+            try {
+              await checkbox.locator('..').click({ force: true });
+              console.log('   复选框已勾选（通过父元素）');
+            } catch (e2) {
+              console.log('   警告：无法勾选复选框:', e2.message);
+            }
+          }
         }
       }
 
-      const loginButton = page.getByRole("button", { name: /登录/ }).first();
+      console.log('6. 查找登录按钮...');
+      // 尝试多种方式查找登录按钮
+      let loginButton = null;
+      
+      // 方式1: 通过文本（包含空格的情况）
+      try {
+        loginButton = page.locator('button:has-text("登")').filter({ hasText: /登\s*录/ }).first();
+        await loginButton.waitFor({ state: 'visible', timeout: 3000 });
+        console.log('   找到登录按钮（方式1: 文本匹配）');
+      } catch (e) {
+        console.log('   方式1失败，尝试方式2...');
+      }
+      
+      // 方式2: 通过 role 和名称
+      if (!loginButton || !(await loginButton.isVisible().catch(() => false))) {
+        try {
+          loginButton = page.getByRole("button", { name: /登\s*录/ }).first();
+          await loginButton.waitFor({ state: 'visible', timeout: 3000 });
+          console.log('   找到登录按钮（方式2: role）');
+        } catch (e) {
+          console.log('   方式2失败，尝试方式3...');
+        }
+      }
+      
+      // 方式3: 精确文本匹配（包括空格）
+      if (!loginButton || !(await loginButton.isVisible().catch(() => false))) {
+        try {
+          const allButtons = await page.locator('button').all();
+          for (const btn of allButtons) {
+            const text = await btn.innerText().catch(() => '');
+            if (text.includes('登') && text.includes('录')) {
+              loginButton = btn;
+              console.log('   找到登录按钮（方式3: 遍历匹配）');
+              break;
+            }
+          }
+        } catch (e) {
+          console.log('   方式3失败');
+        }
+      }
+      
+      if (!loginButton || !(await loginButton.isVisible().catch(() => false))) {
+        // 打印页面信息用于调试
+        const html = await page.content();
+        console.log('页面 HTML 片段:', html.substring(0, 1000));
+        throw new Error('无法找到登录按钮。请检查页面是否正确加载。');
+      }
+
+      console.log('7. 点击登录按钮...');
       await loginButton.click();
 
+      console.log('8. 等待登录完成...');
       try {
         await page.waitForFunction(
           () => {
@@ -1008,20 +1079,43 @@ export class BanxuebangClient {
           undefined,
           { timeout: timeoutMs },
         );
+        console.log('   登录成功！检测到 localStorage 数据');
       } catch (error) {
         const bodyText = (await page.locator("body").innerText().catch(() => "")) || "";
+        const url = page.url();
+        console.error('登录失败。当前 URL:', url);
+        console.error('页面内容预览:', bodyText.slice(0, 300));
+        
+        // 检查是否有错误提示
+        const errorMsg = await page.locator('.error, .ant-message-error, .el-message-error').first().innerText().catch(() => null);
+        if (errorMsg) {
+          throw new Error(`登录失败: ${errorMsg}`);
+        }
+        
         throw new Error(
-          `Login did not complete. URL: ${page.url()}. Page text preview: ${bodyText.slice(0, 300)}`,
+          `登录超时。URL: ${url}. 页面内容: ${bodyText.slice(0, 300)}`,
         );
       }
 
+      console.log('9. 捕获会话数据...');
       const session = await this.captureSessionFromPage(page, "credential-login");
+      
+      // 刷新context以确保数据正确解析
+      await this.refreshContext(session, { force: true });
 
+      console.log('✓ 登录流程完成！');
+      const summary = this.summarizeSession(session);
+      console.log('✓ 用户信息:', summary.user);
+      
       return {
-        ...this.summarizeSession(session),
+        ...summary,
         finalUrl: page.url(),
         note: "Credential login filled the login form in a browser, captured localStorage, and refreshed page context.",
       };
+    } catch (error) {
+      console.error('=== 登录过程出错 ===');
+      console.error('错误:', error.message);
+      throw error;
     } finally {
       await browser?.close();
     }
@@ -1753,6 +1847,59 @@ export class BanxuebangClient {
       timeSlots,
       hasData: Object.keys(schedule).length > 0,
     };
+  }
+
+  async listNotices({ page = 1, size = 20 } = {}) {
+    const session = await this.requireSession();
+    const userInfo = ensureObject(session.context?.userInfo);
+    if (!userInfo.id) {
+      throw new Error("Current session does not have userInfo.id.");
+    }
+
+    // 使用真实的班学帮通知 API
+    const response = safeBusinessResult(
+      await this.request(session, "GET", `/gateway/bxb/student/${userInfo.id}/page-query-notice`, {
+        params: { 
+          page,
+          size
+        },
+      }),
+      "page-query-notice",
+    );
+
+    const data = ensureObject(response.data);
+    const noticeList = Array.isArray(data.aaData) ? data.aaData : [];
+    
+    const notices = noticeList.map(item => ({
+      id: String(item.id || ''),
+      title: String(item.activityName || ''),
+      content: String(item.activityContent || ''),
+      sender: String(item.createName || ''),
+      time: String(item.createTime || ''),
+      read: Boolean(item.readStatus),
+      raw: item
+    }));
+
+    return {
+      notices,
+      total: data.iTotalRecords || data.totalRecords || notices.length,
+      totalPages: data.totalPages || Math.ceil((data.iTotalRecords || notices.length) / size),
+    };
+  }
+
+  async getUndoMessageCount() {
+    const session = await this.requireSession();
+    const userInfo = ensureObject(session.context?.userInfo);
+    if (!userInfo.id) {
+      throw new Error("Current session does not have userInfo.id.");
+    }
+
+    const response = safeBusinessResult(
+      await this.request(session, "GET", `/gateway/bxb/student/${userInfo.id}/msg/count-undo`),
+      "msg/count-undo",
+    );
+
+    return response.data || {};
   }
 
   async listPrivateMessageContacts() {
