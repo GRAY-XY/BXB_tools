@@ -937,6 +937,7 @@ function App() {
   const [reviewSubject, setReviewSubject] = useState("");
   const [reviewNoteContent, setReviewNoteContent] = useState("");
   const [reviewLoading, setReviewLoading] = useState(false);
+  const [summarizeLoading, setSummarizeLoading] = useState(false);
   const [conversations, setConversations] = useState([]);
   const [activeConversationId, setActiveConversationId] = useState("");
   const [conversationMenuOpen, setConversationMenuOpen] = useState(false);
@@ -1090,6 +1091,23 @@ function App() {
       setReviewNoteContent(await window.bxb.getReviewNote(note.file));
     } catch (error) {
       setStatus(`无法读取笔记：${error.message}`);
+    }
+  }
+
+  async function summarizeNotesNow() {
+    try {
+      setSummarizeLoading(true);
+      const result = await window.bxb.summarizeReviewNotes();
+      setSummarizeLoading(false);
+      if (!result.ok) {
+        setStatus(result.reason || "AI 总结失败");
+        return;
+      }
+      setReviewIndex(await window.bxb.listReviewNotes());
+      setStatus(`AI 总结完成，共 ${result.summaries.length} 个学科`);
+    } catch (error) {
+      setSummarizeLoading(false);
+      setStatus(`AI 总结失败：${error.message}`);
     }
   }
 
@@ -3138,6 +3156,9 @@ function App() {
                 {reviewLoading ? "整理中…" : "重新整理"}
               </button>
               <button onClick={loadReviewNotes}>刷新列表</button>
+              <button onClick={summarizeNotesNow} disabled={summarizeLoading || !reviewIndex?.subjects?.length}>
+                {summarizeLoading ? "总结中…" : "AI 总结（需模型配置）"}
+              </button>
             </div>
             {!reviewIndex?.subjects?.length ? (
               <div className="card">
@@ -3160,15 +3181,20 @@ function App() {
                   ))}
                 </div>
                 <div className="card review-notes">
-                  {reviewIndex.subjects
-                    .filter((group) => group.subject === reviewSubject)
-                    .flatMap((group) => group.notes)
-                    .map((note) => (
+                  {(() => {
+                    const currentGroup = reviewIndex.subjects.find((group) => group.subject === reviewSubject);
+                    const summary = reviewIndex.summaries?.find((item) => item.subject === reviewSubject);
+                    const noteList = [
+                      summary ? { file: summary.summaryFile, topic: "【AI 总结】", sourceTaskIds: [] } : null,
+                      ...(currentGroup?.notes || []),
+                    ].filter(Boolean);
+                    return noteList.map((note) => (
                       <button key={note.file} className="review-note-item" onClick={() => openReviewNote(reviewSubject, note)}>
                         <strong>{note.topic}</strong>
-                        <span>来源：{note.sourceTaskIds.join(", ")}</span>
+                        <span>{note.sourceTaskIds?.length ? `来源：${note.sourceTaskIds.join(", ")}` : "自动生成的学科总结"}</span>
                       </button>
-                    ))}
+                    ));
+                  })()}
                 </div>
                 <div className="card review-content">
                   {reviewNoteContent ? (

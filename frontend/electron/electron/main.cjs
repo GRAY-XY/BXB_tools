@@ -658,6 +658,8 @@ async function callTool(name, args = {}) {
   ) {
     await ensurePlaywrightBrowsers();
   }
+  const featureConfig = await loadFeatureConfig(featureConfigPath);
+  process.env.BANXUEBANG_OCR_ENABLED = featureConfig.ocr ? "1" : "0";
   const { toolDefinitions, executeTool } = await getToolRuntime();
   return executeTool(toolDefinitions, name, args || {});
 }
@@ -791,6 +793,7 @@ async function refreshKnowledge() {
   if (!config.knowledgeReview) {
     return { ok: false, reason: "知识点复习已关闭，请先在设置中打开。" };
   }
+  process.env.BANXUEBANG_OCR_ENABLED = config.ocr ? "1" : "0";
   const { client } = await getToolRuntime();
   const tasksResult = await client.listTasks({ subjectName: "全部课程", listType: "all", size: 100 });
   const list = Array.isArray(tasksResult?.homeworkList) ? tasksResult.homeworkList : [];
@@ -832,6 +835,61 @@ async function readReviewNote(relativePath) {
     throw new Error("无效的复习笔记路径。");
   }
   return fs.readFile(resolved, "utf8");
+}
+
+async function summarizeReviewWithModel() {
+  const index = await listReviewNotes();
+  if (!index?.subjects?.length) {
+    return { ok: false, reason: "没有可总结的复习笔记，请先整理知识点。" };
+  }
+  const modelConfig = await readJson(modelConfigPath, { apiKey: "", baseUrl: "", modelName: "" });
+  if (!modelConfig.apiKey || !modelConfig.baseUrl || !modelConfig.modelName) {
+    return { ok: false, reason: "未配置模型，请先在设置中填写 API Key、调用链接和模型名称。" };
+  }
+  const { sanitizeTopicName } = await getKnowledgeEngine();
+  const summaries = [];
+  for (const group of index.subjects) {
+    const texts = [];
+    for (const note of group.notes.slice(0, 8)) {
+      try {
+        texts.push(await readReviewNote(note.file));
+      } catch {
+        // 跳过不可读笔记
+      }
+    }
+    const contentInput = texts.join("\n\n---\n\n").slice(0, 12000);
+    const response = await fetch(deriveChatUrl(modelConfig.baseUrl), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${modelConfig.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: modelConfig.modelName,
+        messages: [
+          { role: "system", content: "你是学习助手。输出简洁的中文知识点复习卡片，使用 Markdown 小节：概念、公式或要点、例题、易错点。" },
+          { role: "user", content: `请把下面的作业内容总结成复习卡片：\n\n${contentInput}` },
+        ],
+        temperature: 0.3,
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(`模型返回 HTTP ${response.status}`);
+    }
+    const data = await response.json();
+    const content = data?.choices?.[0]?.message?.content || "";
+    if (!content) {
+      throw new Error("模型没有返回总结内容。");
+    }
+    const safeSubject = sanitizeTopicName(group.subject);
+    const summaryPath = path.join(reviewDir, safeSubject, "_summary.md");
+    await fs.mkdir(path.dirname(summaryPath), { recursive: true });
+    await fs.writeFile(summaryPath, `# ${group.subject} 复习总结\n\n${content}\n`, "utf8");
+    summaries.push({ subject: group.subject, summaryFile: `${safeSubject}/_summary.md`, noteCount: group.notes.length });
+  }
+  const updatedIndex = { ...index, summarizedAt: new Date().toISOString(), summaries };
+  await fs.writeFile(reviewIndexPath, JSON.stringify(updatedIndex, null, 2), "utf8");
+  return { ok: true, summaries };
 }
 
 function normalizeSystemPrompt(value) {
@@ -1880,6 +1938,7 @@ ipcMain.handle("alerts:refresh", async () => {
 ipcMain.handle("knowledge:refresh", async () => refreshKnowledge());
 ipcMain.handle("knowledge:list", async () => listReviewNotes());
 ipcMain.handle("knowledge:read", async (_event, { file } = {}) => readReviewNote(file));
+ipcMain.handle("knowledge:summarize", async () => summarizeReviewWithModel());
 ipcMain.handle("app:open-path", async (_event, { key } = {}) => openAppPath(key));
 ipcMain.handle("bxb:session", async () => callTool("session_status"));
 ipcMain.handle("bxb:tool", async (_event, { name, args }) => callTool(name, args));

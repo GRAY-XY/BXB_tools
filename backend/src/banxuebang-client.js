@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { chromium } from "playwright";
 import { DraftStore } from "./draft-store.js";
+import { runOcr } from "./ocr.js";
 
 const BASE_URL = "https://student.banxuebang.com";
 const BASIC_AUTH = "Basic YnhiLXdlYi1zOmJ4Yi13ZWItcw==";
@@ -2253,6 +2254,18 @@ export class BanxuebangClient {
       const result = await mammoth.extractRawText({ buffer });
       text = result.value || "";
       reader = "mammoth";
+    } else if (IMAGE_EXTENSIONS.has(extension) && process.env.BANXUEBANG_OCR_ENABLED === "1") {
+      try {
+        const ocrText = await runOcr(resolvedPath);
+        if (ocrText) {
+          text = ocrText;
+          reader = "vision-ocr";
+        } else {
+          readable = false;
+        }
+      } catch {
+        readable = false;
+      }
     } else {
       readable = false;
     }
@@ -2268,7 +2281,11 @@ export class BanxuebangClient {
       text: preview.text,
       truncated: preview.truncated,
       totalChars: preview.totalChars,
-      note: readable ? null : "This attachment type is not supported for text extraction yet.",
+      note: readable
+        ? null
+        : IMAGE_EXTENSIONS.has(extension)
+          ? "Image OCR unavailable: install Xcode Command Line Tools to enable local Vision OCR."
+          : "This attachment type is not supported for text extraction yet.",
     };
   }
 

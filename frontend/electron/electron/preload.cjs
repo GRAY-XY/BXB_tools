@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld("bxb", {
   runKnowledgeRefresh: () => ipcRenderer.invoke("knowledge:refresh"),
   listReviewNotes: () => ipcRenderer.invoke("knowledge:list"),
   getReviewNote: (file) => ipcRenderer.invoke("knowledge:read", { file }),
+  summarizeReviewNotes: () => ipcRenderer.invoke("knowledge:summarize"),
   getSession: () => ipcRenderer.invoke("bxb:session"),
   callTool: (name, args = {}) => ipcRenderer.invoke("bxb:tool", { name, args }),
   importWorkspaceFiles: () => ipcRenderer.invoke("workspace:import"),
