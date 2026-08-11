@@ -17,7 +17,9 @@ const draftDir = path.join(dataRoot, "drafts");
 const updateDir = path.join(userDataRoot, "updates");
 const pendingUpdatePath = path.join(updateDir, "pending-update.json");
 const modelConfigPath = path.join(userDataRoot, "model-config.json");
+const featureConfigPath = path.join(userDataRoot, "feature-config.json");
 const conversationsPath = path.join(userDataRoot, "agent-conversations.json");
+const { loadFeatureConfig, saveFeatureConfig } = require("./feature-config.cjs");
 const IMAGE_MIME_BY_EXTENSION = new Map([
   [".png", "image/png"],
   [".jpg", "image/jpeg"],
@@ -1692,6 +1694,8 @@ ipcMain.handle("app:info", async () => ({
   browserDependency: getBrowserDependencyStatus(),
 }));
 
+ipcMain.handle("feature:get", async () => loadFeatureConfig(featureConfigPath));
+ipcMain.handle("feature:save", async (_event, patch) => saveFeatureConfig(featureConfigPath, patch));
 ipcMain.handle("app:open-path", async (_event, { key } = {}) => openAppPath(key));
 ipcMain.handle("bxb:session", async () => callTool("session_status"));
 ipcMain.handle("bxb:tool", async (_event, { name, args }) => callTool(name, args));

@@ -3,6 +3,8 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("bxb", {
   getAppInfo: () => ipcRenderer.invoke("app:info"),
   openAppPath: (key) => ipcRenderer.invoke("app:open-path", { key }),
+  getFeatureConfig: () => ipcRenderer.invoke("feature:get"),
+  saveFeatureConfig: (patch) => ipcRenderer.invoke("feature:save", patch),
   getSession: () => ipcRenderer.invoke("bxb:session"),
   callTool: (name, args = {}) => ipcRenderer.invoke("bxb:tool", { name, args }),
   importWorkspaceFiles: () => ipcRenderer.invoke("workspace:import"),
