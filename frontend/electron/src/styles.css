@@ -165,6 +165,35 @@
   margin: 0;
 }
 
+.draft-ai-card {
+  margin-bottom: 14px;
+}
+
+.draft-ai-input {
+  width: 100%;
+  min-height: 90px;
+  padding: 10px 12px;
+  border: 1px solid var(--border, #ddd);
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 13px;
+  resize: vertical;
+}
+
+.draft-ai-actions {
+  margin-top: 10px;
+}
+
+.draft-ai-reply {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border, #ddd);
+  border-radius: 8px;
+  background: var(--card-bg, #fff);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
 body {
   margin: 0;
   min-width: 1100px;

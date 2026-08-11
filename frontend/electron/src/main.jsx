@@ -939,6 +939,9 @@ function App() {
   const [reviewLoading, setReviewLoading] = useState(false);
   const [summarizeLoading, setSummarizeLoading] = useState(false);
   const [autoModes, setAutoModes] = useState(null);
+  const [draftAiText, setDraftAiText] = useState("");
+  const [draftAiReply, setDraftAiReply] = useState("");
+  const [draftAiRunning, setDraftAiRunning] = useState(false);
   const [conversations, setConversations] = useState([]);
   const [activeConversationId, setActiveConversationId] = useState("");
   const [conversationMenuOpen, setConversationMenuOpen] = useState(false);
@@ -1131,6 +1134,34 @@ function App() {
       setStatus(result.generated ? `已自动生成 ${result.generated} 条作业草稿，请到草稿页审核。` : result.reason || "没有需要自动完成的作业。");
     } catch (error) {
       setStatus(`自动完成失败：${error.message}`);
+    }
+  }
+
+  async function sendDraftAi(preset) {
+    const draftContent = selectedDraft?.draftText || draftEditText || "";
+    let text = "";
+    if (preset === "polish") {
+      text = `请帮我润色下面这份作业草稿：让它更完整、表达更清楚，保持纯文本，不要使用 Markdown 标题、列表或表格。\n\n草稿内容：\n${draftContent || "(当前没有选中草稿)"}`;
+    } else if (preset === "check") {
+      text = `请检查下面这份草稿：内容是否完整、是否回答了作业要求、有没有明显错误或缺失，逐条给出修改建议。\n\n草稿内容：\n${draftContent || "(当前没有选中草稿)"}`;
+    } else {
+      text = draftAiText.trim();
+    }
+    if (!text) {
+      setStatus("请先输入要问的内容。");
+      return;
+    }
+    try {
+      setDraftAiRunning(true);
+      setDraftAiReply("");
+      const requestId = `draft-ai-${Date.now()}`;
+      const result = await window.bxb.chat({ text, requestId, conversationId: activeConversationId });
+      setDraftAiReply(result.message || "（模型没有返回内容）");
+      setStatus("草稿助手已回复");
+    } catch (error) {
+      setStatus(`草稿助手失败：${error.message}`);
+    } finally {
+      setDraftAiRunning(false);
     }
   }
 
@@ -2774,6 +2805,35 @@ function App() {
               </button>
               {draftDeleteConfirming && (
                 <button onClick={cancelDraftDelete} disabled={draftInteractionLocked}>取消删除</button>
+              )}
+            </div>
+            <div className="card draft-ai-card">
+              <div className="alert-head">
+                <h2>AI 草稿助手</h2>
+                {selectedDraft && <span className="muted">当前草稿：{selectedDraft.taskTitle || selectedDraft.draftId}</span>}
+              </div>
+              <textarea
+                className="draft-ai-input"
+                value={draftAiText}
+                onChange={(event) => setDraftAiText(event.target.value)}
+                placeholder="输入你的问题，例如：帮我重写开头、检查错别字、补充结论……"
+                rows={4}
+              />
+              <div className="toolbar draft-ai-actions">
+                <button className="primary" onClick={() => sendDraftAi("polish")} disabled={draftAiRunning || !selectedDraft}>
+                  润色当前草稿
+                </button>
+                <button onClick={() => sendDraftAi("check")} disabled={draftAiRunning || !selectedDraft}>
+                  检查并给建议
+                </button>
+                <button onClick={() => sendDraftAi("")} disabled={draftAiRunning || !draftAiText.trim()}>
+                  {draftAiRunning ? "思考中…" : "发送"}
+                </button>
+              </div>
+              {draftAiReply && (
+                <div className="draft-ai-reply">
+                  <div dangerouslySetInnerHTML={md(draftAiReply)} />
+                </div>
               )}
             </div>
             {draftCreateOpen ? (
