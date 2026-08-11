@@ -1,7 +1,7 @@
 const { app, BrowserWindow, dialog, ipcMain, net, shell } = require("electron");
 const fs = require("node:fs/promises");
 const path = require("node:path");
-const { createReadStream, createWriteStream, existsSync } = require("node:fs");
+const { createReadStream, createWriteStream, existsSync, readdirSync } = require("node:fs");
 const crypto = require("node:crypto");
 const { spawn, spawnSync } = require("node:child_process");
 const { pathToFileURL } = require("node:url");
@@ -481,18 +481,41 @@ function browserCacheCandidates() {
 }
 
 function hasChromiumCache(browserRoot) {
-  const chromiumRoot = path.join(browserRoot, "chromium-1217");
   if (process.platform === "darwin") {
-    return (
-      existsSync(path.join(chromiumRoot, "chrome-mac", "Chromium.app", "Contents", "MacOS", "Chromium")) ||
-      existsSync(path.join(chromiumRoot, "chrome-mac-arm64", "Chromium.app", "Contents", "MacOS", "Chromium")) ||
-      existsSync(path.join(browserRoot, "chromium_headless_shell-1217", "chrome-mac", "headless_shell"))
-    );
+    let entries = [];
+    try {
+      entries = readdirSync(browserRoot);
+    } catch {
+      entries = [];
+    }
+    return entries.some((entry) => {
+      const root = path.join(browserRoot, entry);
+      if (entry.startsWith("chromium-")) {
+        return (
+          existsSync(path.join(root, "chrome-mac", "Chromium.app", "Contents", "MacOS", "Chromium")) ||
+          existsSync(path.join(root, "chrome-mac-arm64", "Chromium.app", "Contents", "MacOS", "Chromium"))
+        );
+      }
+      if (entry.startsWith("chromium_headless_shell-")) {
+        return existsSync(path.join(root, "chrome-mac", "headless_shell"));
+      }
+      return false;
+    });
   }
-  return (
-    existsSync(path.join(chromiumRoot, "chrome-win64", "chrome.exe")) ||
-    existsSync(path.join(chromiumRoot, "chrome-win", "chrome.exe"))
-  );
+  let entries = [];
+  try {
+    entries = readdirSync(browserRoot);
+  } catch {
+    entries = [];
+  }
+  return entries.some((entry) => {
+    if (!entry.startsWith("chromium-")) return false;
+    const root = path.join(browserRoot, entry);
+    return (
+      existsSync(path.join(root, "chrome-win64", "chrome.exe")) ||
+      existsSync(path.join(root, "chrome-win", "chrome.exe"))
+    );
+  });
 }
 
 function findExistingBrowserRoot() {

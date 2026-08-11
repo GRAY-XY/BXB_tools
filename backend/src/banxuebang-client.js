@@ -1,5 +1,5 @@
 import { mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { chromium } from "playwright";
@@ -274,18 +274,36 @@ async function launchBrowser(headless) {
     process.platform === "darwin" ? path.join(process.env.HOME || "", "Library", "Caches", "ms-playwright") : null,
   ].filter(Boolean);
   const isMac = process.platform === "darwin";
-  const executableCandidates = browserRootCandidates.flatMap((browserRoot) =>
-    isMac
-      ? [
-          path.join(browserRoot, "chromium-1217", "chrome-mac", "Chromium.app", "Contents", "MacOS", "Chromium"),
-          path.join(browserRoot, "chromium-1217", "chrome-mac-arm64", "Chromium.app", "Contents", "MacOS", "Chromium"),
-          path.join(browserRoot, "chromium_headless_shell-1217", "chrome-mac", "headless_shell"),
-        ]
-      : [
-          path.join(browserRoot, "chromium-1217", "chrome-win64", "chrome.exe"),
-          path.join(browserRoot, "chromium-1217", "chrome-win", "chrome.exe"),
-        ],
-  );
+  const executableCandidates = browserRootCandidates.flatMap((browserRoot) => {
+    if (!existsSync(browserRoot)) return [];
+    let entries = [];
+    try {
+      entries = readdirSync(browserRoot);
+    } catch {
+      entries = [];
+    }
+    if (isMac) {
+      return entries.flatMap((entry) => {
+        const root = path.join(browserRoot, entry);
+        if (entry.startsWith("chromium-")) {
+          return [
+            path.join(root, "chrome-mac", "Chromium.app", "Contents", "MacOS", "Chromium"),
+            path.join(root, "chrome-mac-arm64", "Chromium.app", "Contents", "MacOS", "Chromium"),
+          ];
+        }
+        if (entry.startsWith("chromium_headless_shell-")) {
+          return [path.join(root, "chrome-mac", "headless_shell")];
+        }
+        return [];
+      });
+    }
+    return entries
+      .filter((entry) => entry.startsWith("chromium-"))
+      .flatMap((entry) => [
+        path.join(browserRoot, entry, "chrome-win64", "chrome.exe"),
+        path.join(browserRoot, entry, "chrome-win", "chrome.exe"),
+      ]);
+  });
   const executablePath = executableCandidates.find((candidate) => existsSync(candidate));
 
   try {

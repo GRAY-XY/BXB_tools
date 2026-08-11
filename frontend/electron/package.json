@@ -7,10 +7,10 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "electron": "electron .",
-    "start": "concurrently -k \"npm run dev\" \"wait-on http://127.0.0.1:5173 && electron .\"",
+    "start": "concurrently -k \"pnpm run dev\" \"wait-on http://127.0.0.1:5173 && electron .\"",
     "build": "vite build",
-    "dist": "npm run build && electron-builder --win nsis dir",
-    "dist:mac": "npm run build && electron-builder --mac",
+    "dist": "pnpm run build && electron-builder --win nsis dir",
+    "dist:mac": "pnpm run build && electron-builder --mac",
     "check": "vite build"
   },
   "dependencies": {
