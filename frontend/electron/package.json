@@ -10,6 +10,7 @@
     "start": "concurrently -k \"npm run dev\" \"wait-on http://127.0.0.1:5173 && electron .\"",
     "build": "vite build",
     "dist": "npm run build && electron-builder --win nsis dir",
+    "dist:mac": "npm run build && electron-builder --mac",
     "check": "vite build"
   },
   "dependencies": {
@@ -46,14 +47,30 @@
       {
         "from": "../../package.json",
         "to": "payload/package.json"
-      },
-      {
-        "from": "../../build_assets/ms-playwright-browsers.zip",
-        "to": "payload/runtime/ms-playwright-browsers.zip"
       }
     ],
     "directories": {
       "output": "../../dist-electron-app"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "category": "public.app-category.education",
+      "artifactName": "BXB-Assistant-${version}-${arch}.${ext}"
     },
     "win": {
       "signAndEditExecutable": false,
