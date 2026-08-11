@@ -15,6 +15,17 @@ const pages = [
   ["settings", "设置"],
 ];
 
+const featureToggleRows = [
+  ["autoDetect", "自动识别作业"],
+  ["autoComplete", "AI 自动完成（实验）"],
+  ["knowledgeReview", "知识点复习"],
+  ["gpaAlert", "GPA 预警"],
+  ["reminder", "未交作业提醒"],
+  ["autoSubmit", "自动提交（实验）"],
+  ["ocr", "图片 OCR"],
+  ["notifications", "桌面通知"],
+];
+
 const quickPrompts = [
   "列出课程",
   "列出所有课程作业",
@@ -919,6 +930,7 @@ function App() {
   const [terms, setTerms] = useState([]);
   const [sessionMenuOpen, setSessionMenuOpen] = useState(false);
   const [appInfo, setAppInfo] = useState(null);
+  const [featureConfig, setFeatureConfig] = useState(null);
   const [conversations, setConversations] = useState([]);
   const [activeConversationId, setActiveConversationId] = useState("");
   const [conversationMenuOpen, setConversationMenuOpen] = useState(false);
@@ -1003,9 +1015,20 @@ function App() {
   useEffect(() => {
     window.bxb.getAppInfo().then(setAppInfo).catch((error) => setStatus(error.message));
     window.bxb.loadModelConfig().then(setModelConfig).catch((error) => setStatus(error.message));
+    window.bxb.getFeatureConfig().then(setFeatureConfig).catch(() => {});
     loadConversations();
     refreshSession();
   }, []);
+
+  async function updateFeatureConfig(patch) {
+    try {
+      const next = await window.bxb.saveFeatureConfig(patch);
+      setFeatureConfig(next);
+      setStatus("功能开关已保存");
+    } catch (error) {
+      setStatus(`无法保存功能开关：${error.message}`);
+    }
+  }
 
   useEffect(() => {
     const off = window.bxb.onAgentProgress(({ step }) => {
@@ -2757,6 +2780,52 @@ function App() {
             <PageTitle title="设置" subtitle="模型、界面、Agent 和软件更新。" />
             <div className="settings-layout">
               <div className="card form settings-card-wide">
+                <h2>功能开关</h2>
+                <div className="feature-grid">
+                  {featureToggleRows.map(([key, label]) => (
+                    <label key={key} className="feature-toggle">
+                      <input
+                        type="checkbox"
+                        checked={!!featureConfig?.[key]}
+                        disabled={!featureConfig}
+                        onChange={(event) => updateFeatureConfig({ [key]: event.target.checked })}
+                      />
+                      <span>{label}</span>
+                    </label>
+                  ))}
+                </div>
+                <div className="feature-row">
+                  <label>
+                    GPA 预警阈值
+                    <select
+                      value={featureConfig?.gpaThreshold || "B"}
+                      disabled={!featureConfig}
+                      onChange={(event) => updateFeatureConfig({ gpaThreshold: event.target.value })}
+                    >
+                      <option value="A">低于 A 即预警</option>
+                      <option value="B">B 及以下预警（默认）</option>
+                      <option value="C">C 及以下预警</option>
+                      <option value="D">D 及以下预警</option>
+                    </select>
+                  </label>
+                  <label>
+                    未交作业提醒提前量（小时，逗号分隔）
+                    <input
+                      value={(featureConfig?.remindLeadHours || [24, 6, 1]).join(",")}
+                      disabled={!featureConfig}
+                      onChange={(event) =>
+                        updateFeatureConfig({
+                          remindLeadHours: event.target.value
+                            .split(",")
+                            .map((item) => Number(item.trim()))
+                            .filter((item) => Number.isFinite(item) && item > 0),
+                        })
+                      }
+                    />
+                  </label>
+                </div>
+              </div>
+              <div className="card form settings-card-wide">
                 <h2>模型配置</h2>
                 <label>API Key<input type="password" value={modelConfig.apiKey || ""} onChange={(event) => setModelConfig({ ...modelConfig, apiKey: event.target.value })} /></label>
                 <label>调用链接<input value={modelConfig.baseUrl || ""} onChange={(event) => setModelConfig({ ...modelConfig, baseUrl: event.target.value })} placeholder="https://api.example.com/v1" /></label>
@@ -2821,7 +2890,7 @@ function App() {
                 <div className="update-head">
                   <div>
                     <h2>软件更新</h2>
-                    <p>Windows 正式版</p>
+                    <p>{appInfo?.updateChannel === "macOS preview" ? "macOS 预览版（暂不提供自动更新）" : "Windows 正式版"}</p>
                   </div>
                   <span className="update-version">v{appInfo?.version || "unknown"}</span>
                 </div>

@@ -15,6 +15,45 @@
   box-sizing: border-box;
 }
 
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.feature-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border, #ddd);
+  border-radius: 8px;
+  background: var(--card-bg, #fff);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.feature-toggle:hover {
+  background: var(--hover-bg, #f5f5f5);
+}
+
+.feature-toggle input[type="checkbox"] {
+  accent-color: var(--accent, #2f6fed);
+  width: 16px;
+  height: 16px;
+}
+
+.feature-toggle span {
+  font-size: 13px;
+}
+
+.feature-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+}
+
 body {
   margin: 0;
   min-width: 1100px;
