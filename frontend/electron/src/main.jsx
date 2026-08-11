@@ -12,6 +12,7 @@ const pages = [
   ["workspace", "工作区"],
   ["messages", "私信"],
   ["drafts", "草稿"],
+  ["review", "复习"],
   ["settings", "设置"],
 ];
 
@@ -932,6 +933,10 @@ function App() {
   const [appInfo, setAppInfo] = useState(null);
   const [featureConfig, setFeatureConfig] = useState(null);
   const [alertSummary, setAlertSummary] = useState(null);
+  const [reviewIndex, setReviewIndex] = useState(null);
+  const [reviewSubject, setReviewSubject] = useState("");
+  const [reviewNoteContent, setReviewNoteContent] = useState("");
+  const [reviewLoading, setReviewLoading] = useState(false);
   const [conversations, setConversations] = useState([]);
   const [activeConversationId, setActiveConversationId] = useState("");
   const [conversationMenuOpen, setConversationMenuOpen] = useState(false);
@@ -1049,6 +1054,45 @@ function App() {
     }
   }
 
+  async function loadReviewNotes() {
+    try {
+      const index = await window.bxb.listReviewNotes();
+      setReviewIndex(index);
+      if (index?.subjects?.length) {
+        setReviewSubject((current) => current || index.subjects[0].subject);
+      }
+    } catch {
+      setReviewIndex(null);
+    }
+  }
+
+  async function refreshKnowledgeNow() {
+    try {
+      setReviewLoading(true);
+      const result = await window.bxb.runKnowledgeRefresh();
+      setReviewLoading(false);
+      if (!result.ok) {
+        setStatus(result.reason || "知识点刷新失败");
+        return;
+      }
+      setReviewIndex(result.index);
+      setReviewSubject(result.index?.subjects?.[0]?.subject || "");
+      setReviewNoteContent("");
+      setStatus(`知识点整理完成，共 ${result.count} 条作业内容`);
+    } catch (error) {
+      setReviewLoading(false);
+      setStatus(`知识点刷新失败：${error.message}`);
+    }
+  }
+
+  async function openReviewNote(subject, note) {
+    try {
+      setReviewNoteContent(await window.bxb.getReviewNote(note.file));
+    } catch (error) {
+      setStatus(`无法读取笔记：${error.message}`);
+    }
+  }
+
   useEffect(() => {
     const off = window.bxb.onAgentProgress(({ step }) => {
       setSteps((current) => [...current, step]);
@@ -1091,6 +1135,9 @@ function App() {
     }
     if (page === "home") {
       loadAlerts();
+    }
+    if (page === "review" && !reviewIndex) {
+      loadReviewNotes();
     }
   }, [page]);
 
@@ -3080,6 +3127,58 @@ function App() {
                 </div>
               </div>
             </div>
+          </section>
+        )}
+
+        {page === "review" && (
+          <section>
+            <PageTitle title="复习" subtitle="从作业正文与附件整理知识点（原文模式；LLM 总结在后续版本接入）。" />
+            <div className="toolbar">
+              <button className="primary" onClick={refreshKnowledgeNow} disabled={reviewLoading}>
+                {reviewLoading ? "整理中…" : "重新整理"}
+              </button>
+              <button onClick={loadReviewNotes}>刷新列表</button>
+            </div>
+            {!reviewIndex?.subjects?.length ? (
+              <div className="card">
+                <p className="muted">还没有复习笔记。登录后点击"重新整理"，应用会扫描当前学期作业的正文与附件。</p>
+              </div>
+            ) : (
+              <div className="review-layout">
+                <div className="card review-subjects">
+                  {reviewIndex.subjects.map((group) => (
+                    <button
+                      key={group.subject}
+                      className={reviewSubject === group.subject ? "active" : ""}
+                      onClick={() => {
+                        setReviewSubject(group.subject);
+                        setReviewNoteContent("");
+                      }}
+                    >
+                      {group.subject}（{group.notes.length}）
+                    </button>
+                  ))}
+                </div>
+                <div className="card review-notes">
+                  {reviewIndex.subjects
+                    .filter((group) => group.subject === reviewSubject)
+                    .flatMap((group) => group.notes)
+                    .map((note) => (
+                      <button key={note.file} className="review-note-item" onClick={() => openReviewNote(reviewSubject, note)}>
+                        <strong>{note.topic}</strong>
+                        <span>来源：{note.sourceTaskIds.join(", ")}</span>
+                      </button>
+                    ))}
+                </div>
+                <div className="card review-content">
+                  {reviewNoteContent ? (
+                    <pre className="review-pre">{reviewNoteContent}</pre>
+                  ) : (
+                    <p className="muted">选择左侧笔记查看内容。</p>
+                  )}
+                </div>
+              </div>
+            )}
           </section>
         )}
       </main>

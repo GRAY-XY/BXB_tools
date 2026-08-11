@@ -106,6 +106,65 @@
   color: #92600d;
 }
 
+.review-layout {
+  display: grid;
+  grid-template-columns: 240px 320px 1fr;
+  gap: 14px;
+  align-items: start;
+}
+
+.review-subjects {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.review-subjects button,
+.review-note-item {
+  text-align: left;
+  padding: 10px 12px;
+  border: 1px solid var(--border, #ddd);
+  border-radius: 8px;
+  background: var(--card-bg, #fff);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.review-subjects button.active {
+  border-color: var(--accent, #2f6fed);
+  background: rgba(47, 111, 237, 0.08);
+}
+
+.review-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.review-note-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.review-note-item span {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.review-content {
+  min-height: 420px;
+}
+
+.review-pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.7;
+  margin: 0;
+}
+
 body {
   margin: 0;
   min-width: 1100px;

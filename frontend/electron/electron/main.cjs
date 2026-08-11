@@ -20,6 +20,8 @@ const modelConfigPath = path.join(userDataRoot, "model-config.json");
 const featureConfigPath = path.join(userDataRoot, "feature-config.json");
 const conversationsPath = path.join(userDataRoot, "agent-conversations.json");
 const alertStatePath = path.join(userDataRoot, "alert-state.json");
+const reviewDir = path.join(userDataRoot, "review");
+const reviewIndexPath = path.join(reviewDir, "index.json");
 const { loadFeatureConfig, saveFeatureConfig } = require("./feature-config.cjs");
 const { evaluateGpaAlert, evaluateReminders, loadAlertState, saveAlertState } = require("./alerts.cjs");
 const IMAGE_MIME_BY_EXTENSION = new Map([
@@ -775,6 +777,61 @@ function scheduleAlertChecks() {
   setInterval(() => {
     runAlertChecks();
   }, Math.max(5, Number(10)) * 60 * 1000);
+}
+
+async function getKnowledgeEngine() {
+  const { collectTaskKnowledge, aggregateBySubject, sanitizeTopicName } = await import(
+    pathToFileURL(path.join(payloadRoot, "backend", "src", "knowledge-engine.js")).href
+  );
+  return { collectTaskKnowledge, aggregateBySubject, sanitizeTopicName };
+}
+
+async function refreshKnowledge() {
+  const config = await loadFeatureConfig(featureConfigPath);
+  if (!config.knowledgeReview) {
+    return { ok: false, reason: "知识点复习已关闭，请先在设置中打开。" };
+  }
+  const { client } = await getToolRuntime();
+  const tasksResult = await client.listTasks({ subjectName: "全部课程", listType: "all", size: 100 });
+  const list = Array.isArray(tasksResult?.homeworkList) ? tasksResult.homeworkList : [];
+  const taskIds = list.map((item) => item.id).filter(Boolean);
+  const { collectTaskKnowledge, aggregateBySubject, sanitizeTopicName } = await getKnowledgeEngine();
+  const entries = await collectTaskKnowledge(client, taskIds);
+  const groups = aggregateBySubject(entries);
+  const subjects = [];
+  await fs.mkdir(reviewDir, { recursive: true });
+  for (const group of groups) {
+    const safeSubject = sanitizeTopicName(group.subject);
+    const notes = [];
+    for (const entry of group.items) {
+      const safeTitle = sanitizeTopicName(entry.title);
+      const fileName = `${safeTitle}.md`;
+      const notePath = path.join(reviewDir, safeSubject, fileName);
+      await fs.mkdir(path.dirname(notePath), { recursive: true });
+      await fs.writeFile(notePath, `# ${entry.title}\n\n> 来源作业：${entry.taskId}\n\n${entry.text}\n`, "utf8");
+      notes.push({ topic: entry.title, file: `${safeSubject}/${fileName}`, sourceTaskIds: [entry.taskId] });
+    }
+    subjects.push({ subject: group.subject, notes });
+  }
+  const index = { updatedAt: new Date().toISOString(), subjects };
+  await fs.writeFile(reviewIndexPath, JSON.stringify(index, null, 2), "utf8");
+  return { ok: true, count: entries.length, index };
+}
+
+async function listReviewNotes() {
+  try {
+    return JSON.parse(await fs.readFile(reviewIndexPath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+async function readReviewNote(relativePath) {
+  const resolved = path.resolve(reviewDir, String(relativePath || ""));
+  if (resolved !== reviewDir && !resolved.startsWith(reviewDir + path.sep)) {
+    throw new Error("无效的复习笔记路径。");
+  }
+  return fs.readFile(resolved, "utf8");
 }
 
 function normalizeSystemPrompt(value) {
@@ -1820,6 +1877,9 @@ ipcMain.handle("alerts:refresh", async () => {
   await runAlertChecks();
   return getAlertSummary();
 });
+ipcMain.handle("knowledge:refresh", async () => refreshKnowledge());
+ipcMain.handle("knowledge:list", async () => listReviewNotes());
+ipcMain.handle("knowledge:read", async (_event, { file } = {}) => readReviewNote(file));
 ipcMain.handle("app:open-path", async (_event, { key } = {}) => openAppPath(key));
 ipcMain.handle("bxb:session", async () => callTool("session_status"));
 ipcMain.handle("bxb:tool", async (_event, { name, args }) => callTool(name, args));
