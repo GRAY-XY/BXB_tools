@@ -938,6 +938,7 @@ function App() {
   const [reviewNoteContent, setReviewNoteContent] = useState("");
   const [reviewLoading, setReviewLoading] = useState(false);
   const [summarizeLoading, setSummarizeLoading] = useState(false);
+  const [autoModes, setAutoModes] = useState(null);
   const [conversations, setConversations] = useState([]);
   const [activeConversationId, setActiveConversationId] = useState("");
   const [conversationMenuOpen, setConversationMenuOpen] = useState(false);
@@ -1023,6 +1024,7 @@ function App() {
     window.bxb.getAppInfo().then(setAppInfo).catch((error) => setStatus(error.message));
     window.bxb.loadModelConfig().then(setModelConfig).catch((error) => setStatus(error.message));
     window.bxb.getFeatureConfig().then(setFeatureConfig).catch(() => {});
+    window.bxb.getAutoModes().then(setAutoModes).catch(() => {});
     loadAlerts();
     loadConversations();
     refreshSession();
@@ -1108,6 +1110,25 @@ function App() {
     } catch (error) {
       setSummarizeLoading(false);
       setStatus(`AI 总结失败：${error.message}`);
+    }
+  }
+
+  async function changeAutoMode(courseId, mode) {
+    try {
+      const result = await window.bxb.setAutoMode(courseId, mode);
+      setAutoModes((current) => ({ ...current, modes: result.modes }));
+      setStatus("提交模式已保存");
+    } catch (error) {
+      setStatus(`无法保存提交模式：${error.message}`);
+    }
+  }
+
+  async function runAutoCompleteNow() {
+    try {
+      const result = await window.bxb.runAutoComplete();
+      setStatus(result.generated ? `已自动生成 ${result.generated} 条作业草稿，请到草稿页审核。` : result.reason || "没有需要自动完成的作业。");
+    } catch (error) {
+      setStatus(`自动完成失败：${error.message}`);
     }
   }
 
@@ -2939,6 +2960,25 @@ function App() {
                         })
                       }
                     />
+                  </label>
+                  <label>
+                    默认提交模式（未单独设置的课程）
+                    <select
+                      value={autoModes?.modes?._default || "review"}
+                      disabled={!autoModes}
+                      onChange={(event) => changeAutoMode("_default", event.target.value)}
+                    >
+                      <option value="draft">仅生成草稿</option>
+                      <option value="review">审核后提交（默认）</option>
+                      <option value="auto">自动生成并标记已审核（发出前仍需确认）</option>
+                    </select>
+                  </label>
+                  <label>
+                    AI 自动完成
+                    <button type="button" onClick={runAutoCompleteNow} disabled={!featureConfig?.autoComplete}>
+                      立即自动完成
+                    </button>
+                    <small className="muted">需先开启"AI 自动完成"开关并配置模型。</small>
                   </label>
                 </div>
               </div>

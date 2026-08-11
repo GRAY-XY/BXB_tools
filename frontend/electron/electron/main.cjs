@@ -22,8 +22,10 @@ const conversationsPath = path.join(userDataRoot, "agent-conversations.json");
 const alertStatePath = path.join(userDataRoot, "alert-state.json");
 const reviewDir = path.join(userDataRoot, "review");
 const reviewIndexPath = path.join(reviewDir, "index.json");
+const courseModesPath = path.join(userDataRoot, "course-modes.json");
 const { loadFeatureConfig, saveFeatureConfig } = require("./feature-config.cjs");
 const { evaluateGpaAlert, evaluateReminders, loadAlertState, saveAlertState } = require("./alerts.cjs");
+const { MODE_LABELS, loadCourseModes, saveCourseMode, modeFor, generateDraftForTask } = require("./auto-pipeline.cjs");
 const IMAGE_MIME_BY_EXTENSION = new Map([
   [".png", "image/png"],
   [".jpg", "image/jpeg"],
@@ -767,6 +769,7 @@ async function runAlertChecks() {
   try {
     await notifyGpaIfNeeded();
     await notifyRemindersIfNeeded();
+    await runAutoCompleteOnce();
   } catch (error) {
     console.error("Alert check failed:", error.message);
   }
@@ -890,6 +893,71 @@ async function summarizeReviewWithModel() {
   const updatedIndex = { ...index, summarizedAt: new Date().toISOString(), summaries };
   await fs.writeFile(reviewIndexPath, JSON.stringify(updatedIndex, null, 2), "utf8");
   return { ok: true, summaries };
+}
+
+async function runAutoCompleteOnce() {
+  const config = await loadFeatureConfig(featureConfigPath);
+  if (!config.autoComplete) {
+    return { skipped: true, reason: "AI 自动完成已关闭" };
+  }
+  const modelConfig = await readJson(modelConfigPath, { apiKey: "", baseUrl: "", modelName: "" });
+  if (!modelConfig.apiKey || !modelConfig.baseUrl || !modelConfig.modelName) {
+    return { skipped: true, reason: "未配置模型" };
+  }
+  const { client } = await getToolRuntime();
+  process.env.BANXUEBANG_OCR_ENABLED = config.ocr ? "1" : "0";
+  const tasksResult = await client.listTasks({ subjectName: "全部课程", listType: "pending", size: 50 });
+  const list = Array.isArray(tasksResult?.unsubmittedHomeworkList)
+    ? tasksResult.unsubmittedHomeworkList
+    : Array.isArray(tasksResult?.homeworkList)
+      ? tasksResult.homeworkList
+      : [];
+  const modes = await loadCourseModes(courseModesPath);
+  const state = await loadAlertState(alertStatePath);
+  const autoState = { ...(state.autoComplete || {}) };
+  const today = todayKey();
+  let generated = 0;
+  for (const task of list) {
+    const courseId = String(task.subjectId || task.courseId || task.classId || "");
+    const mode = modeFor(modes, courseId);
+    if (mode === "draft" || autoState[String(task.id)] === today) {
+      continue;
+    }
+    try {
+      const draftResult = await generateDraftForTask(client, task.id, modelConfig);
+      if (!draftResult.ok) {
+        autoState[String(task.id)] = today;
+        continue;
+      }
+      const saved = await client.draftTaskSubmission({
+        taskId: task.id,
+        subjectName: task.subjectName || draftResult.detail.subjectName || null,
+        taskTitle: task.title || null,
+        draftText: draftResult.text,
+        summary: "AI 自动生成草稿（实验版）",
+        missingInfo: [],
+        needsUserInput: false,
+      });
+      const draftId = saved?.draftId || saved?.id || null;
+      if (mode === "auto" && draftId) {
+        try {
+          await client.approveSubmissionDraft(draftId, { reviewNote: "自动模式：已生成并标记待确认。" });
+        } catch {
+          // 标记失败不阻塞：草稿仍可人工审核
+        }
+      }
+      autoState[String(task.id)] = today;
+      generated += 1;
+      showLocalNotification(
+        "作业草稿已生成",
+        `「${task.title || task.id}」的答案草稿已生成${mode === "auto" ? "并标记已审核" : ""}，请到草稿页确认后提交。`,
+      );
+    } catch (error) {
+      console.error("Auto-complete failed for task", task.id, error.message);
+    }
+  }
+  await saveAlertState(alertStatePath, { ...state, autoComplete: autoState });
+  return { generated };
 }
 
 function normalizeSystemPrompt(value) {
@@ -1939,6 +2007,15 @@ ipcMain.handle("knowledge:refresh", async () => refreshKnowledge());
 ipcMain.handle("knowledge:list", async () => listReviewNotes());
 ipcMain.handle("knowledge:read", async (_event, { file } = {}) => readReviewNote(file));
 ipcMain.handle("knowledge:summarize", async () => summarizeReviewWithModel());
+ipcMain.handle("auto:modes:get", async () => ({
+  modes: await loadCourseModes(courseModesPath),
+  labels: MODE_LABELS,
+}));
+ipcMain.handle("auto:modes:set", async (_event, { courseId, mode }) => ({
+  ok: true,
+  modes: await saveCourseMode(courseModesPath, courseId, mode),
+}));
+ipcMain.handle("auto:run", async () => runAutoCompleteOnce());
 ipcMain.handle("app:open-path", async (_event, { key } = {}) => openAppPath(key));
 ipcMain.handle("bxb:session", async () => callTool("session_status"));
 ipcMain.handle("bxb:tool", async (_event, { name, args }) => callTool(name, args));
