@@ -1242,6 +1242,9 @@ function App() {
       const result = await window.bxb.getSession();
       setSession(result);
       setStatus(result?.ready ? `当前用户：${result?.user?.name || "已登录"}` : "未登录");
+      if (result?.ready) {
+        loadSessionChoices();
+      }
     } catch (error) {
       setStatus(error.message);
     }

@@ -1459,9 +1459,14 @@ export class BanxuebangClient {
     );
     const termList = Array.isArray(termResponse.data) ? termResponse.data : [];
 
+    const savedTerm = findById(termList, session.context?.currTermId);
+    const activeTerm = termList.find((term) => Boolean(term.status)) || null;
+    const latestTerm = termList.at(-1) || null;
     const currentTerm =
-      findById(termList, session.context?.currTermId) ||
-      termList.find((term) => Boolean(term.status)) ||
+      (savedTerm && Boolean(savedTerm.status)) ||
+      activeTerm ||
+      savedTerm ||
+      latestTerm ||
       termList.at(0) ||
       null;
 
