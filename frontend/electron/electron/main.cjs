@@ -7,6 +7,7 @@ const { spawn, spawnSync } = require("node:child_process");
 const { pathToFileURL } = require("node:url");
 
 const isDev = !app.isPackaged;
+const isMac = process.platform === "darwin";
 const repoRoot = path.resolve(__dirname, "..", "..", "..");
 const payloadRoot = isDev ? repoRoot : path.join(process.resourcesPath, "payload");
 const userDataRoot = app.getPath("userData");
@@ -1333,6 +1334,16 @@ async function getWorkspaceImageDataUrl(filePath) {
 }
 
 async function checkForUpdates() {
+  if (isMac) {
+    return {
+      ok: true,
+      currentVersion: app.getVersion(),
+      currentChannel: "macOS preview",
+      hasUpdate: false,
+      message: "macOS 版本暂不提供自动更新。",
+      releasesUrl: RELEASES_PAGE_URL,
+    };
+  }
   const currentVersion = app.getVersion();
   const currentParsed = parseAppVersion(currentVersion);
   const controller = new AbortController();
@@ -1432,6 +1443,9 @@ async function checkForUpdatesWithState() {
 }
 
 async function loadPendingUpdateState() {
+  if (isMac) {
+    return publicUpdateState();
+  }
   if (["checking", "downloading", "verifying", "installing"].includes(updateState.status)) {
     return publicUpdateState();
   }
@@ -1473,6 +1487,9 @@ async function loadPendingUpdateState() {
 }
 
 async function downloadUpdate() {
+  if (isMac) {
+    return resetUpdateProgress({ status: "idle", update: null, message: "macOS 版本暂不提供自动更新。" });
+  }
   if (updateState.status === "downloading") {
     return publicUpdateState();
   }
@@ -1569,6 +1586,9 @@ async function downloadUpdate() {
 }
 
 async function cancelUpdateDownload() {
+  if (isMac) {
+    return publicUpdateState();
+  }
   if (updateDownloadController) {
     updateDownloadController.abort();
   }
@@ -1576,6 +1596,9 @@ async function cancelUpdateDownload() {
 }
 
 async function installUpdate() {
+  if (isMac) {
+    throw new Error("macOS 版本暂不提供自动更新。");
+  }
   if (updateState.status !== "ready_to_install" || !updateState.filePath) {
     throw new Error("没有已下载并通过校验的更新安装包。");
   }
@@ -1634,7 +1657,7 @@ ipcMain.handle("app:info", async () => ({
   isPackaged: app.isPackaged,
   version: app.getVersion(),
   platform: process.platform,
-  updateChannel: "Windows stable",
+  updateChannel: isMac ? "macOS preview" : "Windows stable",
   userDataRoot,
   dataRoot,
   workspaceDir,
