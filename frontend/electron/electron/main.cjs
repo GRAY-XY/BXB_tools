@@ -467,6 +467,9 @@ function browserCacheCandidates() {
     path.join(userDataRoot, "ms-playwright"),
     path.join(app.getPath("appData"), "ms-playwright"),
   ];
+  if (process.platform === "darwin") {
+    candidates.push(path.join(app.getPath("home"), "Library", "Caches", "ms-playwright"));
+  }
   if (process.env.LOCALAPPDATA) {
     candidates.push(path.join(process.env.LOCALAPPDATA, "ms-playwright"));
   }
@@ -478,6 +481,13 @@ function browserCacheCandidates() {
 
 function hasChromiumCache(browserRoot) {
   const chromiumRoot = path.join(browserRoot, "chromium-1217");
+  if (process.platform === "darwin") {
+    return (
+      existsSync(path.join(chromiumRoot, "chrome-mac", "Chromium.app", "Contents", "MacOS", "Chromium")) ||
+      existsSync(path.join(chromiumRoot, "chrome-mac-arm64", "Chromium.app", "Contents", "MacOS", "Chromium")) ||
+      existsSync(path.join(browserRoot, "chromium_headless_shell-1217", "chrome-mac", "headless_shell"))
+    );
+  }
   return (
     existsSync(path.join(chromiumRoot, "chrome-win64", "chrome.exe")) ||
     existsSync(path.join(chromiumRoot, "chrome-win", "chrome.exe"))

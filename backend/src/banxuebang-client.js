@@ -271,11 +271,21 @@ async function launchBrowser(headless) {
     process.env.PLAYWRIGHT_BROWSERS_PATH,
     process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "ms-playwright") : null,
     process.env.USERPROFILE ? path.join(process.env.USERPROFILE, "AppData", "Local", "ms-playwright") : null,
+    process.platform === "darwin" ? path.join(process.env.HOME || "", "Library", "Caches", "ms-playwright") : null,
   ].filter(Boolean);
-  const executableCandidates = browserRootCandidates.flatMap((browserRoot) => [
-    path.join(browserRoot, "chromium-1217", "chrome-win64", "chrome.exe"),
-    path.join(browserRoot, "chromium-1217", "chrome-win", "chrome.exe"),
-  ]);
+  const isMac = process.platform === "darwin";
+  const executableCandidates = browserRootCandidates.flatMap((browserRoot) =>
+    isMac
+      ? [
+          path.join(browserRoot, "chromium-1217", "chrome-mac", "Chromium.app", "Contents", "MacOS", "Chromium"),
+          path.join(browserRoot, "chromium-1217", "chrome-mac-arm64", "Chromium.app", "Contents", "MacOS", "Chromium"),
+          path.join(browserRoot, "chromium_headless_shell-1217", "chrome-mac", "headless_shell"),
+        ]
+      : [
+          path.join(browserRoot, "chromium-1217", "chrome-win64", "chrome.exe"),
+          path.join(browserRoot, "chromium-1217", "chrome-win", "chrome.exe"),
+        ],
+  );
   const executablePath = executableCandidates.find((candidate) => existsSync(candidate));
 
   try {
@@ -284,7 +294,7 @@ async function launchBrowser(headless) {
     };
     if (executablePath) {
       launchOptions.executablePath = executablePath;
-    } else {
+    } else if (!isMac) {
       launchOptions.channel = "chromium";
     }
     return await chromium.launch(launchOptions);
