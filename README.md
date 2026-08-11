@@ -95,6 +95,52 @@ First-time use usually requires browser login:
 npm run tool:direct -- login_in_browser
 ```
 
+## macOS 运行（BXB 学业助手）
+
+本项目在 macOS 上使用 pnpm 运行与打包。
+
+### 开发运行
+
+```bash
+# 安装根依赖（Playwright、pdf-parse 等）
+pnpm install
+
+# 安装 Electron 前端依赖（首次会下载 Electron 二进制，国内可用镜像）
+cd frontend/electron
+ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/" pnpm install
+
+# 安装 Playwright Chromium（macOS）
+cd ../..
+PLAYWRIGHT_DOWNLOAD_HOST="https://npmmirror.com/mirrors/playwright" pnpm exec playwright install chromium
+
+# 启动应用
+cd frontend/electron
+pnpm start
+```
+
+### 打包 macOS 应用
+
+```bash
+cd frontend/electron
+pnpm run dist:mac
+```
+
+产物输出到 `dist-electron-app/`（.app 与 .dmg）。
+
+### macOS 版新增功能
+
+- 功能开关：设置页可独立开关自动识别作业、AI 自动完成、知识点复习、GPA 预警、未交作业提醒、自动提交、图片 OCR、桌面通知；
+- 知识点复习：从作业正文与附件整理复习笔记（PDF/DOCX 文本 + 本地 Vision OCR，需安装 Xcode Command Line Tools 才能启用 OCR），可调用已配置的模型生成 AI 总结卡片；
+- GPA 预警：等级达到危险线（默认 B，可调）时在主页显示红色预警并发送桌面通知；
+- 未交作业提醒：截止前 24h/6h/1h 与逾期提醒；
+- AI 自动完成（实验版）：自动识别未交作业并生成答案草稿；默认提交模式为"审核后提交"，真正发出前必须由你在草稿页确认。
+
+### 说明
+
+- 自动更新在 macOS 上暂不提供；
+- 本仓库无开源许可证，仅限个人自用；
+- 登录态、API Key、草稿、复习笔记均只保存在本机应用数据目录。
+
 ## Main Tool Capabilities
 
 The local tool layer includes:
