@@ -1,0 +1,37 @@
+{
+  "name": "banxuebang-achievement-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "MCP server for controlling Banxuebang student achievement page",
+  "files": [
+    "backend/src",
+    "backend/cli",
+    "backend/bridge",
+    "README.md"
+  ],
+  "scripts": {
+    "start": "node backend/src/index.js",
+    "dev": "node --watch backend/src/index.js",
+    "check": "node --check backend/src/index.js && node --check backend/src/banxuebang-client.js && node --check backend/src/session-store.js && node --check backend/src/tool-definitions.js && node --check backend/cli/call-tool.js && node --check backend/cli/direct-tool.js && node --check scripts/publish-scan.js && node --check backend/bridge/winui-backend.js",
+    "tool": "node backend/cli/call-tool.js",
+    "tool:direct": "node backend/cli/direct-tool.js",
+    "tool:mcp": "node backend/cli/call-tool.js",
+    "scan:publish": "node scripts/publish-scan.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.18.0",
+    "dompurify": "^3.4.11",
+    "katex": "^0.17.0",
+    "mammoth": "^1.12.0",
+    "markdown-it": "^14.2.0",
+    "markdown-it-texmath": "^1.0.0",
+    "pdf-parse": "^2.4.5",
+    "playwright": "^1.54.0",
+    "undici": "^8.5.0",
+    "zod": "^3.24.1"
+  }
+}
