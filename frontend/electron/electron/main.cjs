@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, net, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, net, shell, Notification } = require("electron");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const { createReadStream, createWriteStream, existsSync, readdirSync } = require("node:fs");
@@ -19,7 +19,9 @@ const pendingUpdatePath = path.join(updateDir, "pending-update.json");
 const modelConfigPath = path.join(userDataRoot, "model-config.json");
 const featureConfigPath = path.join(userDataRoot, "feature-config.json");
 const conversationsPath = path.join(userDataRoot, "agent-conversations.json");
+const alertStatePath = path.join(userDataRoot, "alert-state.json");
 const { loadFeatureConfig, saveFeatureConfig } = require("./feature-config.cjs");
+const { evaluateGpaAlert, evaluateReminders, loadAlertState, saveAlertState } = require("./alerts.cjs");
 const IMAGE_MIME_BY_EXTENSION = new Map([
   [".png", "image/png"],
   [".jpg", "image/jpeg"],
@@ -656,6 +658,123 @@ async function callTool(name, args = {}) {
   }
   const { toolDefinitions, executeTool } = await getToolRuntime();
   return executeTool(toolDefinitions, name, args || {});
+}
+
+function todayKey() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function showLocalNotification(title, body) {
+  if (!isMac && !Notification.isSupported()) {
+    return;
+  }
+  new Notification({ title, body }).show();
+}
+
+async function notifyGpaIfNeeded() {
+  const config = await loadFeatureConfig(featureConfigPath);
+  if (!config.gpaAlert || !config.notifications) {
+    return [];
+  }
+  let overview;
+  try {
+    overview = await callTool("get_achievement_overview", {});
+  } catch {
+    return [];
+  }
+  const alerts = evaluateGpaAlert(overview, config.gpaThreshold);
+  const state = await loadAlertState(alertStatePath);
+  const changed = { ...state, gpaNotified: { ...(state.gpaNotified || {}) } };
+  const today = todayKey();
+  for (const alert of alerts) {
+    const key = `${alert.subject}:${alert.level}`;
+    if (alert.dangerous && changed.gpaNotified[key] !== today) {
+      changed.gpaNotified[key] = today;
+      showLocalNotification("GPA 预警", `${alert.subject} 当前等级 ${alert.level}，已达到危险线（${config.gpaThreshold} 及以下）。`);
+    }
+  }
+  await saveAlertState(alertStatePath, changed);
+  return alerts;
+}
+
+async function notifyRemindersIfNeeded() {
+  const config = await loadFeatureConfig(featureConfigPath);
+  if (!config.reminder || !config.notifications) {
+    return [];
+  }
+  let tasks;
+  try {
+    tasks = await callTool("list_tasks", { subject_name: "全部课程", list_type: "pending", size: 100 });
+  } catch {
+    return [];
+  }
+  const list = Array.isArray(tasks?.unsubmittedHomeworkList)
+    ? tasks.unsubmittedHomeworkList
+    : Array.isArray(tasks?.homeworkList)
+      ? tasks.homeworkList
+      : [];
+  const reminders = evaluateReminders(list, new Date(), config.remindLeadHours);
+  const state = await loadAlertState(alertStatePath);
+  const changed = { ...state, remindersNotified: { ...(state.remindersNotified || {}) } };
+  const today = todayKey();
+  for (const item of reminders) {
+    const key = `${item.taskId}:${item.status}`;
+    if (changed.remindersNotified[key] !== today) {
+      changed.remindersNotified[key] = today;
+      const body =
+        item.status === "overdue"
+          ? `「${item.title}」已逾期未交，请尽快处理。`
+          : `「${item.title}」还剩约 ${item.hoursLeft} 小时截止，记得提交。`;
+      showLocalNotification("未交作业提醒", body);
+    }
+  }
+  await saveAlertState(alertStatePath, changed);
+  return reminders;
+}
+
+async function getAlertSummary() {
+  const config = await loadFeatureConfig(featureConfigPath);
+  const summary = { gpa: [], reminders: [] };
+  if (config.gpaAlert) {
+    try {
+      const overview = await callTool("get_achievement_overview", {});
+      summary.gpa = evaluateGpaAlert(overview, config.gpaThreshold);
+    } catch {
+      summary.gpa = [];
+    }
+  }
+  if (config.reminder) {
+    try {
+      const tasks = await callTool("list_tasks", { subject_name: "全部课程", list_type: "pending", size: 100 });
+      const list = Array.isArray(tasks?.unsubmittedHomeworkList)
+        ? tasks.unsubmittedHomeworkList
+        : Array.isArray(tasks?.homeworkList)
+          ? tasks.homeworkList
+          : [];
+      summary.reminders = evaluateReminders(list, new Date(), config.remindLeadHours);
+    } catch {
+      summary.reminders = [];
+    }
+  }
+  return summary;
+}
+
+async function runAlertChecks() {
+  try {
+    await notifyGpaIfNeeded();
+    await notifyRemindersIfNeeded();
+  } catch (error) {
+    console.error("Alert check failed:", error.message);
+  }
+}
+
+function scheduleAlertChecks() {
+  setTimeout(() => {
+    runAlertChecks();
+  }, 8000);
+  setInterval(() => {
+    runAlertChecks();
+  }, Math.max(5, Number(10)) * 60 * 1000);
 }
 
 function normalizeSystemPrompt(value) {
@@ -1696,6 +1815,11 @@ ipcMain.handle("app:info", async () => ({
 
 ipcMain.handle("feature:get", async () => loadFeatureConfig(featureConfigPath));
 ipcMain.handle("feature:save", async (_event, patch) => saveFeatureConfig(featureConfigPath, patch));
+ipcMain.handle("alerts:summary", async () => getAlertSummary());
+ipcMain.handle("alerts:refresh", async () => {
+  await runAlertChecks();
+  return getAlertSummary();
+});
 ipcMain.handle("app:open-path", async (_event, { key } = {}) => openAppPath(key));
 ipcMain.handle("bxb:session", async () => callTool("session_status"));
 ipcMain.handle("bxb:tool", async (_event, { name, args }) => callTool(name, args));
@@ -1741,6 +1865,7 @@ ipcMain.handle("agent:reset", async () => {
 
 app.whenReady().then(() => {
   createWindow();
+  scheduleAlertChecks();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();

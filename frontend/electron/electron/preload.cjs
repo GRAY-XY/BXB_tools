@@ -5,6 +5,8 @@ contextBridge.exposeInMainWorld("bxb", {
   openAppPath: (key) => ipcRenderer.invoke("app:open-path", { key }),
   getFeatureConfig: () => ipcRenderer.invoke("feature:get"),
   saveFeatureConfig: (patch) => ipcRenderer.invoke("feature:save", patch),
+  getAlertSummary: () => ipcRenderer.invoke("alerts:summary"),
+  refreshAlerts: () => ipcRenderer.invoke("alerts:refresh"),
   getSession: () => ipcRenderer.invoke("bxb:session"),
   callTool: (name, args = {}) => ipcRenderer.invoke("bxb:tool", { name, args }),
   importWorkspaceFiles: () => ipcRenderer.invoke("workspace:import"),

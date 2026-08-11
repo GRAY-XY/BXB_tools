@@ -931,6 +931,7 @@ function App() {
   const [sessionMenuOpen, setSessionMenuOpen] = useState(false);
   const [appInfo, setAppInfo] = useState(null);
   const [featureConfig, setFeatureConfig] = useState(null);
+  const [alertSummary, setAlertSummary] = useState(null);
   const [conversations, setConversations] = useState([]);
   const [activeConversationId, setActiveConversationId] = useState("");
   const [conversationMenuOpen, setConversationMenuOpen] = useState(false);
@@ -1016,6 +1017,7 @@ function App() {
     window.bxb.getAppInfo().then(setAppInfo).catch((error) => setStatus(error.message));
     window.bxb.loadModelConfig().then(setModelConfig).catch((error) => setStatus(error.message));
     window.bxb.getFeatureConfig().then(setFeatureConfig).catch(() => {});
+    loadAlerts();
     loadConversations();
     refreshSession();
   }, []);
@@ -1027,6 +1029,23 @@ function App() {
       setStatus("功能开关已保存");
     } catch (error) {
       setStatus(`无法保存功能开关：${error.message}`);
+    }
+  }
+
+  async function loadAlerts() {
+    try {
+      setAlertSummary(await window.bxb.getAlertSummary());
+    } catch {
+      setAlertSummary(null);
+    }
+  }
+
+  async function refreshAlertsNow() {
+    try {
+      setAlertSummary(await window.bxb.refreshAlerts());
+      setStatus("预警检查完成");
+    } catch (error) {
+      setStatus(`预警检查失败：${error.message}`);
     }
   }
 
@@ -1069,6 +1088,9 @@ function App() {
     }
     if (page === "workspace" && !workspaceFiles.length && !workspaceLoading) {
       loadWorkspaceFiles();
+    }
+    if (page === "home") {
+      loadAlerts();
     }
   }, [page]);
 
@@ -2232,6 +2254,36 @@ function App() {
               <Metric label="UI Runtime" value="Electron" />
               <Metric label="Agent" value="LLM + Tools" />
               <Metric label="Session" value={session?.ready ? "Ready" : "Login required"} />
+            </div>
+            <div className="card alert-card">
+              <div className="alert-head">
+                <h2>预警中心</h2>
+                <button onClick={refreshAlertsNow}>立即检查</button>
+              </div>
+              {!alertSummary ? (
+                <p className="muted">预警加载中…（需要登录后才会显示 GPA 与作业提醒）</p>
+              ) : alertSummary.gpa.filter((item) => item.dangerous).length === 0 && alertSummary.reminders.length === 0 ? (
+                <p className="muted">暂无预警。</p>
+              ) : (
+                <div className="alert-list">
+                  {alertSummary.gpa
+                    .filter((item) => item.dangerous)
+                    .map((item) => (
+                      <div key={item.subject} className="alert-item danger">
+                        <strong>GPA 预警：{item.subject}</strong>
+                        <span>当前等级 {item.level}，已达到危险线</span>
+                      </div>
+                    ))}
+                  {alertSummary.reminders.map((item) => (
+                    <div key={`${item.taskId}-${item.status}`} className={`alert-item ${item.status === "overdue" ? "danger" : "warn"}`}>
+                      <strong>{item.status === "overdue" ? "逾期未交" : "即将截止"}：{item.title}</strong>
+                      <span>
+                        {item.subject} · {item.status === "overdue" ? "已过期" : `还剩约 ${item.hoursLeft} 小时`} · {formatMessageTime(item.endTime)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="grid two">
               <div className="card">
