@@ -802,7 +802,8 @@ async function refreshKnowledge() {
   const list = Array.isArray(tasksResult?.homeworkList) ? tasksResult.homeworkList : [];
   const taskIds = list.map((item) => item.id).filter(Boolean);
   const { collectTaskKnowledge, aggregateBySubject, sanitizeTopicName } = await getKnowledgeEngine();
-  const entries = await collectTaskKnowledge(client, taskIds);
+  const modelConfig = await readJson(modelConfigPath, { apiKey: "", baseUrl: "", modelName: "" });
+  const { entries, skipped } = await collectTaskKnowledge(client, taskIds, { modelConfig });
   const groups = aggregateBySubject(entries);
   const subjects = [];
   await fs.mkdir(reviewDir, { recursive: true });
@@ -821,7 +822,7 @@ async function refreshKnowledge() {
   }
   const index = { updatedAt: new Date().toISOString(), subjects };
   await fs.writeFile(reviewIndexPath, JSON.stringify(index, null, 2), "utf8");
-  return { ok: true, count: entries.length, index };
+  return { ok: true, count: entries.length, skipped: skipped.length, index };
 }
 
 async function listReviewNotes() {

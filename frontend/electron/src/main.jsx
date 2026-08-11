@@ -1081,7 +1081,9 @@ function App() {
       setReviewIndex(result.index);
       setReviewSubject(result.index?.subjects?.[0]?.subject || "");
       setReviewNoteContent("");
-      setStatus(`知识点整理完成，共 ${result.count} 条作业内容`);
+      setStatus(
+        `知识点整理完成，共 ${result.count} 条作业内容${result.skipped ? `，${result.skipped} 个附件未能识别` : ""}`,
+      );
     } catch (error) {
       setReviewLoading(false);
       setStatus(`知识点刷新失败：${error.message}`);
