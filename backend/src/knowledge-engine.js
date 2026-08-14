@@ -1,56 +1,8 @@
 import path from "node:path";
-import { readFile } from "node:fs/promises";
-import { runOcr } from "./ocr.js";
+import { extractImageText } from "./ocr.js";
 
 const MAX_TASKS = 50;
 const IMAGE_EXTENSIONS = new Set([".bmp", ".gif", ".jpeg", ".jpg", ".png", ".svg", ".webp"]);
-
-function deriveChatUrl(baseUrl) {
-  const normalized = String(baseUrl || "").trim().replace(/\/+$/, "");
-  if (normalized.endsWith("/chat/completions")) return normalized;
-  if (normalized.endsWith("/models")) return `${normalized.slice(0, -"/models".length)}/chat/completions`;
-  if (/\/v\d+$/.test(normalized)) return `${normalized}/chat/completions`;
-  return `${normalized}/v1/chat/completions`;
-}
-
-async function transcribeImageWithModel(imagePath, modelConfig) {
-  const buffer = await readFile(imagePath);
-  if (buffer.byteLength > 6 * 1024 * 1024) {
-    throw new Error("图片超过 6MB，无法用模型识别。");
-  }
-  const extension = path.extname(imagePath).toLowerCase();
-  const mimeType = extension === ".png" ? "image/png" : extension === ".webp" ? "image/webp" : "image/jpeg";
-  const base64 = buffer.toString("base64");
-  const response = await fetch(deriveChatUrl(modelConfig.baseUrl), {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${modelConfig.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: modelConfig.modelName,
-      messages: [
-        {
-          role: "system",
-          content: "你是作业助手。请识别图片中的文字并原样输出；如果图片是题目，请同时给出题目文本。",
-        },
-        {
-          role: "user",
-          content: [
-            { type: "text", text: "请识别这张图片：" },
-            { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}` } },
-          ],
-        },
-      ],
-      temperature: 0.1,
-    }),
-  });
-  if (!response.ok) {
-    throw new Error(`模型返回 HTTP ${response.status}`);
-  }
-  const data = await response.json();
-  return String(data?.choices?.[0]?.message?.content || "").trim();
-}
 
 /**
  * Collect readable homework content (task body + attachment texts) for a list of task ids.
@@ -59,7 +11,7 @@ async function transcribeImageWithModel(imagePath, modelConfig) {
 export async function collectTaskKnowledge(
   client,
   taskIds,
-  { maxChars = 8000, maxAttachments = 6, modelConfig = null } = {},
+  { maxChars = 8000, maxAttachments = 6 } = {},
 ) {
   const entries = [];
   const skipped = [];
@@ -84,16 +36,9 @@ export async function collectTaskKnowledge(
         if (attachment.localPath && IMAGE_EXTENSIONS.has(extension)) {
           let ocrText = "";
           try {
-            ocrText = await runOcr(attachment.localPath);
+            ocrText = await extractImageText(attachment.localPath);
           } catch {
             ocrText = "";
-          }
-          if (!ocrText && modelConfig?.apiKey && modelConfig?.baseUrl && modelConfig?.modelName) {
-            try {
-              ocrText = await transcribeImageWithModel(attachment.localPath, modelConfig);
-            } catch {
-              ocrText = "";
-            }
           }
           if (ocrText) {
             texts.push(`【附件：${attachment.fileName || attachment.fileId}（图片识别）】\n${ocrText}`);

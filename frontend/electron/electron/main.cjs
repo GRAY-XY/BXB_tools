@@ -660,10 +660,20 @@ async function callTool(name, args = {}) {
   ) {
     await ensurePlaywrightBrowsers();
   }
-  const featureConfig = await loadFeatureConfig(featureConfigPath);
-  process.env.BANXUEBANG_OCR_ENABLED = featureConfig.ocr ? "1" : "0";
+  await applyRuntimeEnv();
   const { toolDefinitions, executeTool } = await getToolRuntime();
   return executeTool(toolDefinitions, name, args || {});
+}
+
+async function applyRuntimeEnv() {
+  const [featureConfig, modelConfig] = await Promise.all([
+    loadFeatureConfig(featureConfigPath),
+    readJson(modelConfigPath, { apiKey: "", baseUrl: "", modelName: "" }),
+  ]);
+  process.env.BANXUEBANG_OCR_ENABLED = featureConfig.ocr ? "1" : "0";
+  process.env.BANXUEBANG_MODEL_BASE_URL = String(modelConfig.baseUrl || "");
+  process.env.BANXUEBANG_MODEL_API_KEY = String(modelConfig.apiKey || "");
+  process.env.BANXUEBANG_MODEL_NAME = String(modelConfig.modelName || "");
 }
 
 function todayKey() {
@@ -677,18 +687,36 @@ function showLocalNotification(title, body) {
   new Notification({ title, body }).show();
 }
 
+async function collectGpaAlerts() {
+  const config = await loadFeatureConfig(featureConfigPath);
+  if (!config.gpaAlert) {
+    return [];
+  }
+  await applyRuntimeEnv();
+  const { client } = await getToolRuntime();
+  const session = await client.getSession();
+  const subjects = Array.isArray(session?.context?.subjectList) ? session.context.subjectList : [];
+  const alerts = [];
+  for (const subject of subjects) {
+    if (!subject?.id) {
+      continue;
+    }
+    try {
+      const overview = await client.getAchievementOverview({ subjectId: subject.id, classId: subject.classId });
+      alerts.push(...evaluateGpaAlert(overview, config.gpaThreshold));
+    } catch {
+      // 单个学科查询失败不影响其他学科
+    }
+  }
+  return alerts;
+}
+
 async function notifyGpaIfNeeded() {
   const config = await loadFeatureConfig(featureConfigPath);
   if (!config.gpaAlert || !config.notifications) {
     return [];
   }
-  let overview;
-  try {
-    overview = await callTool("get_achievement_overview", {});
-  } catch {
-    return [];
-  }
-  const alerts = evaluateGpaAlert(overview, config.gpaThreshold);
+  const alerts = await collectGpaAlerts();
   const state = await loadAlertState(alertStatePath);
   const changed = { ...state, gpaNotified: { ...(state.gpaNotified || {}) } };
   const today = todayKey();
@@ -743,8 +771,7 @@ async function getAlertSummary() {
   const summary = { gpa: [], reminders: [] };
   if (config.gpaAlert) {
     try {
-      const overview = await callTool("get_achievement_overview", {});
-      summary.gpa = evaluateGpaAlert(overview, config.gpaThreshold);
+      summary.gpa = await collectGpaAlerts();
     } catch {
       summary.gpa = [];
     }
@@ -796,14 +823,13 @@ async function refreshKnowledge() {
   if (!config.knowledgeReview) {
     return { ok: false, reason: "知识点复习已关闭，请先在设置中打开。" };
   }
-  process.env.BANXUEBANG_OCR_ENABLED = config.ocr ? "1" : "0";
+  await applyRuntimeEnv();
   const { client } = await getToolRuntime();
   const tasksResult = await client.listTasks({ subjectName: "全部课程", listType: "all", size: 100 });
   const list = Array.isArray(tasksResult?.homeworkList) ? tasksResult.homeworkList : [];
   const taskIds = list.map((item) => item.id).filter(Boolean);
   const { collectTaskKnowledge, aggregateBySubject, sanitizeTopicName } = await getKnowledgeEngine();
-  const modelConfig = await readJson(modelConfigPath, { apiKey: "", baseUrl: "", modelName: "" });
-  const { entries, skipped } = await collectTaskKnowledge(client, taskIds, { modelConfig });
+  const { entries, skipped } = await collectTaskKnowledge(client, taskIds);
   const groups = aggregateBySubject(entries);
   const subjects = [];
   await fs.mkdir(reviewDir, { recursive: true });
@@ -906,7 +932,7 @@ async function runAutoCompleteOnce() {
     return { skipped: true, reason: "未配置模型" };
   }
   const { client } = await getToolRuntime();
-  process.env.BANXUEBANG_OCR_ENABLED = config.ocr ? "1" : "0";
+  await applyRuntimeEnv();
   const tasksResult = await client.listTasks({ subjectName: "全部课程", listType: "pending", size: 50 });
   const list = Array.isArray(tasksResult?.unsubmittedHomeworkList)
     ? tasksResult.unsubmittedHomeworkList

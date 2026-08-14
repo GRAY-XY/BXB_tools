@@ -4,7 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { chromium } from "playwright";
 import { DraftStore } from "./draft-store.js";
-import { runOcr } from "./ocr.js";
+import { extractImageText } from "./ocr.js";
 
 const BASE_URL = "https://student.banxuebang.com";
 const BASIC_AUTH = "Basic YnhiLXdlYi1zOmJ4Yi13ZWItcw==";
@@ -1463,7 +1463,7 @@ export class BanxuebangClient {
     const activeTerm = termList.find((term) => Boolean(term.status)) || null;
     const latestTerm = termList.at(-1) || null;
     const currentTerm =
-      (savedTerm && Boolean(savedTerm.status)) ||
+      (savedTerm && Boolean(savedTerm.status) ? savedTerm : null) ||
       activeTerm ||
       savedTerm ||
       latestTerm ||
@@ -1833,9 +1833,20 @@ export class BanxuebangClient {
     return this.listHomework(homeworkOptions);
   }
 
-  async getAchievementOverview({ transferClassId = null } = {}) {
+  async getAchievementOverview({ transferClassId = null, subjectId = null, classId = null } = {}) {
     const session = await this.requireSession();
     await this.refreshContext(session);
+
+    if (subjectId) {
+      const subject = (session.context.subjectList || []).find(
+        (item) => normalizeId(item.id) === normalizeId(subjectId),
+      );
+      if (subject) {
+        session.context.curSubject = subject;
+      }
+    } else if (classId && session.context.curSubject) {
+      session.context.curSubject = { ...session.context.curSubject, classId };
+    }
 
     const { userInfo, curClass, curSubject, currTermId } = session.context;
     if (!userInfo?.id || !curClass?.campusId || !curSubject?.id || !curSubject?.classId || !currTermId) {
@@ -2261,7 +2272,7 @@ export class BanxuebangClient {
       reader = "mammoth";
     } else if (IMAGE_EXTENSIONS.has(extension) && process.env.BANXUEBANG_OCR_ENABLED === "1") {
       try {
-        const ocrText = await runOcr(resolvedPath);
+        const ocrText = await extractImageText(resolvedPath);
         if (ocrText) {
           text = ocrText;
           reader = "vision-ocr";

@@ -15,6 +15,7 @@ dist-winui*/
 build/
 build_assets/
 .DS_Store
+work/
 __pycache__/
 *.py[cod]
 desktop-winui/**/bin/
