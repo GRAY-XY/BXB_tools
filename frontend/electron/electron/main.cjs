@@ -480,7 +480,10 @@ function hasChromiumCache(browserRoot) {
   const chromiumRoot = path.join(browserRoot, "chromium-1217");
   return (
     existsSync(path.join(chromiumRoot, "chrome-win64", "chrome.exe")) ||
-    existsSync(path.join(chromiumRoot, "chrome-win", "chrome.exe"))
+    existsSync(path.join(chromiumRoot, "chrome-win", "chrome.exe")) ||
+    existsSync(path.join(chromiumRoot, "chrome-mac", "Chromium.app", "Contents", "MacOS", "Chromium")) ||
+    existsSync(path.join(chromiumRoot, "chrome-mac-arm64", "Chromium.app", "Contents", "MacOS", "Chromium")) ||
+    existsSync(path.join(chromiumRoot, "chrome-mac-arm64", "Google Chrome for Testing.app", "Contents", "MacOS", "Google Chrome for Testing"))
   );
 }
 
