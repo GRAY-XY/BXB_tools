@@ -1,0 +1,65 @@
+name: Build macOS Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag to build and upload
+        required: true
+        default: v1.1.10
+
+permissions:
+  contents: write
+
+jobs:
+  macos-package:
+    runs-on: macos-14
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag }}
+          fetch-depth: 0
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium
+
+      - name: Install Electron dependencies
+        working-directory: frontend/electron
+        run: npm ci
+
+      - name: Build Electron frontend
+        working-directory: frontend/electron
+        run: npm run build
+
+      - name: Build macOS package
+        working-directory: frontend/electron
+        run: npm run dist -- --mac --publish never
+
+      - name: Resolve package path
+        id: pkg
+        shell: bash
+        run: |
+          pkg_path="$(ls -1 ../../dist-electron-app/*.dmg | head -n 1)"
+          echo "pkg_path=$pkg_path" >> "$GITHUB_OUTPUT"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BXB_Homework_macOS_DMG
+          path: ${{ steps.pkg.outputs.pkg_path }}
+
+      - name: Attach package to GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ inputs.release_tag }}" "${{ steps.pkg.outputs.pkg_path }}" --clobber
