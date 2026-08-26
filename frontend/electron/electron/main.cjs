@@ -616,6 +616,9 @@ async function ensurePlaywrightBrowsers() {
   const npxPath = process.platform === "win32" ? "npx.cmd" : "npx";
   
   // Install chromium using Playwright CLI
+  if (mainWindow) {
+    mainWindow.webContents.send("browser:status", { status: "downloading", message: "正在下载 Chromium 浏览器..." });
+  }
   const installResult = spawnSync(
     npxPath,
     ["playwright", "install", "chromium"],
@@ -797,8 +800,8 @@ async function testModelConfig(config) {
 
 async function listModelOptions(config) {
   const candidate = {
-    apiKey: String(config?.apiKey || "").trim(),
-    baseUrl: String(config?.baseUrl || "").trim(),
+    apiKey: String(config?.apiKey || "").trim().replace(/[\u3000\uFF00-\uFFEF]/g, ""),
+    baseUrl: String(config?.baseUrl || "").trim().replace(/[\u3000\uFF00-\uFFEF]/g, ""),
   };
   if (!candidate.baseUrl) {
     throw new Error("请先填写调用链接。");

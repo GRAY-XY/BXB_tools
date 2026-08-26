@@ -7,6 +7,7 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse, urlunparse
 from urllib.request import Request, urlopen
+import ssl
 
 
 CONFIG_FILENAME = ".bxb_model_config.json"
@@ -124,8 +125,13 @@ def test_model_connection(config: ModelConfig, *, timeout_sec: int = 15) -> dict
         method="GET",
     )
 
+    # 创建 SSL 上下文，处理证书验证问题
+    ssl_context = ssl.create_default_context()
+    ssl_context.check_hostname = False
+    ssl_context.verify_mode = ssl.CERT_NONE
+
     try:
-        with urlopen(request, timeout=timeout_sec) as response:
+        with urlopen(request, context=ssl_context, timeout=timeout_sec) as response:
             status_code = getattr(response, "status", response.getcode())
             raw = response.read().decode("utf-8", errors="replace")
     except HTTPError as error:
@@ -209,6 +215,8 @@ def known_context_length(model_name: str) -> int:
         "qwen3.5plus": 1000000,
         "qwen-3.5plus": 1000000,
         "3.5plus": 1000000,
+        "mimo-v2.5": 128000,
+        "mimo-v2.5-pro": 128000,
     }
     for key, value in known.items():
         if key in normalized:

@@ -2821,7 +2821,7 @@ function App() {
                 <div className="update-head">
                   <div>
                     <h2>软件更新</h2>
-                    <p>Windows 正式版</p>
+                    <p>macOS 正式版</p>
                   </div>
                   <span className="update-version">v{appInfo?.version || "unknown"}</span>
                 </div>

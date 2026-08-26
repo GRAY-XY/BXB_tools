@@ -228,8 +228,13 @@ class LlmConversationAgent:
             method="POST",
         )
 
+        # 创建 SSL 上下文，处理证书验证问题
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+
         try:
-            with urlopen(request, timeout=60) as response:
+            with urlopen(request, context=ssl_context, timeout=60) as response:
                 raw = response.read().decode("utf-8", errors="replace")
         except HTTPError as error:
             detail = error.read().decode("utf-8", errors="replace") if getattr(error, "fp", None) else ""
