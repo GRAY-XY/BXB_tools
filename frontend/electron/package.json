@@ -1,0 +1,121 @@
+{
+  "name": "bxb-homework-electron",
+  "version": "1.1.11",
+  "private": true,
+  "type": "module",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "electron": "electron .",
+    "start": "concurrently -k \"npm run dev\" \"wait-on http://127.0.0.1:5173 && electron .\"",
+    "build": "vite build",
+    "dist": "npm run build && electron-builder --win nsis dir",
+    "check": "vite build"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^5.1.2",
+    "katex": "^0.17.0",
+    "marked": "^17.0.2",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.7"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "electron": "^39.8.10",
+    "electron-builder": "^26.0.12",
+    "wait-on": "^9.0.3"
+  },
+  "build": {
+    "appId": "com.grayxy.bxbhomework",
+    "productName": "BXB Homework",
+    "files": [
+      "dist/**",
+      "electron/**"
+    ],
+    "extraResources": [
+      {
+        "from": "../../backend/src",
+        "to": "payload/backend/src"
+      },
+      {
+        "from": "../../node_modules",
+        "to": "payload/node_modules"
+      },
+      {
+        "from": "../../package.json",
+        "to": "payload/package.json"
+      },
+      {
+        "from": "../../build_assets/ms-playwright-browsers.zip",
+        "to": "payload/runtime/ms-playwright-browsers.zip"
+      }
+    ],
+    "directories": {
+      "output": "../../dist-electron-app"
+    },
+    "win": {
+      "signAndEditExecutable": false,
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "dir",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "dir",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.education",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist"
+    },
+    "dmg": {
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "BXB Homework",
+      "runAfterFinish": true
+    }
+  }
+}
