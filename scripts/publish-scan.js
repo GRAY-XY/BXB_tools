@@ -30,6 +30,22 @@ const riskyPaths = [
     path: "vendors.bundle.js",
     reason: "reverse-engineered third-party vendor bundle that should not ship with the repo",
   },
+  {
+    path: "save_electron_config.py",
+    reason: "local model configuration helper that may contain API keys",
+  },
+  {
+    path: "save_mimo_config.py",
+    reason: "local Mimo configuration helper that may contain API keys",
+  },
+  {
+    path: "test_mimo_api.py",
+    reason: "local Mimo API test helper that may contain API keys",
+  },
+  {
+    path: "test_mimo_connection.py",
+    reason: "local Mimo connection test helper that may contain API keys",
+  },
 ];
 
 async function exists(targetPath) {

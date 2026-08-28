@@ -2,6 +2,7 @@
   "name": "bxb-homework-electron",
   "version": "1.1.10",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
