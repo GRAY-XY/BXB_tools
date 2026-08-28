@@ -23,6 +23,9 @@ desktop-winui/**/*.user
 frontend/winui/**/bin/
 frontend/winui/**/obj/
 frontend/winui/**/*.user
+apps/windows/winui/**/bin/
+apps/windows/winui/**/obj/
+apps/windows/winui/**/*.user
 desktop-win11/
 docs/project-notes.md
 save_electron_config.py

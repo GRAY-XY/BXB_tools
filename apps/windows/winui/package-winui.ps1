@@ -8,7 +8,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
+$repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..\..")
 $repoRootPath = $repoRoot.Path
 $distRoot = Join-Path $repoRootPath "dist-winui-app"
 $unpackedDir = Join-Path $distRoot "winui-unpacked"
@@ -29,7 +29,19 @@ function Remove-WorkspaceDirectory {
     throw "Refusing to remove path outside repository: $fullPath"
   }
   if (Test-Path -LiteralPath $fullPath) {
-    Remove-Item -LiteralPath $fullPath -Recurse -Force
+    $lastError = $null
+    for ($attempt = 1; $attempt -le 10; $attempt++) {
+      try {
+        Remove-Item -LiteralPath $fullPath -Recurse -Force -ErrorAction Stop
+        return
+      } catch {
+        $lastError = $_
+        [System.GC]::Collect()
+        [System.GC]::WaitForPendingFinalizers()
+        Start-Sleep -Milliseconds (500 * $attempt)
+      }
+    }
+    throw $lastError
   }
 }
 
@@ -63,7 +75,7 @@ function Find-Makensis {
 }
 
 if (-not $Version) {
-  $desktopPackage = Get-Content (Join-Path $repoRootPath "frontend\electron\package.json") -Raw | ConvertFrom-Json
+  $desktopPackage = Get-Content (Join-Path $repoRootPath "apps\legacy\electron\package.json") -Raw | ConvertFrom-Json
   $Version = [string] $desktopPackage.version
 }
 $numericVersionMatch = [regex]::Match($Version, "^(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)")
@@ -111,8 +123,8 @@ Copy-DirectoryContent -Source (Join-Path $repoRootPath "backend\src") -Destinati
 Copy-DirectoryContent -Source (Join-Path $repoRootPath "backend\bridge") -Destination (Join-Path $payloadDir "backend\bridge")
 Copy-DirectoryContent -Source (Join-Path $repoRootPath "node_modules") -Destination (Join-Path $payloadDir "node_modules")
 Copy-Item -LiteralPath (Join-Path $repoRootPath "package.json") -Destination (Join-Path $payloadDir "package.json") -Force
-New-Item -ItemType Directory -Path (Join-Path $payloadDir "frontend\electron") -Force | Out-Null
-Copy-Item -LiteralPath (Join-Path $repoRootPath "frontend\electron\package.json") -Destination (Join-Path $payloadDir "frontend\electron\package.json") -Force
+New-Item -ItemType Directory -Path (Join-Path $payloadDir "apps\legacy\electron") -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $repoRootPath "apps\legacy\electron\package.json") -Destination (Join-Path $payloadDir "apps\legacy\electron\package.json") -Force
 New-Item -ItemType Directory -Path (Join-Path $payloadDir "runtime") -Force | Out-Null
 Copy-Item -LiteralPath $browserZip -Destination (Join-Path $payloadDir "runtime\ms-playwright-browsers.zip") -Force
 
