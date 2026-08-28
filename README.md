@@ -2,7 +2,7 @@
 
 BXB Homework is a local desktop assistant for the Banxuebang student portal. It brings homework, attachments, grades, private messages, workspace files, and an AI assistant into one desktop app.
 
-The current primary client is the WinUI app in `frontend/winui/`. The Electron + React app remains in `frontend/electron/`, and the legacy Tk shell remains in `frontend/tk/`. The local capability layer in `backend/src/` handles Banxuebang login state, course and homework APIs, attachment reading, workspace file operations, browser-based web search, and MCP-compatible tool access.
+The current primary client is the WinUI app in `apps/windows/winui/`. The Electron + React app remains in `apps/legacy/electron/`, and the legacy Tk shell remains in `apps/legacy/tk/`. The local capability layer in `backend/src/` handles Banxuebang login state, course and homework APIs, attachment reading, workspace file operations, browser-based web search, and MCP-compatible tool access.
 
 Older UI experiments remain in the repository for reference, but they are not the active desktop baseline.
 
@@ -39,28 +39,28 @@ npm install
 Install desktop dependencies:
 
 ```powershell
-cd frontend/electron
+cd apps/legacy/electron
 npm install
 ```
 
 Start the desktop development app:
 
 ```powershell
-cd frontend/electron
+cd apps/legacy/electron
 npm run start
 ```
 
 Build the desktop frontend:
 
 ```powershell
-cd frontend/electron
+cd apps/legacy/electron
 npm run build
 ```
 
 Package the Windows desktop app:
 
 ```powershell
-.\frontend\winui\package-winui.ps1 -Configuration Release
+.\apps\windows\winui\package-winui.ps1 -Configuration Release
 ```
 
 The packaged Windows app is generated under `dist-winui-app/`.
@@ -114,8 +114,10 @@ The local tool layer includes:
 
 ## Maintainer Notes
 
-- Native Windows UI work should usually happen in `frontend/winui/`.
-- Legacy Electron UI work should usually happen in `frontend/electron/`.
+- Native Windows UI work should usually happen in `apps/windows/winui/`.
+- Legacy Electron UI work should usually happen in `apps/legacy/electron/`.
+- Legacy Tk UI work should usually happen in `apps/legacy/tk/`.
+- Release checks and packaging helpers should usually happen in `release/`.
 - Shared Banxuebang capability work should usually happen in `backend/src/`.
 - New renderer-facing capabilities should be exposed through `window.bxb` and Electron IPC, not direct Node access from the renderer.
 - Do not commit local sessions, model configs, attachments, drafts, build outputs, or browser caches.

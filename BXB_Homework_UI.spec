@@ -23,7 +23,7 @@ if browser_zip.exists():
     datas.append((str(browser_zip), "payload/runtime"))
 
 a = Analysis(
-    ["frontend/tk/banxuebang_homework/standalone_launcher.py"],
+    ["apps/legacy/tk/banxuebang_homework/standalone_launcher.py"],
     pathex=[str(repo_root)],
     binaries=[],
     datas=datas,

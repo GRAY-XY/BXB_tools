@@ -23,12 +23,12 @@
   <ItemGroup>
     <Content Include="Assets\BxbIcon.ico" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Assets\BxbIcon.png" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="..\..\..\node_modules\markdown-it\dist\markdown-it.min.js" Link="MarkdownAssets\markdown-it.min.js" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="..\..\..\node_modules\markdown-it-texmath\texmath.js" Link="MarkdownAssets\texmath.js" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="..\..\..\node_modules\katex\dist\katex.min.js" Link="MarkdownAssets\katex.min.js" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="..\..\..\node_modules\katex\dist\katex.min.css" Link="MarkdownAssets\katex.min.css" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="..\..\..\node_modules\dompurify\dist\purify.min.js" Link="MarkdownAssets\purify.min.js" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="..\..\..\node_modules\katex\dist\fonts\**\*.*" CopyToOutputDirectory="PreserveNewest">
+    <Content Include="..\..\..\..\node_modules\markdown-it\dist\markdown-it.min.js" Link="MarkdownAssets\markdown-it.min.js" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\..\..\node_modules\markdown-it-texmath\texmath.js" Link="MarkdownAssets\texmath.js" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\..\..\node_modules\katex\dist\katex.min.js" Link="MarkdownAssets\katex.min.js" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\..\..\node_modules\katex\dist\katex.min.css" Link="MarkdownAssets\katex.min.css" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\..\..\node_modules\dompurify\dist\purify.min.js" Link="MarkdownAssets\purify.min.js" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\..\..\node_modules\katex\dist\fonts\**\*.*" CopyToOutputDirectory="PreserveNewest">
       <Link>MarkdownAssets\fonts\%(RecursiveDir)%(Filename)%(Extension)</Link>
     </Content>
   </ItemGroup>

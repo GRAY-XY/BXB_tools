@@ -2,7 +2,7 @@
 
 This directory is a native Windows UI prototype for BXB Homework.
 
-This is the current primary native Windows client. The older Electron client lives in `frontend/electron/`.
+This is the current primary native Windows client. The older Electron client lives in `apps/legacy/electron/`.
 
 - WinUI 3 native window.
 - Windows App SDK `NavigationView` shell.
@@ -30,14 +30,14 @@ After installing the tooling, build with Visual Studio MSBuild, not plain `dotne
 WinUI / Windows App SDK projects need VS AppxPackaging tasks that the standalone .NET SDK MSBuild does not provide.
 
 ```powershell
-cd <repo>\frontend\winui
+cd <repo>\apps\windows\winui
 .\build.ps1
 ```
 
 The debug executable is generated at:
 
 ```text
-<repo>\frontend\winui\BxbHomework.WinUI\bin\x64\Debug\net8.0-windows10.0.19041.0\BXBHomework.exe
+<repo>\apps\windows\winui\BxbHomework.WinUI\bin\x64\Debug\net8.0-windows10.0.19041.0\BXBHomework.exe
 ```
 
 ## Package For Users
@@ -51,7 +51,7 @@ The user-facing WinUI build is packaged as a per-user NSIS installer. It include
 Build the installer from the repository root:
 
 ```powershell
-.\frontend\winui\package-winui.ps1 -Configuration Release
+.\apps\windows\winui\package-winui.ps1 -Configuration Release
 ```
 
 Outputs:

@@ -73,31 +73,31 @@ Tkinter UI
 在仓库根目录执行：
 
 ```bash
-python -m frontend.tk.banxuebang_homework.run
+python -m apps.legacy.tk.banxuebang_homework.run
 ```
 
 也可以显式指定后端或仓库路径：
 
 ```bash
-python -m frontend.tk.banxuebang_homework.run --backend direct-tool --repo-root D:\MCP_Server
+python -m apps.legacy.tk.banxuebang_homework.run --backend direct-tool --repo-root D:\MCP_Server
 ```
 
 只测试工具后端，不启动界面：
 
 ```bash
-python -m frontend.tk.banxuebang_homework.smoke_test --tool session_status
+python -m apps.legacy.tk.banxuebang_homework.smoke_test --tool session_status
 ```
 
 测试 Agent 编排：
 
 ```bash
-python -m frontend.tk.banxuebang_homework.agent_smoke_test
+python -m apps.legacy.tk.banxuebang_homework.agent_smoke_test
 ```
 
 测试 LLM 工具调用链：
 
 ```bash
-python -m frontend.tk.banxuebang_homework.llm_agent_smoke_test
+python -m apps.legacy.tk.banxuebang_homework.llm_agent_smoke_test
 ```
 
 ## Model Config

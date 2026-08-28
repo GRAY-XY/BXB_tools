@@ -11,8 +11,8 @@ from tkinter import messagebox, ttk
 import zipfile
 import ttkbootstrap as ttkb
 
-from frontend.tk.banxuebang_homework.backend_factory import create_backend
-from frontend.tk.banxuebang_homework.tk_app import HomeworkUiApp
+from apps.legacy.tk.banxuebang_homework.backend_factory import create_backend
+from apps.legacy.tk.banxuebang_homework.tk_app import HomeworkUiApp
 
 
 APP_NAME = "BXB Homework UI"
@@ -117,7 +117,7 @@ def _log(message: str) -> None:
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[3]
+    return Path(__file__).resolve().parents[4]
 
 
 def _resource_root() -> Path:

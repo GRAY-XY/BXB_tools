@@ -11,7 +11,7 @@ from .interfaces import BanxuebangUiBackend, UiBackendError
 
 class DirectToolBackend(BanxuebangUiBackend):
     def __init__(self, repo_root: Path | None = None, node_command: str = "node") -> None:
-        self.repo_root = repo_root or Path(__file__).resolve().parents[3]
+        self.repo_root = repo_root or Path(__file__).resolve().parents[4]
         self.node_command = node_command
         self.tool_script = self.repo_root / "backend" / "cli" / "direct-tool.js"
 

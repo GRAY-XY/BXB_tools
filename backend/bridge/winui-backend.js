@@ -1106,7 +1106,7 @@ function chooseAsset(release, suffix, version) {
 
 async function readPackageVersion() {
   try {
-    return JSON.parse(await fs.readFile(path.join(repoRoot, "frontend", "electron", "package.json"), "utf8")).version || "0.0.0";
+    return JSON.parse(await fs.readFile(path.join(repoRoot, "apps", "legacy", "electron", "package.json"), "utf8")).version || "0.0.0";
   } catch {
     try {
       return JSON.parse(await fs.readFile(path.join(repoRoot, "package.json"), "utf8")).version || "0.0.0";

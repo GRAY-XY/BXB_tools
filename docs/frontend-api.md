@@ -8,8 +8,8 @@ The frontend must access backend features only through `window.bxb`. Do not impo
 
 Defined in:
 
-- `frontend/electron/electron/preload.cjs`
-- `frontend/electron/electron/main.cjs`
+- `apps/legacy/electron/electron/preload.cjs`
+- `apps/legacy/electron/electron/main.cjs`
 
 ```ts
 declare global {

@@ -7,7 +7,7 @@ const { spawn, spawnSync } = require("node:child_process");
 const { pathToFileURL } = require("node:url");
 
 const isDev = !app.isPackaged;
-const repoRoot = path.resolve(__dirname, "..", "..", "..");
+const repoRoot = path.resolve(__dirname, "..", "..", "..", "..");
 const payloadRoot = isDev ? repoRoot : path.join(process.resourcesPath, "payload");
 const userDataRoot = app.getPath("userData");
 const dataRoot = path.join(userDataRoot, ".banxuebang");

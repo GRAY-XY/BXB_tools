@@ -145,7 +145,7 @@ Start with normal installer mode. Only add silent mode after real installation t
 
 ## NSIS Configuration
 
-To make the app launch after installation, add or verify this in `frontend/electron/package.json` for the legacy Electron package:
+To make the app launch after installation, add or verify this in `apps/legacy/electron/package.json` for the legacy Electron package:
 
 ```json
 "nsis": {
