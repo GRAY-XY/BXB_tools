@@ -2,6 +2,7 @@
   "name": "banxuebang-achievement-mcp",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "description": "MCP server for controlling Banxuebang student achievement page",
   "files": [
