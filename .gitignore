@@ -25,3 +25,7 @@ frontend/winui/**/obj/
 frontend/winui/**/*.user
 desktop-win11/
 docs/project-notes.md
+save_electron_config.py
+save_mimo_config.py
+test_mimo_api.py
+test_mimo_connection.py
