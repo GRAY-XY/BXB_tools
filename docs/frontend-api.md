@@ -436,6 +436,12 @@ window.bxb.testModelConfig(config: ModelConfigInput): Promise<ModelTestResult>
 
 ```ts
 type ModelConfigInput = {
+  modelRole?: "chat" | "image_caption";
+  enabled?: boolean;
+  activeProviderId?: string;
+  providerName?: string;
+  provider?: ModelProviderInput;
+  providers?: ModelProviderInput[];
   apiKey?: string;
   baseUrl?: string;
   modelName?: string;
@@ -447,8 +453,44 @@ type ModelConfigInput = {
   systemPrompt?: string;
 };
 
+type ModelProviderInput = {
+  id?: string;
+  type?: string;
+  name?: string;
+  apiKey?: string;
+  baseUrl?: string;
+  modelName?: string;
+};
+
+type ModelProvider = {
+  id: string;
+  type: string;
+  name: string;
+  baseUrl: string;
+  modelName: string;
+  hasApiKey: boolean;
+  apiKeyMasked: string;
+  availableModels: string[];
+};
+
 type ModelConfig = ModelConfigInput & {
+  activeProviderId: string;
+  providerName: string;
+  modelRoles: {
+    chat: {
+      enabled: true;
+      activeProviderId: string;
+      providers: ModelProvider[];
+    };
+    image_caption: {
+      enabled: boolean;
+      activeProviderId: string;
+      providers: ModelProvider[];
+    };
+  };
+  providers: ModelProvider[];
   defaultSystemPrompt: string;
+  hasApiKey: boolean;
   apiKeyMasked: string;
   configPath: string;
 };
@@ -477,6 +519,8 @@ Security requirements:
 - Do not render raw `apiKey` after saving unless the user is actively editing it.
 - `apiKeyMasked` is safe for display.
 - `configPath` is diagnostic information; prefer hiding it outside advanced settings.
+- The current model provider is selected by `activeProviderId`. Frontends should edit the selected provider through `provider` and keep legacy top-level `baseUrl`/`modelName` only for compatibility.
+- Existing single-provider `apiKey`/`baseUrl`/`modelName` configs are migrated into a default provider automatically.
 
 ## Agent Chat
 
@@ -581,6 +625,9 @@ Renderer API to IPC channel mapping:
 | `getWorkspaceImageDataUrl(filePath)` | `workspace:image-data-url` |
 | `loadModelConfig()` | `config:model:load` |
 | `saveModelConfig(config)` | `config:model:save` |
+| `createModelProvider(payload)` | `config:model:provider:create` |
+| `deleteModelProvider(payload)` | `config:model:provider:delete` |
+| `selectModelProvider(payload)` | `config:model:provider:select` |
 | `clearModelConfig()` | `config:model:clear` |
 | `listModelOptions(config)` | `config:model:list` |
 | `testModelConfig(config)` | `config:model:test` |

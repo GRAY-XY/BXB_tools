@@ -358,38 +358,117 @@
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
 
                         <TextBox x:Name="SettingsMainTextBox" Visibility="Collapsed" />
 
-                        <Border Padding="14" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
-                            <StackPanel Spacing="10">
-                                <TextBlock Text="模型配置" FontSize="18" FontWeight="SemiBold" />
-                                <PasswordBox x:Name="SettingsApiKeyBox" Header="API Key" PlaceholderText="留空则保留已保存的 Key" />
-                                <TextBox x:Name="SettingsBaseUrlBox" Header="调用链接" PlaceholderText="https://api.example.com/v1" />
-                                <TextBlock Text="模型名称" FontWeight="SemiBold" />
-                                <TextBox x:Name="SettingsModelNameBox" PlaceholderText="手动输入，或先读取模型列表后选择" />
-                                <ComboBox x:Name="SettingsModelComboBox" Visibility="Collapsed" SelectionChanged="OnSettingsModelSelectionChanged" />
-                                <TextBox x:Name="SettingsContextLengthBox" Header="上下文长度" InputScope="Number" />
-                                <Grid ColumnSpacing="10">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBox x:Name="SettingsChatTemperatureBox" Header="助手对话 Temperature" InputScope="Number" />
-                                    <TextBox x:Name="SettingsCompactTemperatureBox" Grid.Column="1" Header="压缩上下文 Temperature" InputScope="Number" />
-                                </Grid>
-                                <TextBlock x:Name="SettingsModelStatusText" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                                <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <Button Content="保存配置" Click="OnSettingsSaveConfigClick" />
-                                    <Button Content="测试连通性" Click="OnSettingsTestConfigClick" />
-                                    <Button Content="清除配置" Click="OnSettingsClearConfigClick" />
-                                    <Button Content="读取模型" Click="OnSettingsLoadModelsClick" />
+                        <Border Grid.ColumnSpan="2" Padding="14" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                            <Grid RowSpacing="12">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <TabView
+                                    x:Name="SettingsModelRoleTabView"
+                                    CanDragTabs="False"
+                                    IsAddTabButtonVisible="False"
+                                    SelectionChanged="OnSettingsModelRoleTabSelectionChanged">
+                                    <TabViewItem Header="对话" IsClosable="False" Tag="chat" />
+                                    <TabViewItem Header="图片转述" IsClosable="False" Tag="image_caption" />
+                                </TabView>
+                                <CheckBox
+                                    x:Name="SettingsImageCaptionEnabledCheckBox"
+                                    Grid.Row="1"
+                                    Content="启用图片转述"
+                                    Visibility="Collapsed"
+                                    Checked="OnSettingsImageCaptionEnabledChanged"
+                                    Unchecked="OnSettingsImageCaptionEnabledChanged" />
+                            <Grid Grid.Row="2" ColumnSpacing="16">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="300" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Spacing="10">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="提供商源" FontSize="18" FontWeight="SemiBold" />
+                                        <Button x:Name="SettingsAddProviderButton" Grid.Column="1" Content="+ 新增" Click="OnSettingsAddProviderClick" />
+                                    </Grid>
+                                    <ListView x:Name="SettingsProviderListView" MinHeight="260" SelectionChanged="OnSettingsProviderSelectionChanged">
+                                        <ListView.ItemTemplate>
+                                            <DataTemplate x:DataType="local:DisplayItem" xmlns:local="using:BxbHomework.WinUI">
+                                                <Grid Padding="8,6" RowSpacing="3">
+                                                    <Grid.RowDefinitions>
+                                                        <RowDefinition Height="Auto" />
+                                                        <RowDefinition Height="Auto" />
+                                                    </Grid.RowDefinitions>
+                                                    <TextBlock Text="{x:Bind Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Grid.Row="1" Text="{x:Bind Subtitle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="12" TextWrapping="WrapWholeWords" MaxLines="2" />
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ListView.ItemTemplate>
+                                    </ListView>
+                                    <TextBlock
+                                        x:Name="SettingsProviderEmptyText"
+                                        Text="当前标签还没有模型提供商，请点击“新增”。"
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                        TextWrapping="WrapWholeWords"
+                                        Visibility="Collapsed" />
+                                    <Border x:Name="SettingsProviderCreatePanel" Visibility="Collapsed" Padding="12" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Background="{ThemeResource LayerFillColorDefaultBrush}">
+                                        <StackPanel Spacing="10">
+                                            <TextBlock Text="新增模型提供商" FontWeight="SemiBold" />
+                                            <ComboBox x:Name="SettingsProviderTypeComboBox" Header="提供商类型" SelectionChanged="OnSettingsProviderTypeSelectionChanged" />
+                                            <TextBox x:Name="SettingsNewProviderNameBox" Header="名称" PlaceholderText="例如 Moonshot、DeepSeek、学校代理" />
+                                            <TextBox x:Name="SettingsNewProviderBaseUrlBox" Header="Base URL" PlaceholderText="https://api.example.com/v1" />
+                                            <PasswordBox x:Name="SettingsNewProviderApiKeyBox" Header="API Key" PlaceholderText="请输入该提供商的 API Key" />
+                                            <TextBox x:Name="SettingsNewProviderModelNameBox" Header="默认模型" PlaceholderText="可以稍后读取模型列表再选择" />
+                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <Button Content="保存提供商" Click="OnSettingsSaveNewProviderClick" />
+                                                <Button Content="取消" Click="OnSettingsCancelNewProviderClick" />
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </Border>
                                 </StackPanel>
-                            </StackPanel>
+                                <StackPanel x:Name="SettingsProviderDetailsPanel" Grid.Column="1" Spacing="10">
+                                    <StackPanel Spacing="2">
+                                        <TextBlock x:Name="SettingsProviderTitleText" Text="模型配置" FontSize="18" FontWeight="SemiBold" />
+                                        <TextBlock x:Name="SettingsProviderEndpointText" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="WrapWholeWords" />
+                                    </StackPanel>
+                                    <TextBlock Text="设置" FontWeight="SemiBold" />
+                                    <TextBox x:Name="SettingsProviderNameBox" Header="名称" PlaceholderText="例如 Moonshot、OpenAI、DeepSeek" />
+                                    <PasswordBox x:Name="SettingsApiKeyBox" Header="API Key" PlaceholderText="留空则保留已保存的 Key" />
+                                    <TextBox x:Name="SettingsBaseUrlBox" Header="API Base URL" PlaceholderText="https://api.example.com/v1" />
+                                    <TextBlock Text="模型名称" FontWeight="SemiBold" />
+                                    <TextBox x:Name="SettingsModelNameBox" PlaceholderText="手动输入，或先读取模型列表后选择" />
+                                    <ComboBox x:Name="SettingsModelComboBox" Visibility="Collapsed" SelectionChanged="OnSettingsModelSelectionChanged" />
+                                    <TextBox x:Name="SettingsContextLengthBox" Header="上下文长度" InputScope="Number" />
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBox x:Name="SettingsChatTemperatureBox" Header="助手对话 Temperature" InputScope="Number" />
+                                        <TextBox x:Name="SettingsCompactTemperatureBox" Grid.Column="1" Header="压缩上下文 Temperature" InputScope="Number" />
+                                    </Grid>
+                                    <TextBlock x:Name="SettingsModelStatusText" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <Button Content="保存配置" Click="OnSettingsSaveConfigClick" />
+                                        <Button Content="测试连通性" Click="OnSettingsTestConfigClick" />
+                                        <Button Content="读取模型" Click="OnSettingsLoadModelsClick" />
+                                        <Button x:Name="SettingsDeleteProviderButton" Content="删除提供商" Click="OnSettingsDeleteProviderClick" />
+                                        <Button Content="清除配置" Click="OnSettingsClearConfigClick" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Grid>
+                            </Grid>
                         </Border>
 
-                        <Border Grid.Column="1" Padding="14" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                        <Border Grid.Row="1" Padding="14" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
                             <StackPanel Spacing="12">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
@@ -429,7 +508,7 @@
                             </StackPanel>
                         </Border>
 
-                        <Border Grid.Row="1" Padding="14" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                        <Border Grid.Row="1" Grid.Column="1" Padding="14" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
                             <StackPanel Spacing="10">
                                 <TextBlock Text="界面与 Agent" FontSize="18" FontWeight="SemiBold" />
                                 <ComboBox x:Name="SettingsThemeComboBox" Header="主题" SelectionChanged="OnSettingsThemeSelectionChanged">
@@ -447,7 +526,7 @@
                             </StackPanel>
                         </Border>
 
-                        <Border Grid.Row="1" Grid.Column="1" Padding="14" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                        <Border Grid.Row="2" Grid.ColumnSpan="2" Padding="14" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
                             <Grid RowSpacing="10">
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
