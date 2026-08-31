@@ -311,6 +311,16 @@ Purpose:
 
 Model settings:
 
+- Multiple model providers:
+  - Model settings should expose browser-style horizontal model-role tabs, starting with `chat` and `image_caption`.
+  - The `image_caption` role is labeled `图片转述`, has its own provider list and active provider, and can be enabled or disabled independently from chat.
+  - Existing providers belong to the `chat` role; switching to `图片转述` must not show or reuse them automatically.
+  - Users can add more than one provider within each role.
+  - Users can select one active provider within each role.
+  - Each provider stores its own display name, API Key, Base URL, and model name.
+  - The settings UI should use a provider-management layout: provider sources list on the left, selected-provider settings on the right.
+  - Adding a provider should expand an inline settings panel with provider-type presets, not a modal dialog.
+  - Existing single-provider configs migrate to a default provider automatically.
 - API Key, shown as a password field.
 - Base URL.
 - Model name.

@@ -41,11 +41,22 @@ internal sealed record AgentChatMessage(string Id, string Role, string Text, Jso
 
 internal sealed record AttachmentDownloadRequest(string TaskId, string FileId, string FileName);
 
+internal sealed record ModelProviderPreset(string Type, string Name, string BaseUrl, string ModelName);
+
 public sealed partial class MainWindow : Window
 {
     private static readonly JsonSerializerOptions PrettyJsonOptions = new() { WriteIndented = true };
+    private static readonly IReadOnlyList<ModelProviderPreset> ModelProviderPresets = new[]
+    {
+        new ModelProviderPreset("moonshot", "Moonshot", "https://api.moonshot.cn/v1", "kimi-k2.5"),
+        new ModelProviderPreset("deepseek", "DeepSeek", "https://api.deepseek.com/v1", "deepseek-chat"),
+        new ModelProviderPreset("openai", "OpenAI", "https://api.openai.com/v1", "gpt-4o-mini"),
+        new ModelProviderPreset("qwen", "通义千问", "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-plus"),
+        new ModelProviderPreset("custom", "自定义 OpenAI 兼容", "", ""),
+    };
     private readonly NodeBackendClient _backend = new();
     private readonly ObservableCollection<DisplayItem> _items = new();
+    private readonly ObservableCollection<DisplayItem> _settingsProviderItems = new();
     private readonly ObservableCollection<DisplayItem> _settingsPathItems = new();
     private readonly ObservableCollection<PrivateThreadMessage> _privateThreadMessages = new();
     private string _currentPage = "home";
@@ -65,9 +76,15 @@ public sealed partial class MainWindow : Window
     private bool _draftCreateMode;
     private int _pageLoadVersion;
     private bool _settingsHasApiKey;
+    private string _settingsModelRole = "chat";
     private string _settingsDefaultSystemPrompt = "";
+    private JsonElement? _settingsConfig;
+    private bool _suppressSettingsProviderCombo;
+    private bool _suppressSettingsProviderTypeCombo;
     private bool _suppressSettingsModelCombo;
     private bool _suppressSettingsThemeCombo;
+    private bool _suppressSettingsImageCaptionEnabled;
+    private bool _deleteProviderArmed;
 
     public MainWindow()
     {
@@ -76,6 +93,7 @@ public sealed partial class MainWindow : Window
         SetTitleBar(AppTitleBar);
         SetWindowIcon();
         MainListView.ItemsSource = _items;
+        SettingsProviderListView.ItemsSource = _settingsProviderItems;
         SettingsPathListView.ItemsSource = _settingsPathItems;
         PrivateThreadListView.ItemsSource = _privateThreadMessages;
 
@@ -228,6 +246,20 @@ public sealed partial class MainWindow : Window
         SetAgentStepsMessage("");
         AgentInputBox.Text = "";
         ConversationComboBox.Items.Clear();
+        _settingsProviderItems.Clear();
+        SettingsProviderTypeComboBox.Items.Clear();
+        SettingsProviderNameBox.Text = "";
+        SettingsProviderTitleText.Text = "模型配置";
+        SettingsProviderEndpointText.Text = "";
+        SettingsModelRoleTabView.SelectedIndex = 0;
+        _settingsModelRole = "chat";
+        SettingsNewProviderNameBox.Text = "";
+        SettingsNewProviderBaseUrlBox.Text = "";
+        SettingsNewProviderApiKeyBox.Password = "";
+        SettingsNewProviderModelNameBox.Text = "";
+        SettingsProviderCreatePanel.Visibility = Visibility.Collapsed;
+        SettingsAddProviderButton.Content = "+ 新增";
+        SettingsDeleteProviderButton.Content = "删除提供商";
         SettingsMainTextBox.Text = "";
         SettingsModelStatusText.Text = "";
         SettingsUpdateNotesText.Text = "";
@@ -239,6 +271,8 @@ public sealed partial class MainWindow : Window
         _deleteDraftArmed = false;
         _deleteConversationArmed = false;
         _draftCreateMode = false;
+        _settingsConfig = null;
+        _deleteProviderArmed = false;
     }
 
     private void RenderHome()
@@ -874,15 +908,41 @@ public sealed partial class MainWindow : Window
 
     private void ApplySettingsConfig(JsonElement config)
     {
-        _settingsHasApiKey = GetString(config, "hasApiKey", "false") == "true" || !string.IsNullOrWhiteSpace(GetString(config, "apiKeyMasked", ""));
+        _settingsConfig = config.Clone();
         _settingsDefaultSystemPrompt = GetString(config, "defaultSystemPrompt", "");
+        PopulateSettingsProviderTypes();
+        PopulateSettingsProviders(config);
+
+        var provider = GetCurrentSettingsProviderElement();
+        _suppressSettingsImageCaptionEnabled = true;
+        try
+        {
+            SettingsImageCaptionEnabledCheckBox.Visibility = _settingsModelRole == "image_caption" ? Visibility.Visible : Visibility.Collapsed;
+            SettingsImageCaptionEnabledCheckBox.IsChecked = _settingsModelRole != "image_caption" || GetSettingsModelRoleEnabled(config, _settingsModelRole);
+        }
+        finally
+        {
+            _suppressSettingsImageCaptionEnabled = false;
+        }
+
+        _settingsHasApiKey = provider.HasValue
+            && (GetString(provider, "hasApiKey", "false") == "true" || !string.IsNullOrWhiteSpace(GetString(provider, "apiKeyMasked", "")));
+        SettingsProviderDetailsPanel.Visibility = provider.HasValue ? Visibility.Visible : Visibility.Collapsed;
+        SettingsProviderEmptyText.Visibility = provider.HasValue ? Visibility.Collapsed : Visibility.Visible;
 
         SettingsApiKeyBox.Password = "";
         SettingsApiKeyBox.PlaceholderText = _settingsHasApiKey
-            ? $"已保存：{GetString(config, "apiKeyMasked", "******")}，留空则保留"
+            ? $"已保存：{GetString(provider, "apiKeyMasked", "******")}，留空则保留"
             : "请输入 API Key";
-        SettingsBaseUrlBox.Text = GetString(config, "baseUrl", "");
-        SettingsModelNameBox.Text = GetString(config, "modelName", "");
+        SettingsProviderNameBox.Text = provider.HasValue ? FirstString(provider.Value, "name", "providerName") : "";
+        SettingsBaseUrlBox.Text = GetString(provider, "baseUrl", "");
+        SettingsModelNameBox.Text = GetString(provider, "modelName", "");
+        var providerTitle = string.IsNullOrWhiteSpace(SettingsProviderNameBox.Text) ? "模型配置" : SettingsProviderNameBox.Text;
+        SettingsProviderTitleText.Text = $"{CurrentSettingsModelRoleLabel()} · {providerTitle}";
+        SettingsProviderEndpointText.Text = provider.HasValue ? FormatProviderSubtitle(provider.Value) : "尚未配置提供商";
+        SettingsModelNameBox.Visibility = Visibility.Visible;
+        SettingsModelComboBox.Visibility = Visibility.Collapsed;
+        SettingsModelComboBox.Items.Clear();
         SettingsContextLengthBox.Text = GetString(config, "contextLength", "");
         SettingsChatTemperatureBox.Text = GetString(config, "chatTemperature", "0.2");
         SettingsCompactTemperatureBox.Text = GetString(config, "compactTemperature", "0.1");
@@ -896,6 +956,159 @@ public sealed partial class MainWindow : Window
         {
             SelectSettingsModel(GetCurrentSettingsModelName());
         }
+    }
+
+    private void PopulateSettingsProviderTypes()
+    {
+        if (SettingsProviderTypeComboBox.Items.Count > 0) return;
+        _suppressSettingsProviderTypeCombo = true;
+        try
+        {
+            SettingsProviderTypeComboBox.Items.Clear();
+            foreach (var preset in ModelProviderPresets)
+            {
+                SettingsProviderTypeComboBox.Items.Add(new ComboBoxItem { Content = preset.Name, Tag = preset });
+            }
+            SettingsProviderTypeComboBox.SelectedIndex = 0;
+            ApplyNewProviderPreset(ModelProviderPresets[0]);
+        }
+        finally
+        {
+            _suppressSettingsProviderTypeCombo = false;
+        }
+    }
+
+    private void ApplyNewProviderPreset(ModelProviderPreset preset)
+    {
+        SettingsNewProviderNameBox.Text = preset.Name;
+        SettingsNewProviderBaseUrlBox.Text = preset.BaseUrl;
+        SettingsNewProviderModelNameBox.Text = preset.ModelName;
+    }
+
+    private void PopulateSettingsProviders(JsonElement config)
+    {
+        _suppressSettingsProviderCombo = true;
+        try
+        {
+            _settingsProviderItems.Clear();
+            SettingsProviderListView.SelectedIndex = -1;
+            var activeProviderId = GetSettingsProviderIdForRole(config, _settingsModelRole);
+            if (TryGetSettingsProviderArray(config, _settingsModelRole, out var providers))
+            {
+                foreach (var provider in providers.EnumerateArray())
+                {
+                    var id = FirstString(provider, "id", "providerId");
+                    if (string.IsNullOrWhiteSpace(id)) continue;
+                    var label = FirstString(provider, "name", "label", "providerName", "modelName", "baseUrl", "id");
+                    _settingsProviderItems.Add(new DisplayItem
+                    {
+                        Id = id,
+                        Title = label,
+                        Subtitle = FormatProviderSubtitle(provider),
+                        Data = provider.Clone(),
+                    });
+                }
+            }
+
+            if (_settingsProviderItems.Count == 0 && _settingsModelRole == "chat")
+            {
+                _settingsProviderItems.Add(new DisplayItem
+                {
+                    Id = GetString(config, "activeProviderId", "default"),
+                    Title = GetString(config, "providerName", "默认提供商"),
+                    Subtitle = FormatProviderSubtitle(config),
+                    Data = config.Clone(),
+                });
+            }
+
+            for (var index = 0; index < _settingsProviderItems.Count; index += 1)
+            {
+                if (_settingsProviderItems[index].Id == activeProviderId)
+                {
+                    SettingsProviderListView.SelectedIndex = index;
+                    return;
+                }
+            }
+
+            SettingsProviderListView.SelectedIndex = 0;
+        }
+        finally
+        {
+            _suppressSettingsProviderCombo = false;
+        }
+    }
+
+    private static bool TryGetSettingsProviderArray(JsonElement config, string role, out JsonElement providers)
+    {
+        providers = default;
+        if (config.TryGetProperty("modelRoles", out var roles)
+            && roles.ValueKind == JsonValueKind.Object
+            && roles.TryGetProperty(NormalizeSettingsModelRole(role), out var roleConfig)
+            && roleConfig.ValueKind == JsonValueKind.Object
+            && roleConfig.TryGetProperty("providers", out providers)
+            && providers.ValueKind == JsonValueKind.Array)
+        {
+            return true;
+        }
+
+        return NormalizeSettingsModelRole(role) == "chat"
+            && config.TryGetProperty("providers", out providers)
+            && providers.ValueKind == JsonValueKind.Array;
+    }
+
+    private static string FormatProviderSubtitle(JsonElement provider)
+    {
+        var type = FirstString(provider, "type", "providerType");
+        var baseUrl = FirstString(provider, "baseUrl", "apiBaseUrl", "endpoint");
+        var modelName = FirstString(provider, "modelName", "model");
+        return string.Join(" · ", new[] { type, baseUrl, modelName }.Where(value => !string.IsNullOrWhiteSpace(value)));
+    }
+
+    private string GetSettingsProviderIdForRole(JsonElement config, string role)
+    {
+        var normalizedRole = NormalizeSettingsModelRole(role);
+        if (config.TryGetProperty("modelRoles", out var roles)
+            && roles.ValueKind == JsonValueKind.Object
+            && roles.TryGetProperty(normalizedRole, out var roleConfig)
+            && roleConfig.ValueKind == JsonValueKind.Object)
+        {
+            var roleProviderId = FirstString(roleConfig, "activeProviderId", "providerId");
+            if (!string.IsNullOrWhiteSpace(roleProviderId))
+            {
+                return roleProviderId;
+            }
+        }
+
+        return normalizedRole == "chat" ? GetString(config, "activeProviderId", "default") : "";
+    }
+
+    private static bool GetSettingsModelRoleEnabled(JsonElement config, string role)
+    {
+        var normalizedRole = NormalizeSettingsModelRole(role);
+        if (config.TryGetProperty("modelRoles", out var roles)
+            && roles.ValueKind == JsonValueKind.Object
+            && roles.TryGetProperty(normalizedRole, out var roleConfig)
+            && roleConfig.ValueKind == JsonValueKind.Object)
+        {
+            return GetString(roleConfig, "enabled", "false") == "true";
+        }
+
+        return normalizedRole == "chat";
+    }
+
+    private static string NormalizeSettingsModelRole(string role)
+    {
+        return string.Equals(role, "image_caption", StringComparison.OrdinalIgnoreCase) ? "image_caption" : "chat";
+    }
+
+    private string CurrentSettingsModelRoleLabel()
+    {
+        return _settingsModelRole == "image_caption" ? "图片转述" : "对话";
+    }
+
+    private JsonElement? GetCurrentSettingsProviderElement()
+    {
+        return SettingsProviderListView.SelectedItem is DisplayItem item ? item.Data : null;
     }
 
     private void ApplyUpdateStatus(JsonElement update)
@@ -947,11 +1160,10 @@ public sealed partial class MainWindow : Window
 
     private Dictionary<string, object> BuildSettingsConfig()
     {
-        var modelName = GetCurrentSettingsModelName();
         var config = new Dictionary<string, object>
         {
-            ["baseUrl"] = SettingsBaseUrlBox.Text.Trim(),
-            ["modelName"] = modelName,
+            ["modelRole"] = _settingsModelRole,
+            ["enabled"] = _settingsModelRole != "image_caption" || SettingsImageCaptionEnabledCheckBox.IsChecked == true,
             ["contextLength"] = SettingsContextLengthBox.Text.Trim(),
             ["chatTemperature"] = SettingsChatTemperatureBox.Text.Trim(),
             ["compactTemperature"] = SettingsCompactTemperatureBox.Text.Trim(),
@@ -961,12 +1173,50 @@ public sealed partial class MainWindow : Window
             ["theme"] = GetCurrentSettingsTheme(),
         };
 
-        if (!string.IsNullOrWhiteSpace(SettingsApiKeyBox.Password))
+        if (SettingsProviderListView.SelectedItem is DisplayItem)
         {
-            config["apiKey"] = SettingsApiKeyBox.Password.Trim();
+            var modelName = GetCurrentSettingsModelName();
+            var providerId = GetCurrentSettingsProviderId();
+            var providerName = SettingsProviderNameBox.Text.Trim();
+            if (string.IsNullOrWhiteSpace(providerName)) providerName = "默认提供商";
+            var provider = new Dictionary<string, object>
+            {
+                ["id"] = providerId,
+                ["type"] = GetCurrentSettingsProviderType(),
+                ["name"] = providerName,
+                ["baseUrl"] = SettingsBaseUrlBox.Text.Trim(),
+                ["modelName"] = modelName,
+            };
+            config["activeProviderId"] = providerId;
+            config["providerName"] = providerName;
+            config["provider"] = provider;
+            config["baseUrl"] = SettingsBaseUrlBox.Text.Trim();
+            config["modelName"] = modelName;
+
+            if (!string.IsNullOrWhiteSpace(SettingsApiKeyBox.Password))
+            {
+                var apiKey = SettingsApiKeyBox.Password.Trim();
+                provider["apiKey"] = apiKey;
+                config["apiKey"] = apiKey;
+            }
         }
 
         return config;
+    }
+
+    private string GetCurrentSettingsProviderId()
+    {
+        if (SettingsProviderListView.SelectedItem is DisplayItem item && !string.IsNullOrWhiteSpace(item.Id))
+        {
+            return item.Id;
+        }
+
+        return _settingsConfig.HasValue ? GetSettingsProviderIdForRole(_settingsConfig.Value, _settingsModelRole) : "default";
+    }
+
+    private string GetCurrentSettingsProviderType()
+    {
+        return GetString(GetCurrentSettingsProviderElement(), "type", "openai");
     }
 
     private string GetCurrentSettingsModelName()
@@ -1678,6 +1928,7 @@ public sealed partial class MainWindow : Window
 
     private async void OnSettingsSaveConfigClick(object sender, RoutedEventArgs args)
     {
+        ResetDeleteProviderArming();
         await RunUiAsync(async () =>
         {
             var config = await InvokeAsync("config:model:save", BuildSettingsConfig());
@@ -1688,6 +1939,7 @@ public sealed partial class MainWindow : Window
 
     private async void OnSettingsTestConfigClick(object sender, RoutedEventArgs args)
     {
+        ResetDeleteProviderArming();
         await RunUiAsync(async () =>
         {
             SettingsModelStatusText.Text = "正在测试连通性...";
@@ -1699,9 +1951,11 @@ public sealed partial class MainWindow : Window
 
     private async void OnSettingsClearConfigClick(object sender, RoutedEventArgs args)
     {
+        ResetDeleteProviderArming();
         await RunUiAsync(async () =>
         {
             var config = await InvokeAsync("config:model:clear");
+            _settingsProviderItems.Clear();
             SettingsModelNameBox.Visibility = Visibility.Visible;
             SettingsModelComboBox.Visibility = Visibility.Collapsed;
             SettingsModelComboBox.Items.Clear();
@@ -1735,6 +1989,151 @@ public sealed partial class MainWindow : Window
     {
         if (_suppressSettingsModelCombo || SettingsModelComboBox.SelectedItem is not ComboBoxItem item) return;
         SettingsModelNameBox.Text = (item.Tag?.ToString() ?? item.Content?.ToString() ?? "").Replace("（当前）", "");
+    }
+
+    private void OnSettingsModelRoleTabSelectionChanged(object sender, SelectionChangedEventArgs args)
+    {
+        if (SettingsModelRoleTabView.SelectedItem is not TabViewItem { Tag: string role }) return;
+        var normalizedRole = NormalizeSettingsModelRole(role);
+        if (_settingsModelRole == normalizedRole) return;
+        ResetDeleteProviderArming();
+        _settingsModelRole = normalizedRole;
+        if (_settingsConfig.HasValue)
+        {
+            ApplySettingsConfig(_settingsConfig.Value);
+        }
+        SetStatus($"正在配置{CurrentSettingsModelRoleLabel()}模型");
+    }
+
+    private async void OnSettingsProviderSelectionChanged(object sender, SelectionChangedEventArgs args)
+    {
+        if (_suppressSettingsProviderCombo || SettingsProviderListView.SelectedItem is not DisplayItem item) return;
+        ResetDeleteProviderArming();
+        await RunUiAsync(async () =>
+        {
+            var config = await InvokeAsync("config:model:provider:select", new { providerId = item.Id, modelRole = _settingsModelRole });
+            ApplySettingsConfig(config);
+            SetStatus($"已切换{CurrentSettingsModelRoleLabel()}模型提供商");
+        });
+    }
+
+    private void OnSettingsAddProviderClick(object sender, RoutedEventArgs args)
+    {
+        _deleteProviderArmed = false;
+        SettingsDeleteProviderButton.Content = "删除提供商";
+        var showing = SettingsProviderCreatePanel.Visibility == Visibility.Visible;
+        SettingsProviderCreatePanel.Visibility = showing ? Visibility.Collapsed : Visibility.Visible;
+        SettingsAddProviderButton.Content = showing ? "+ 新增" : "收起";
+        if (!showing)
+        {
+            PopulateSettingsProviderTypes();
+            if (SettingsProviderTypeComboBox.SelectedItem is ComboBoxItem { Tag: ModelProviderPreset preset })
+            {
+                ApplyNewProviderPreset(preset);
+            }
+            SettingsNewProviderApiKeyBox.Password = "";
+            SettingsNewProviderNameBox.Focus(FocusState.Programmatic);
+            SettingsNewProviderNameBox.SelectAll();
+        }
+    }
+
+    private async void OnSettingsDeleteProviderClick(object sender, RoutedEventArgs args)
+    {
+        await RunUiAsync(async () =>
+        {
+            var providerId = GetCurrentSettingsProviderId();
+            var providerName = SettingsProviderNameBox.Text.Trim();
+            if (!_deleteProviderArmed)
+            {
+                _deleteProviderArmed = true;
+                SettingsDeleteProviderButton.Content = "确认删除";
+                SetStatus($"再次点击确认删除“{(string.IsNullOrWhiteSpace(providerName) ? "当前提供商" : providerName)}”。");
+                return;
+            }
+            var config = await InvokeAsync("config:model:provider:delete", new { providerId, modelRole = _settingsModelRole });
+            _deleteProviderArmed = false;
+            SettingsDeleteProviderButton.Content = "删除提供商";
+            ApplySettingsConfig(config);
+            SetStatus("已删除模型提供商");
+        });
+    }
+
+    private async void OnSettingsSaveNewProviderClick(object sender, RoutedEventArgs args)
+    {
+        await RunUiAsync(async () =>
+        {
+            var provider = BuildNewProviderConfig();
+            if (provider is null) return;
+            provider["modelRole"] = _settingsModelRole;
+            var config = await InvokeAsync("config:model:provider:create", provider);
+            SettingsProviderCreatePanel.Visibility = Visibility.Collapsed;
+            SettingsAddProviderButton.Content = "+ 新增";
+            ApplySettingsConfig(config);
+            SetStatus($"已新增模型提供商，并用于{CurrentSettingsModelRoleLabel()}");
+        });
+    }
+
+    private void OnSettingsCancelNewProviderClick(object sender, RoutedEventArgs args)
+    {
+        SettingsProviderCreatePanel.Visibility = Visibility.Collapsed;
+        SettingsAddProviderButton.Content = "+ 新增";
+        SettingsNewProviderApiKeyBox.Password = "";
+        SetStatus("已取消新增提供商");
+    }
+
+    private void OnSettingsProviderTypeSelectionChanged(object sender, SelectionChangedEventArgs args)
+    {
+        if (_suppressSettingsProviderTypeCombo) return;
+        if (SettingsProviderTypeComboBox.SelectedItem is ComboBoxItem { Tag: ModelProviderPreset preset })
+        {
+            ApplyNewProviderPreset(preset);
+        }
+    }
+
+    private void OnSettingsImageCaptionEnabledChanged(object sender, RoutedEventArgs args)
+    {
+        if (_suppressSettingsImageCaptionEnabled || _settingsModelRole != "image_caption") return;
+        SetStatus(SettingsImageCaptionEnabledCheckBox.IsChecked == true ? "图片转述将在保存后启用" : "图片转述将在保存后停用");
+    }
+
+    private Dictionary<string, object>? BuildNewProviderConfig()
+    {
+        var selectedPreset = (SettingsProviderTypeComboBox.SelectedItem as ComboBoxItem)?.Tag as ModelProviderPreset ?? ModelProviderPresets.Last();
+        var name = SettingsNewProviderNameBox.Text.Trim();
+        var baseUrl = SettingsNewProviderBaseUrlBox.Text.Trim();
+        var modelName = SettingsNewProviderModelNameBox.Text.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            SetStatus("提供商名称不能为空");
+            SettingsNewProviderNameBox.Focus(FocusState.Programmatic);
+            return null;
+        }
+        if (string.IsNullOrWhiteSpace(baseUrl))
+        {
+            SetStatus("Base URL 不能为空");
+            SettingsNewProviderBaseUrlBox.Focus(FocusState.Programmatic);
+            return null;
+        }
+
+        var provider = new Dictionary<string, object>
+        {
+            ["type"] = selectedPreset.Type,
+            ["name"] = name,
+            ["baseUrl"] = baseUrl,
+            ["modelName"] = modelName,
+        };
+        if (!string.IsNullOrWhiteSpace(SettingsNewProviderApiKeyBox.Password))
+        {
+            provider["apiKey"] = SettingsNewProviderApiKeyBox.Password.Trim();
+        }
+        return provider;
+    }
+
+    private void ResetDeleteProviderArming()
+    {
+        if (!_deleteProviderArmed) return;
+        _deleteProviderArmed = false;
+        SettingsDeleteProviderButton.Content = "删除提供商";
     }
 
     private async void OnSettingsThemeSelectionChanged(object sender, SelectionChangedEventArgs args)
@@ -2685,6 +3084,11 @@ public sealed partial class MainWindow : Window
             JsonValueKind.Null => fallback,
             _ => current.ToString(),
         };
+    }
+
+    private static string GetString(JsonElement? root, string path, string fallback)
+    {
+        return root.HasValue ? GetString(root.Value, path, fallback) : fallback;
     }
 
     private static string NewAgentMessageId() => Guid.NewGuid().ToString("N");

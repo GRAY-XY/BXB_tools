@@ -330,66 +330,395 @@ function chatTemperature(config, fallback) {
   return modelRequiresTemperatureOne(config) ? 1 : fallback;
 }
 
+function normalizeProviderId(value, fallback = "") {
+  const id = String(value || "").trim().replace(/[^a-zA-Z0-9_-]/g, "_").replace(/^_+|_+$/g, "");
+  return id || fallback || `provider_${safeId()}`;
+}
+
+function normalizeModelRole(value, fallback = "chat") {
+  const role = String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  if (role === "image" || role === "images" || role === "vision" || role === "caption" || role === "image_caption" || role === "image_transcription") {
+    return "image_caption";
+  }
+  if (role === "chat" || role === "agent" || role === "conversation") {
+    return "chat";
+  }
+  return fallback;
+}
+
+function normalizeProvider(provider, fallbackId = "") {
+  const source = provider && typeof provider === "object" ? provider : {};
+  const id = normalizeProviderId(source.id || source.providerId, fallbackId);
+  const baseUrl = String(source.baseUrl || source.apiBaseUrl || source.endpoint || "").trim();
+  const modelName = String(source.modelName || source.model || source.defaultModel || "").trim();
+  const type = String(source.type || source.providerType || "openai").trim() || "openai";
+  const name = String(source.name || source.label || source.providerName || "").trim()
+    || (modelName ? `${modelName}` : "")
+    || (baseUrl ? baseUrl.replace(/^https?:\/\//, "").replace(/\/v1\/?$/, "") : "")
+    || "默认提供商";
+  return {
+    id,
+    type,
+    name,
+    apiKey: String(source.apiKey || "").trim(),
+    baseUrl,
+    modelName,
+    availableModels: Array.isArray(source.availableModels) ? source.availableModels.map((item) => String(item || "").trim()).filter(Boolean) : [],
+  };
+}
+
+function normalizeProviderList(sourceProviders) {
+  const providers = [];
+  const seen = new Set();
+  for (const provider of Array.isArray(sourceProviders) ? sourceProviders : []) {
+    const normalized = normalizeProvider(provider);
+    if (seen.has(normalized.id)) continue;
+    seen.add(normalized.id);
+    providers.push(normalized);
+  }
+  return providers;
+}
+
+function rawModelRole(source, role) {
+  const rawRoles = source.modelRoles && typeof source.modelRoles === "object" ? source.modelRoles : {};
+  if (role === "chat") {
+    return rawRoles.chat && typeof rawRoles.chat === "object" ? rawRoles.chat : {};
+  }
+  return rawRoles.image_caption && typeof rawRoles.image_caption === "object"
+    ? rawRoles.image_caption
+    : rawRoles.imageCaption && typeof rawRoles.imageCaption === "object"
+      ? rawRoles.imageCaption
+      : {};
+}
+
+function normalizeModelRoles(source, chatProviders, imageProviders, fallbackChatId) {
+  const chatRole = rawModelRole(source, "chat");
+  const imageRole = rawModelRole(source, "image_caption");
+  const pickProviderId = (value, providers, fallback = "") => {
+    if (!providers.length) return "";
+    const providerId = normalizeProviderId(value, fallback || providers[0].id);
+    return providers.some((provider) => provider.id === providerId) ? providerId : fallback || providers[0].id;
+  };
+
+  const chatProviderId = pickProviderId(
+    chatRole.activeProviderId || chatRole.providerId || source.activeProviderId || source.providerId,
+    chatProviders,
+    fallbackChatId,
+  );
+  const imageProviderId = pickProviderId(
+    imageRole.activeProviderId || imageRole.providerId || source.imageCaptionProviderId || source.captionProviderId,
+    imageProviders,
+  );
+  return {
+    chat: {
+      enabled: true,
+      activeProviderId: chatProviderId,
+      providers: chatProviders,
+    },
+    image_caption: {
+      enabled: imageRole.enabled === true,
+      activeProviderId: imageProviderId,
+      providers: imageProviders,
+    },
+  };
+}
+
+function normalizeModelConfig(rawConfig) {
+  const source = rawConfig && typeof rawConfig === "object" ? rawConfig : {};
+  const rawChatRole = rawModelRole(source, "chat");
+  const rawImageRole = rawModelRole(source, "image_caption");
+  const chatSourceProviders = Array.isArray(rawChatRole.providers)
+    ? rawChatRole.providers
+    : Array.isArray(source.providers)
+      ? source.providers
+      : [];
+  const imageSourceProviders = Array.isArray(rawImageRole.providers) ? rawImageRole.providers : [];
+  const providers = normalizeProviderList(chatSourceProviders);
+  const imageProviders = normalizeProviderList(imageSourceProviders);
+
+  if (!providers.length) {
+    const legacy = normalizeProvider({
+      id: providers.length ? source.activeProviderId : "default",
+      name: source.providerName || source.name || "默认提供商",
+      apiKey: source.apiKey,
+      baseUrl: source.baseUrl,
+      modelName: source.modelName,
+    }, "default");
+    const existingIndex = providers.findIndex((provider) => provider.id === legacy.id);
+    if (existingIndex >= 0) {
+      providers[existingIndex] = {
+        ...providers[existingIndex],
+        apiKey: legacy.apiKey || providers[existingIndex].apiKey,
+        baseUrl: legacy.baseUrl || providers[existingIndex].baseUrl,
+        modelName: legacy.modelName || providers[existingIndex].modelName,
+      };
+    } else if (legacy.apiKey || legacy.baseUrl || legacy.modelName || !providers.length) {
+      providers.unshift(legacy);
+    }
+  }
+
+  if (!providers.length) {
+    providers.push(normalizeProvider({ id: "default", name: "默认提供商" }, "default"));
+  }
+
+  const requestedActiveId = normalizeProviderId(source.activeProviderId || source.providerId, providers[0].id);
+  const activeProvider = providers.find((provider) => provider.id === requestedActiveId)
+    || providers.find((provider) => provider.baseUrl || provider.modelName)
+    || providers[0];
+  const modelRoles = normalizeModelRoles(source, providers, imageProviders, activeProvider.id);
+
+  return {
+    activeProviderId: modelRoles.chat.activeProviderId,
+    modelRoles,
+    providers,
+    apiKey: getActiveProvider({ providers, activeProviderId: modelRoles.chat.activeProviderId, modelRoles }, "chat").apiKey,
+    baseUrl: getActiveProvider({ providers, activeProviderId: modelRoles.chat.activeProviderId, modelRoles }, "chat").baseUrl,
+    modelName: getActiveProvider({ providers, activeProviderId: modelRoles.chat.activeProviderId, modelRoles }, "chat").modelName,
+    providerName: getActiveProvider({ providers, activeProviderId: modelRoles.chat.activeProviderId, modelRoles }, "chat").name,
+    contextLength: Number.parseInt(source.contextLength ?? 0, 10) || 0,
+    chatTemperature: normalizeTemperature(source.chatTemperature, 0.2),
+    compactTemperature: normalizeTemperature(source.compactTemperature, 0.1),
+    longPasteThreshold: normalizeLongPasteThreshold(source.longPasteThreshold, 4000),
+    maxToolRounds: Math.max(1, Number.parseInt(source.maxToolRounds ?? 6, 10) || 6),
+    theme: normalizeTheme(source.theme),
+    systemPrompt: String(source.systemPrompt || "").trim() || DEFAULT_SYSTEM_PROMPT,
+  };
+}
+
+function getRoleProviderId(config, role = "chat") {
+  const normalizedRole = normalizeModelRole(role);
+  const roleProviderId = config.modelRoles?.[normalizedRole]?.activeProviderId;
+  if (roleProviderId) return roleProviderId;
+  return normalizedRole === "chat" ? config.activeProviderId : "";
+}
+
+function getRoleProviders(config, role = "chat") {
+  const normalizedRole = normalizeModelRole(role);
+  const roleProviders = config.modelRoles?.[normalizedRole]?.providers;
+  if (Array.isArray(roleProviders)) return roleProviders;
+  return normalizedRole === "chat" && Array.isArray(config.providers) ? config.providers : [];
+}
+
+function getActiveProvider(config, role = "chat") {
+  const providerId = getRoleProviderId(config, role);
+  const providers = getRoleProviders(config, role);
+  return providers.find((provider) => provider.id === providerId) || providers[0] || normalizeProvider({ id: "default", name: "默认提供商" });
+}
+
+function modelConfigForStorage(config) {
+  const normalized = normalizeModelConfig(config);
+  const active = getActiveProvider(normalized, "chat");
+  return {
+    activeProviderId: active.id,
+    modelRoles: normalized.modelRoles,
+    providers: normalized.providers,
+    apiKey: active.apiKey,
+    baseUrl: active.baseUrl,
+    modelName: active.modelName,
+    providerName: active.name,
+    contextLength: normalized.contextLength,
+    chatTemperature: normalized.chatTemperature,
+    compactTemperature: normalized.compactTemperature,
+    longPasteThreshold: normalized.longPasteThreshold,
+    maxToolRounds: normalized.maxToolRounds,
+    theme: normalized.theme,
+    systemPrompt: normalized.systemPrompt,
+  };
+}
+
+async function readModelConfigInternal() {
+  return normalizeModelConfig(await readJson(modelConfigPath, {}));
+}
+
 async function loadModelConfig() {
-  const config = await readJson(modelConfigPath, {
-    apiKey: "",
-    baseUrl: "",
-    modelName: "",
-    contextLength: 0,
-    chatTemperature: 0.2,
-    compactTemperature: 0.1,
-    longPasteThreshold: 4000,
-    maxToolRounds: 6,
-    theme: "light",
-    systemPrompt: DEFAULT_SYSTEM_PROMPT,
+  return publicModelConfig(await readModelConfigInternal());
+}
+
+function publicModelConfig(config) {
+  const active = getActiveProvider(config, "chat");
+  const publicProvider = (provider) => ({
+    id: provider.id,
+    type: provider.type,
+    name: provider.name,
+    baseUrl: provider.baseUrl,
+    modelName: provider.modelName,
+    availableModels: provider.availableModels,
+    hasApiKey: Boolean(provider.apiKey),
+    apiKeyMasked: maskKey(provider.apiKey),
   });
+  const publicRoles = Object.fromEntries(Object.entries(config.modelRoles || {}).map(([role, value]) => [
+    role,
+    {
+      enabled: value?.enabled === true,
+      activeProviderId: value?.activeProviderId || "",
+      providers: getRoleProviders(config, role).map(publicProvider),
+    },
+  ]));
   return {
     ...config,
-    chatTemperature: normalizeTemperature(config.chatTemperature, 0.2),
-    compactTemperature: normalizeTemperature(config.compactTemperature, 0.1),
-    longPasteThreshold: normalizeLongPasteThreshold(config.longPasteThreshold, 4000),
-    theme: normalizeTheme(config.theme),
-    systemPrompt: String(config.systemPrompt || "").trim() || DEFAULT_SYSTEM_PROMPT,
+    apiKey: "",
+    hasApiKey: Boolean(active.apiKey),
+    apiKeyMasked: maskKey(active.apiKey),
+    baseUrl: active.baseUrl,
+    modelName: active.modelName,
+    providerName: active.name,
+    modelRoles: publicRoles,
+    providers: config.providers.map(publicProvider),
     defaultSystemPrompt: DEFAULT_SYSTEM_PROMPT,
-    apiKeyMasked: maskKey(config.apiKey),
     configPath: modelConfigPath,
   };
 }
 
-function publicModelConfig(config) {
-  const { apiKey, ...rest } = config;
-  return {
-    ...rest,
-    apiKey: "",
-    hasApiKey: Boolean(apiKey),
-    apiKeyMasked: maskKey(apiKey),
-  };
+function mergeProvider(existingProvider, incomingProvider = {}, topLevelConfig = {}) {
+  const hasProviderKey = Object.prototype.hasOwnProperty.call(incomingProvider, "apiKey");
+  const hasTopLevelKey = Object.prototype.hasOwnProperty.call(topLevelConfig, "apiKey");
+  return normalizeProvider({
+    id: incomingProvider.id || incomingProvider.providerId || topLevelConfig.activeProviderId || existingProvider.id,
+    type: incomingProvider.type ?? incomingProvider.providerType ?? topLevelConfig.providerType ?? existingProvider.type,
+    name: incomingProvider.name ?? incomingProvider.providerName ?? topLevelConfig.providerName ?? existingProvider.name,
+    apiKey: hasProviderKey
+      ? incomingProvider.apiKey
+      : hasTopLevelKey
+        ? topLevelConfig.apiKey
+        : existingProvider.apiKey,
+    baseUrl: incomingProvider.baseUrl ?? topLevelConfig.baseUrl ?? existingProvider.baseUrl,
+    modelName: incomingProvider.modelName ?? incomingProvider.model ?? topLevelConfig.modelName ?? existingProvider.modelName,
+    availableModels: incomingProvider.availableModels ?? existingProvider.availableModels,
+  }, existingProvider.id);
 }
 
 async function saveModelConfig(config) {
-  const existing = await readJson(modelConfigPath, {});
-  const normalized = {
-    apiKey: config?.apiKey === undefined ? String(existing.apiKey || "").trim() : String(config.apiKey || "").trim(),
-    baseUrl: config?.baseUrl === undefined ? String(existing.baseUrl || "").trim() : String(config.baseUrl || "").trim(),
-    modelName: config?.modelName === undefined ? String(existing.modelName || "").trim() : String(config.modelName || "").trim(),
-    contextLength: Number.parseInt(config?.contextLength ?? existing.contextLength ?? 0, 10) || 0,
-    chatTemperature: normalizeTemperature(config?.chatTemperature ?? existing.chatTemperature, 0.2),
-    compactTemperature: normalizeTemperature(config?.compactTemperature ?? existing.compactTemperature, 0.1),
-    longPasteThreshold: normalizeLongPasteThreshold(config?.longPasteThreshold ?? existing.longPasteThreshold, 4000),
-    maxToolRounds: Math.max(1, Number.parseInt(config?.maxToolRounds ?? existing.maxToolRounds ?? 6, 10) || 6),
-    theme: normalizeTheme(config?.theme ?? existing.theme),
-    systemPrompt: String(config?.systemPrompt ?? existing.systemPrompt ?? "").trim() || DEFAULT_SYSTEM_PROMPT,
+  const existing = await readModelConfigInternal();
+  const incoming = config && typeof config === "object" ? config : {};
+  const modelRole = normalizeModelRole(incoming.modelRole || incoming.role || "chat");
+  let roleProviders = [...getRoleProviders(existing, modelRole)];
+  const existingRoleProviderId = getRoleProviderId(existing, modelRole);
+  const requestedProviderId = incoming.activeProviderId || incoming.providerId || "";
+  let activeProviderId = requestedProviderId
+    ? normalizeProviderId(requestedProviderId, existingRoleProviderId)
+    : existingRoleProviderId;
+
+  if (incoming.provider && typeof incoming.provider === "object") {
+    activeProviderId = normalizeProviderId(
+      incoming.provider.id || incoming.provider.providerId || activeProviderId,
+      activeProviderId || `provider_${safeId()}`,
+    );
+  }
+
+  const shouldUpdateProvider = Boolean(incoming.provider)
+    || Object.prototype.hasOwnProperty.call(incoming, "apiKey")
+    || Object.prototype.hasOwnProperty.call(incoming, "baseUrl")
+    || Object.prototype.hasOwnProperty.call(incoming, "modelName")
+    || Object.prototype.hasOwnProperty.call(incoming, "providerName");
+  let providerIndex = roleProviders.findIndex((provider) => provider.id === activeProviderId);
+  if (providerIndex < 0 && shouldUpdateProvider) {
+    activeProviderId = activeProviderId || `provider_${safeId()}`;
+    roleProviders.push(normalizeProvider({ id: activeProviderId, name: incoming.providerName || "新提供商" }, activeProviderId));
+    providerIndex = roleProviders.length - 1;
+  }
+  if (shouldUpdateProvider) {
+    roleProviders[providerIndex] = mergeProvider(roleProviders[providerIndex], incoming.provider || {}, incoming);
+  }
+
+  const existingRole = existing.modelRoles?.[modelRole] || {};
+  const enabled = modelRole === "image_caption"
+    ? (typeof incoming.enabled === "boolean" ? incoming.enabled : existingRole.enabled === true)
+    : true;
+  const nextRole = {
+    ...existingRole,
+    enabled,
+    activeProviderId: activeProviderId || "",
+    providers: roleProviders,
   };
+  const normalized = modelConfigForStorage({
+    ...existing,
+    providers: modelRole === "chat" ? roleProviders : existing.providers,
+    activeProviderId: modelRole === "chat" ? activeProviderId : existing.activeProviderId,
+    modelRoles: {
+      ...existing.modelRoles,
+      [modelRole]: nextRole,
+    },
+    contextLength: incoming.contextLength ?? existing.contextLength,
+    chatTemperature: incoming.chatTemperature ?? existing.chatTemperature,
+    compactTemperature: incoming.compactTemperature ?? existing.compactTemperature,
+    longPasteThreshold: incoming.longPasteThreshold ?? existing.longPasteThreshold,
+    maxToolRounds: incoming.maxToolRounds ?? existing.maxToolRounds,
+    theme: incoming.theme ?? existing.theme,
+    systemPrompt: incoming.systemPrompt ?? existing.systemPrompt,
+  });
   await writeJson(modelConfigPath, normalized);
   return loadModelConfig();
 }
 
+async function createModelProvider({ name, type, baseUrl, apiKey, modelName, modelRole } = {}) {
+  const existing = await readModelConfigInternal();
+  const role = normalizeModelRole(modelRole || "chat");
+  const roleProviders = getRoleProviders(existing, role);
+  const provider = normalizeProvider({
+    id: `provider_${safeId()}`,
+    type: String(type || "openai").trim() || "openai",
+    name: String(name || "").trim() || `提供商 ${roleProviders.length + 1}`,
+    baseUrl,
+    apiKey,
+    modelName,
+  });
+  const normalized = modelConfigForStorage({
+    ...existing,
+    providers: role === "chat" ? [...roleProviders, provider] : existing.providers,
+    activeProviderId: role === "chat" ? provider.id : existing.activeProviderId,
+    modelRoles: {
+      ...existing.modelRoles,
+      [role]: {
+        ...(existing.modelRoles?.[role] || {}),
+        enabled: role === "image_caption" ? true : true,
+        activeProviderId: provider.id,
+        providers: [...roleProviders, provider],
+      },
+    },
+  });
+  await writeJson(modelConfigPath, normalized);
+  return loadModelConfig();
+}
+
+async function deleteModelProvider({ providerId, modelRole } = {}) {
+  const existing = await readModelConfigInternal();
+  const role = normalizeModelRole(modelRole || "chat");
+  const roleProviders = getRoleProviders(existing, role);
+  const targetId = providerId ? normalizeProviderId(providerId, providerId) : getRoleProviderId(existing, role);
+  let providers = roleProviders.filter((provider) => provider.id !== targetId);
+  if (role === "chat" && !providers.length) {
+    providers = [normalizeProvider({ id: "default", name: "默认提供商" }, "default")];
+  }
+  const nextActiveProviderId = providers.find((provider) => provider.id === getRoleProviderId(existing, role))?.id
+    || providers[0]?.id
+    || "";
+  const normalized = modelConfigForStorage({
+    ...existing,
+    providers: role === "chat" ? providers : existing.providers,
+    activeProviderId: role === "chat" ? nextActiveProviderId : existing.activeProviderId,
+    modelRoles: Object.fromEntries(Object.entries(existing.modelRoles || {}).map(([role, value]) => [
+      role,
+      role === normalizeModelRole(modelRole || "chat")
+        ? { ...(value || {}), activeProviderId: nextActiveProviderId, providers }
+        : value,
+    ])),
+  });
+  await writeJson(modelConfigPath, normalized);
+  return loadModelConfig();
+}
+
+function resolveModelCandidate(saved, config) {
+  const incoming = config && typeof config === "object" ? config : {};
+  const modelRole = normalizeModelRole(incoming.modelRole || incoming.role || "chat");
+  const fallbackProviderId = getRoleProviderId(saved, modelRole) || saved.activeProviderId;
+  const providerId = normalizeProviderId(incoming.activeProviderId || incoming.providerId || incoming.provider?.id || fallbackProviderId, fallbackProviderId);
+  const existingProvider = getRoleProviders(saved, modelRole).find((provider) => provider.id === providerId) || getActiveProvider(saved, modelRole);
+  return mergeProvider(existingProvider, incoming.provider || {}, incoming);
+}
+
 async function listModelOptions(config) {
-  const saved = await loadModelConfig();
-  const candidate = {
-    apiKey: config?.apiKey === undefined ? String(saved.apiKey || "").trim() : String(config.apiKey || "").trim(),
-    baseUrl: config?.baseUrl === undefined ? String(saved.baseUrl || "").trim() : String(config.baseUrl || "").trim(),
-  };
+  const saved = await readModelConfigInternal();
+  const candidate = resolveModelCandidate(saved, config);
   if (!candidate.baseUrl) throw new Error("请先填写调用链接。");
   const headers = { Accept: "application/json" };
   if (candidate.apiKey) headers.Authorization = `Bearer ${candidate.apiKey}`;
@@ -407,11 +736,14 @@ async function listModelOptions(config) {
 }
 
 async function testModelConfig(config) {
-  const candidate = await saveModelConfig(config);
+  const modelRole = normalizeModelRole(config?.modelRole || config?.role || "chat");
+  await saveModelConfig(config);
+  const saved = await readModelConfigInternal();
+  const candidate = getActiveProvider(saved, modelRole);
   if (!candidate.apiKey || !candidate.baseUrl || !candidate.modelName) {
     throw new Error("请先填写 API Key、调用链接和模型名称。");
   }
-  const listed = await listModelOptions(candidate);
+  const listed = await listModelOptions({ ...candidate, modelRole });
   return {
     ok: listed.modelIds.includes(candidate.modelName),
     modelsUrl: listed.modelsUrl,
@@ -728,7 +1060,7 @@ function safeToolSchemas() {
 }
 
 async function runAgent({ text, conversationId, userMessageId, assistantMessageId } = {}, { emitProgress } = {}) {
-  const config = await loadModelConfig();
+  const config = await readModelConfigInternal();
   const prompt = String(text || "").trim();
   if (!prompt) throw new Error("消息不能为空。");
   if (!config.apiKey || !config.baseUrl || !config.modelName) {
@@ -809,7 +1141,7 @@ async function runAgent({ text, conversationId, userMessageId, assistantMessageI
 }
 
 async function compactAgentContext(conversationId) {
-  const config = await loadModelConfig();
+  const config = await readModelConfigInternal();
   if (!config.apiKey || !config.baseUrl || !config.modelName) throw new Error("还没有配置大模型，无法压缩上下文。");
   const { state, conversation } = await getActiveConversation(conversationId);
   if (!conversation.turns.length) return { ok: true, summary: "当前没有需要压缩的历史对话。", keptTurns: 0, previousTurns: 0, usage: null };
@@ -1287,6 +1619,9 @@ async function handleRequest(request, emitProgress) {
   if (method === "session.status" || method === "bxb:session") return callTool("session_status", {});
   if (method === "modelConfig.load" || method === "config:model:load") return loadModelConfig();
   if (method === "modelConfig.save" || method === "config:model:save") return saveModelConfig(params.config || params);
+  if (method === "modelConfig.providerCreate" || method === "config:model:provider:create") return createModelProvider(params.config || params);
+  if (method === "modelConfig.providerDelete" || method === "config:model:provider:delete") return deleteModelProvider(params.config || params);
+  if (method === "modelConfig.providerSelect" || method === "config:model:provider:select") return saveModelConfig({ activeProviderId: params.providerId || params.activeProviderId, modelRole: params.modelRole || params.role });
   if (method === "modelConfig.clear" || method === "config:model:clear") {
     await fs.rm(modelConfigPath, { force: true });
     return loadModelConfig();
