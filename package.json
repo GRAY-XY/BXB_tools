@@ -14,7 +14,7 @@
   "scripts": {
     "start": "node backend/src/index.js",
     "dev": "node --watch backend/src/index.js",
-    "check": "node --check backend/src/index.js && node --check backend/src/banxuebang-client.js && node --check backend/src/session-store.js && node --check backend/src/tool-definitions.js && node --check backend/cli/call-tool.js && node --check backend/cli/direct-tool.js && node --check release/scripts/publish-scan.js && node --check backend/bridge/winui-backend.js",
+    "check": "node --check backend/src/index.js && node --check backend/src/banxuebang-client.js && node --check backend/src/session-store.js && node --check backend/src/tool-definitions.js && node --check backend/src/context-manager.js && node --check backend/cli/call-tool.js && node --check backend/cli/direct-tool.js && node --check release/scripts/publish-scan.js && node --check backend/bridge/winui-backend.js && node --test backend/test/context-manager.test.js",
     "tool": "node backend/cli/call-tool.js",
     "tool:direct": "node backend/cli/direct-tool.js",
     "tool:mcp": "node backend/cli/call-tool.js",

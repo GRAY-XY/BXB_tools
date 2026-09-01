@@ -7,6 +7,16 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { fetch as undiciFetch, ProxyAgent } from "undici";
 import { BanxuebangClient } from "../src/banxuebang-client.js";
+import {
+  contextBudget,
+  contextDefaults,
+  estimateMessagesTokens,
+  flattenRounds,
+  normalizeContextState,
+  splitIntoRounds,
+  splitRecentRounds,
+  summaryMessage,
+} from "../src/context-manager.js";
 import { SessionStore } from "../src/session-store.js";
 import { createToolDefinitions, executeTool } from "../src/tool-definitions.js";
 
@@ -51,6 +61,7 @@ const DEFAULT_SYSTEM_PROMPT =
 const client = new BanxuebangClient(new SessionStore(sessionFile));
 const toolDefinitions = createToolDefinitions(client);
 let conversationStatePromise = null;
+const conversationLocks = new Map();
 let updateState = {
   status: "idle",
   update: null,
@@ -758,7 +769,15 @@ async function testModelConfig(config) {
 
 function newConversation(title = "新对话") {
   const timestamp = nowIso();
-  return { id: safeId(), title, createdAt: timestamp, updatedAt: timestamp, messages: [], turns: [] };
+  return {
+    id: safeId(),
+    title,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    messages: [],
+    turns: [],
+    contextState: normalizeContextState(),
+  };
 }
 
 function normalizeConversationMessage(message) {
@@ -775,28 +794,76 @@ function normalizeConversationMessage(message) {
 
 function normalizeConversation(raw) {
   const fallback = newConversation();
+  const turns = Array.isArray(raw?.turns) ? [...raw.turns] : [];
+  const contextState = normalizeContextState(raw?.contextState);
+  const legacySummary = turns[0]?.role === "system"
+    ? String(turns[0]?.content || "").match(/^此前对话(?:的)?压缩摘要：\s*([\s\S]*)$/)?.[1]?.trim()
+    : "";
+  if (legacySummary) {
+    if (!contextState.summary) contextState.summary = legacySummary;
+    turns.shift();
+  }
   return {
     id: String(raw?.id || fallback.id),
     title: String(raw?.title || "新对话"),
     createdAt: String(raw?.createdAt || fallback.createdAt),
     updatedAt: String(raw?.updatedAt || raw?.createdAt || fallback.updatedAt),
     messages: Array.isArray(raw?.messages) ? raw.messages.map(normalizeConversationMessage) : [],
-    turns: Array.isArray(raw?.turns) ? raw.turns : [],
+    turns,
+    contextState,
   };
 }
 
-function conversationSummary(conversation) {
+function buildAgentMessages(config, conversation, runtimeMessages = []) {
+  const compacted = summaryMessage(conversation.contextState?.summary);
+  return [
+    { role: "system", content: String(config.systemPrompt || "").trim() || DEFAULT_SYSTEM_PROMPT },
+    ...(compacted ? [compacted] : []),
+    ...conversation.turns,
+    ...runtimeMessages,
+  ];
+}
+
+function conversationContextInfo(conversation, config) {
+  const estimatedTokens = estimateMessagesTokens(buildAgentMessages(config, conversation), safeToolSchemas());
+  const budget = contextBudget(config.contextLength);
+  conversation.contextState = {
+    ...normalizeContextState(conversation.contextState),
+    estimatedTokens,
+    contextLength: budget.limit,
+  };
+  const lastPromptTokens = conversation.contextState.lastPromptTokens;
+  const currentTokens = Math.max(estimatedTokens, lastPromptTokens);
+  return {
+    estimatedTokens,
+    lastPromptTokens,
+    currentTokens,
+    contextLength: budget.limit,
+    usagePercent: budget.limit ? Math.min(100, Math.round((currentTokens / budget.limit) * 100)) : 0,
+    autoCompressionEnabled: budget.limit > 0,
+    triggerTokens: budget.triggerTokens,
+    targetTokens: budget.targetTokens,
+    compactionCount: conversation.contextState.compactionCount,
+    lastCompactedAt: conversation.contextState.lastCompactedAt,
+    lastCompactionReason: conversation.contextState.lastCompactionReason,
+    lastBeforeTokens: conversation.contextState.lastBeforeTokens,
+    lastAfterTokens: conversation.contextState.lastAfterTokens,
+  };
+}
+
+function conversationSummary(conversation, config) {
   return {
     id: conversation.id,
     title: conversation.title,
     createdAt: conversation.createdAt,
     updatedAt: conversation.updatedAt,
     messageCount: conversation.messages.length,
+    ...(config ? { context: conversationContextInfo(conversation, config) } : {}),
   };
 }
 
-function conversationForRenderer(conversation) {
-  return conversation ? { ...conversationSummary(conversation), messages: conversation.messages } : null;
+function conversationForRenderer(conversation, config) {
+  return conversation ? { ...conversationSummary(conversation, config), messages: conversation.messages } : null;
 }
 
 async function loadConversationState() {
@@ -834,11 +901,12 @@ async function getActiveConversation(conversationId) {
 
 async function listConversations() {
   const state = await loadConversationState();
+  const config = await readModelConfigInternal();
   const active = state.conversations.find((item) => item.id === state.activeId) || state.conversations[0];
   return {
     activeId: active?.id || null,
-    conversations: state.conversations.map(conversationSummary),
-    activeConversation: conversationForRenderer(active),
+    conversations: state.conversations.map((conversation) => conversationSummary(conversation, config)),
+    activeConversation: conversationForRenderer(active, config),
   };
 }
 
@@ -1059,6 +1127,185 @@ function safeToolSchemas() {
   }));
 }
 
+async function withConversationLock(conversationId, operation) {
+  const state = await loadConversationState();
+  const key = String(conversationId || state.activeId || "__active_conversation__");
+  const previous = conversationLocks.get(key) || Promise.resolve();
+  let release;
+  const current = new Promise((resolve) => { release = resolve; });
+  const queued = previous.then(() => current);
+  conversationLocks.set(key, queued);
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (conversationLocks.get(key) === queued) conversationLocks.delete(key);
+  }
+}
+
+function usagePromptTokens(usage) {
+  return Math.max(0, Number.parseInt(usage?.prompt_tokens ?? usage?.promptTokens, 10) || 0);
+}
+
+function summaryResponseText(payload) {
+  const content = payload?.choices?.[0]?.message?.content;
+  if (typeof content === "string") return content.trim();
+  if (Array.isArray(content)) {
+    return content.map((part) => String(part?.text || part?.content || "")).join("\n").trim();
+  }
+  return "";
+}
+
+function isContextLimitError(status, body) {
+  if (status !== 400 && status !== 413) return false;
+  return /context.{0,24}(length|window|limit)|maximum context|too many tokens|token.{0,16}(limit|maximum)|上下文.{0,12}(超|限制)/i.test(String(body || ""));
+}
+
+async function requestContextSummary(config, previousSummary, turns, maxSummaryChars) {
+  const instruction = [
+    "你负责压缩伴学邦桌面助手的旧对话，使后续模型可以无缝继续任务。",
+    "系统覆盖所有核心主题及其最终结论，优先说明用户目标和当前进度，并突出最新主线。",
+    "保留已经确认的事实、课程和作业名称、Task ID、草稿 ID、文件路径及读取范围、工具调用的重要结论、待办事项、缺失信息、安全限制和明确的下一步。",
+    "如果任务仍在进行，摘要末尾必须写明最新结果和紧接着要执行的具体步骤。",
+    "不要编造，不要保留 API Key、登录令牌、密码或不必要的完整敏感路径。",
+    `使用用户对话所用的语言，输出纯文本摘要，不要添加开场白，长度不超过 ${maxSummaryChars} 个字符。`,
+  ].join("\n");
+  const response = await fetch(deriveChatUrl(config.baseUrl), {
+    method: "POST",
+    headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: config.modelName,
+      messages: [
+        { role: "system", content: instruction },
+        {
+          role: "user",
+          content: JSON.stringify({
+            previousSummary: String(previousSummary || "").trim() || null,
+            conversationToCompress: turns,
+          }, null, 2),
+        },
+      ],
+      temperature: chatTemperature(config, normalizeTemperature(config.compactTemperature, 0.1)),
+    }),
+  });
+  const raw = await response.text();
+  if (!response.ok) throw new Error(`压缩模型返回 HTTP ${response.status}: ${raw.slice(0, 1200)}`);
+  const payload = raw ? JSON.parse(raw) : {};
+  const summary = summaryResponseText(payload);
+  if (!summary) throw new Error("压缩模型返回了空摘要，已保留原上下文。");
+  return { summary: summary.slice(0, maxSummaryChars), usage: payload.usage || null };
+}
+
+function summaryBatches(messages, tokenLimit) {
+  const pieces = [];
+  for (const message of messages) {
+    if (estimateMessagesTokens([message]) <= tokenLimit || typeof message?.content !== "string") {
+      pieces.push(message);
+      continue;
+    }
+    const chunkSize = Math.max(500, Math.floor(tokenLimit * 0.75));
+    const count = Math.ceil(message.content.length / chunkSize);
+    for (let index = 0; index < count; index += 1) {
+      pieces.push({
+        ...message,
+        content: `[原消息分段 ${index + 1}/${count}]\n${message.content.slice(index * chunkSize, (index + 1) * chunkSize)}`,
+      });
+    }
+  }
+
+  const batches = [];
+  let batch = [];
+  let tokens = 0;
+  for (const piece of pieces) {
+    const pieceTokens = estimateMessagesTokens([piece]);
+    if (batch.length && tokens + pieceTokens > tokenLimit) {
+      batches.push(batch);
+      batch = [];
+      tokens = 0;
+    }
+    batch.push(piece);
+    tokens += pieceTokens;
+  }
+  if (batch.length) batches.push(batch);
+  return batches;
+}
+
+async function compactConversationContext(config, conversation, {
+  force = false,
+  reason = "automatic",
+  runtimeMessages = [],
+  onStart,
+} = {}) {
+  const tools = safeToolSchemas();
+  const budget = contextBudget(config.contextLength);
+  const beforeTokens = estimateMessagesTokens(buildAgentMessages(config, conversation, runtimeMessages), tools);
+  conversation.contextState = {
+    ...normalizeContextState(conversation.contextState),
+    estimatedTokens: beforeTokens,
+    contextLength: budget.limit,
+  };
+
+  if (!force && (!budget.limit || beforeTokens <= budget.triggerTokens)) {
+    return { changed: false, reason: budget.limit ? "below_threshold" : "context_length_unset", beforeTokens, afterTokens: beforeTokens, usage: null };
+  }
+
+  const { rounds } = splitIntoRounds(conversation.turns);
+  if (rounds.length <= 1) {
+    return { changed: false, reason: "insufficient_history", beforeTokens, afterTokens: beforeTokens, usage: null };
+  }
+
+  const turnTokens = estimateMessagesTokens(flattenRounds(rounds));
+  let { older, recent } = splitRecentRounds(rounds, turnTokens, contextDefaults.keepRecentRatio);
+  const fixedTokens = estimateMessagesTokens([
+    { role: "system", content: String(config.systemPrompt || "").trim() || DEFAULT_SYSTEM_PROMPT },
+    ...runtimeMessages,
+  ], tools);
+  if (budget.targetTokens && fixedTokens + estimateMessagesTokens(flattenRounds(recent)) > budget.targetTokens) {
+    older = [...older, ...recent];
+    recent = [];
+  }
+  if (!older.length) {
+    return { changed: false, reason: "insufficient_history", beforeTokens, afterTokens: beforeTokens, usage: null };
+  }
+
+  onStart?.({ beforeTokens, reason });
+  const summaryInputLimit = budget.limit ? Math.max(1000, Math.floor(budget.limit * 0.45)) : 64000;
+  const maxSummaryChars = budget.limit ? Math.min(8000, Math.max(1200, Math.floor(budget.limit * 0.08))) : 6000;
+  let nextSummary = conversation.contextState.summary;
+  let usage = null;
+  for (const batch of summaryBatches(flattenRounds(older), summaryInputLimit)) {
+    const generated = await requestContextSummary(config, nextSummary, batch, maxSummaryChars);
+    nextSummary = generated.summary;
+    usage = generated.usage || usage;
+  }
+
+  conversation.turns = flattenRounds(recent);
+  const compactedAt = nowIso();
+  conversation.contextState = {
+    ...conversation.contextState,
+    summary: nextSummary,
+    compactionCount: conversation.contextState.compactionCount + 1,
+    lastCompactedAt: compactedAt,
+    lastCompactionReason: reason,
+    lastBeforeTokens: beforeTokens,
+  };
+  const afterTokens = estimateMessagesTokens(buildAgentMessages(config, conversation, runtimeMessages), tools);
+  conversation.contextState.lastAfterTokens = afterTokens;
+  conversation.contextState.estimatedTokens = afterTokens;
+  conversation.contextState.lastPromptTokens = afterTokens;
+  conversation.updatedAt = compactedAt;
+  return {
+    changed: true,
+    reason,
+    summary: nextSummary,
+    beforeTokens,
+    afterTokens,
+    usage,
+    stillOverBudget: Boolean(budget.limit && afterTokens > budget.triggerTokens),
+  };
+}
+
 async function runAgent({ text, conversationId, userMessageId, assistantMessageId } = {}, { emitProgress } = {}) {
   const config = await readModelConfigInternal();
   const prompt = String(text || "").trim();
@@ -1082,17 +1329,37 @@ async function runAgent({ text, conversationId, userMessageId, assistantMessageI
       steps,
     });
   };
-  const messages = [
-    { role: "system", content: String(config.systemPrompt || "").trim() || DEFAULT_SYSTEM_PROMPT },
-    ...conversation.turns,
-    { role: "user", content: prompt },
-  ];
+  const runtimeMessages = [{ role: "user", content: prompt }];
   const maxToolRounds = Math.max(1, Number.parseInt(config.maxToolRounds || 6, 10));
   let usage = null;
+  let autoCompressionFailed = false;
+  let emergencyCompressionUsed = false;
 
   for (let index = 0; index < maxToolRounds; index += 1) {
+    if (!autoCompressionFailed) {
+      try {
+        const compression = await compactConversationContext(config, conversation, {
+          reason: index === 0 ? "before_request" : "before_tool_round",
+          runtimeMessages,
+          onStart: ({ beforeTokens }) => pushStep("context", "正在自动压缩上下文", `当前约 ${beforeTokens} tokens`),
+        });
+        if (compression.changed) {
+          pushStep(
+            "context",
+            "已自动压缩上下文",
+            `${compression.beforeTokens} -> ${compression.afterTokens} tokens`,
+          );
+          state.activeId = conversation.id;
+          await saveConversationState(state);
+        }
+      } catch (error) {
+        autoCompressionFailed = true;
+        pushStep("context", "自动压缩失败，保留原上下文", String(error?.message || error));
+      }
+    }
+    let messages = buildAgentMessages(config, conversation, runtimeMessages);
     pushStep("llm", `第 ${index + 1} 轮请求模型`);
-    const response = await fetch(deriveChatUrl(config.baseUrl), {
+    let response = await fetch(deriveChatUrl(config.baseUrl), {
       method: "POST",
       headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1103,10 +1370,42 @@ async function runAgent({ text, conversationId, userMessageId, assistantMessageI
         temperature: chatTemperature(config, normalizeTemperature(config.chatTemperature, 0.2)),
       }),
     });
-    const raw = await response.text();
+    let raw = await response.text();
+    if (!response.ok && !emergencyCompressionUsed && isContextLimitError(response.status, raw)) {
+      emergencyCompressionUsed = true;
+      const compression = await compactConversationContext(config, conversation, {
+        force: true,
+        reason: "context_limit_retry",
+        runtimeMessages,
+        onStart: ({ beforeTokens }) => pushStep("context", "模型上下文超限，正在紧急压缩", `当前约 ${beforeTokens} tokens`),
+      });
+      if (compression.changed) {
+        pushStep("context", "紧急压缩完成，重试模型请求", `${compression.beforeTokens} -> ${compression.afterTokens} tokens`);
+        state.activeId = conversation.id;
+        await saveConversationState(state);
+        messages = buildAgentMessages(config, conversation, runtimeMessages);
+        response = await fetch(deriveChatUrl(config.baseUrl), {
+          method: "POST",
+          headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: config.modelName,
+            messages,
+            tools: safeToolSchemas(),
+            tool_choice: "auto",
+            temperature: chatTemperature(config, normalizeTemperature(config.chatTemperature, 0.2)),
+          }),
+        });
+        raw = await response.text();
+      }
+    }
     if (!response.ok) throw new Error(`模型服务返回 HTTP ${response.status}: ${raw.slice(0, 1200)}`);
     const payload = raw ? JSON.parse(raw) : {};
     usage = payload.usage || usage;
+    conversation.contextState = {
+      ...normalizeContextState(conversation.contextState),
+      lastPromptTokens: usagePromptTokens(payload.usage) || conversation.contextState?.lastPromptTokens || 0,
+      contextLength: Math.max(0, Number.parseInt(config.contextLength, 10) || 0),
+    };
     const message = payload?.choices?.[0]?.message || {};
     const toolCalls = message.tool_calls || [];
 
@@ -1122,19 +1421,20 @@ async function runAgent({ text, conversationId, userMessageId, assistantMessageI
       );
       if (conversation.title === "新对话") conversation.title = prompt.slice(0, 28) || "新对话";
       conversation.updatedAt = nowIso();
+      conversationContextInfo(conversation, config);
       state.activeId = conversation.id;
       await saveConversationState(state);
-      return { message: content, messageId: assistantId, steps, usage, conversation: conversationSummary(conversation) };
+      return { message: content, messageId: assistantId, steps, usage, conversation: conversationSummary(conversation, config) };
     }
 
-    messages.push({ role: "assistant", content: message.content || "", tool_calls: toolCalls });
+    runtimeMessages.push({ role: "assistant", content: message.content || "", tool_calls: toolCalls });
     for (const call of toolCalls) {
       const toolName = call?.function?.name;
       const args = JSON.parse(call?.function?.arguments || "{}");
       pushStep("tool", `调用工具 ${toolName}`, JSON.stringify(args, null, 2));
       const result = await callTool(toolName, args);
       pushStep("tool", `工具 ${toolName} 已完成`, JSON.stringify(result, null, 2).slice(0, 4000));
-      messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) });
+      runtimeMessages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) });
     }
   }
   throw new Error(`模型连续请求工具超过 ${maxToolRounds} 轮，仍未给出最终回答。`);
@@ -1144,35 +1444,35 @@ async function compactAgentContext(conversationId) {
   const config = await readModelConfigInternal();
   if (!config.apiKey || !config.baseUrl || !config.modelName) throw new Error("还没有配置大模型，无法压缩上下文。");
   const { state, conversation } = await getActiveConversation(conversationId);
-  if (!conversation.turns.length) return { ok: true, summary: "当前没有需要压缩的历史对话。", keptTurns: 0, previousTurns: 0, usage: null };
+  if (!conversation.turns.length) return { ok: true, changed: false, summary: "当前没有需要压缩的历史对话。", keptTurns: 0, previousTurns: 0, usage: null };
   const previousTurns = conversation.turns.length;
-  const recentTurns = conversation.turns.slice(-6);
-  const olderTurns = conversation.turns.slice(0, -6);
-  const response = await fetch(deriveChatUrl(config.baseUrl), {
-    method: "POST",
-    headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: config.modelName,
-      messages: [
-        {
-          role: "system",
-          content: "你负责压缩伴学邦桌面助手的对话上下文。请用中文输出结构化摘要，保留用户目标、已确认事实、当前课程/任务/草稿ID、工具调用结论、待办、缺失信息和安全约束。不要编造，不要包含 API Key、登录令牌、密码或完整本地敏感路径。",
-        },
-        { role: "user", content: JSON.stringify({ olderConversation: olderTurns, recentConversation: recentTurns }, null, 2) },
-      ],
-      temperature: chatTemperature(config, normalizeTemperature(config.compactTemperature, 0.1)),
-    }),
-  });
-  const raw = await response.text();
-  if (!response.ok) throw new Error(`模型服务返回 HTTP ${response.status}: ${raw.slice(0, 1200)}`);
-  const payload = raw ? JSON.parse(raw) : {};
-  const summary = String(payload?.choices?.[0]?.message?.content || "").trim() || "历史对话已压缩。";
-  conversation.turns = [{ role: "system", content: `此前对话压缩摘要：\n${summary}` }, ...recentTurns];
-  conversation.messages = [{ role: "assistant", text: ["已压缩上下文，保留近期对话和关键任务信息。", "", summary].join("\n"), at: nowIso() }];
-  conversation.updatedAt = nowIso();
+  const compression = await compactConversationContext(config, conversation, { force: true, reason: "manual" });
+  if (!compression.changed) {
+    return {
+      ok: true,
+      changed: false,
+      summary: "近期上下文较少，暂时没有可压缩的旧对话。",
+      keptTurns: conversation.turns.length,
+      previousTurns,
+      usage: null,
+      context: conversationContextInfo(conversation, config),
+      conversation: conversationSummary(conversation, config),
+    };
+  }
   state.activeId = conversation.id;
   await saveConversationState(state);
-  return { ok: true, summary, keptTurns: conversation.turns.length, previousTurns, usage: payload.usage || null, conversation: conversationSummary(conversation) };
+  return {
+    ok: true,
+    changed: true,
+    summary: compression.summary,
+    keptTurns: conversation.turns.length,
+    previousTurns,
+    beforeTokens: compression.beforeTokens,
+    afterTokens: compression.afterTokens,
+    usage: compression.usage,
+    context: conversationContextInfo(conversation, config),
+    conversation: conversationSummary(conversation, config),
+  };
 }
 
 function sanitizeWorkspaceName(value) {
@@ -1633,12 +1933,17 @@ async function handleRequest(request, emitProgress) {
   if (method === "conversation.select" || method === "agent:conversations:select") return selectConversation(params.conversationId);
   if (method === "conversation.rename" || method === "agent:conversations:rename") return renameConversation(params.conversationId, params.title);
   if (method === "conversation.delete" || method === "agent:conversations:delete") return deleteConversation(params.conversationId);
-  if (method === "agent.chat" || method === "agent:chat") return runAgent(params, { emitProgress });
-  if (method === "agent.compact" || method === "agent:compact") return compactAgentContext(params.conversationId);
+  if (method === "agent.chat" || method === "agent:chat") {
+    return withConversationLock(params.conversationId, () => runAgent(params, { emitProgress }));
+  }
+  if (method === "agent.compact" || method === "agent:compact") {
+    return withConversationLock(params.conversationId, () => compactAgentContext(params.conversationId));
+  }
   if (method === "agent.reset" || method === "agent:reset") {
     const { state, conversation } = await getActiveConversation(params.conversationId);
     conversation.messages = [];
     conversation.turns = [];
+    conversation.contextState = normalizeContextState();
     conversation.updatedAt = nowIso();
     await saveConversationState(state);
     return { ok: true };

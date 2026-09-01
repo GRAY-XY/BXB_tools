@@ -69,7 +69,7 @@
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
-                <StackPanel Spacing="4">
+                <StackPanel x:Name="PageHeaderPanel" Spacing="4">
                     <TextBlock x:Name="PageTitleText" Text="主页" FontSize="30" FontWeight="SemiBold" />
                     <TextBlock x:Name="PageSubtitleText" Visibility="Collapsed" />
                 </StackPanel>
@@ -162,53 +162,205 @@
                     </Border>
                 </Grid>
 
-                <Grid x:Name="AgentPanel" Grid.Row="2" ColumnSpacing="14" MinHeight="480" Visibility="Collapsed">
+                <Grid x:Name="AgentPanel" Grid.Row="0" Grid.RowSpan="3" MinHeight="480" Visibility="Collapsed" SizeChanged="OnAgentPanelSizeChanged">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="1.45*" MinWidth="420" />
-                        <ColumnDefinition Width="0.85*" MinWidth="300" />
+                        <ColumnDefinition x:Name="AgentConversationColumn" Width="260" />
+                        <ColumnDefinition Width="*" MinWidth="420" />
                     </Grid.ColumnDefinitions>
-                    <Border Padding="14" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
-                        <Grid RowSpacing="10">
+
+                    <Border
+                        x:Name="AgentConversationPane"
+                        BorderThickness="0,0,1,0"
+                        BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                        Background="{ThemeResource LayerFillColorDefaultBrush}">
+                        <Grid Padding="12,14,12,12" RowSpacing="10">
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
-                                <RowDefinition Height="*" />
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
                             </Grid.RowDefinitions>
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <ComboBox x:Name="ConversationComboBox" Width="360" SelectionChanged="OnConversationComboChanged" />
-                                <Button Content="新建" Click="OnAgentNewConversationClick" />
-                                <Button Content="重命名" Click="OnAgentRenameConversationClick" />
-                                <Button Content="删除" Click="OnAgentDeleteConversationClick" />
-                            </StackPanel>
-                            <Grid x:Name="AgentMarkdownHost" Grid.Row="1">
-                                <TextBox
-                                    x:Name="AgentMarkdownFallbackTextBox"
-                                    AcceptsReturn="True"
-                                    IsReadOnly="True"
-                                    TextWrapping="Wrap"
-                                    ScrollViewer.VerticalScrollBarVisibility="Auto" />
-                            </Grid>
-                            <StackPanel Grid.Row="2" Spacing="8">
-                                <TextBox
-                                    x:Name="AgentInputBox"
-                                    AcceptsReturn="True"
-                                    MinHeight="74"
-                                    PlaceholderText="输入消息，或 /compact 压缩上下文..."
-                                    TextWrapping="Wrap" />
-                                <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
-                                    <Button Content="压缩上下文" Click="OnAgentCompactClick" />
-                                    <Button Content="发送" Click="OnAgentSendClick" />
+                            <Button Click="OnAgentNewConversationClick" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <FontIcon Glyph="&#xE710;" FontSize="14" />
+                                    <TextBlock Text="新建对话" />
                                 </StackPanel>
-                            </StackPanel>
+                            </Button>
+                            <TextBox
+                                x:Name="AgentConversationSearchBox"
+                                Grid.Row="1"
+                                PlaceholderText="搜索对话"
+                                TextChanged="OnAgentConversationSearchTextChanged" />
+                            <ListView
+                                x:Name="AgentConversationListView"
+                                Grid.Row="2"
+                                SelectionMode="Single"
+                                SelectionChanged="OnAgentConversationSelectionChanged"
+                                HorizontalContentAlignment="Stretch">
+                                <ListView.ItemTemplate>
+                                    <DataTemplate x:DataType="local:DisplayItem" xmlns:local="using:BxbHomework.WinUI">
+                                        <Grid Padding="8,6" ColumnSpacing="6">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="32" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel VerticalAlignment="Center" Spacing="2">
+                                                <TextBlock Text="{x:Bind Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Text="{x:Bind Subtitle}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" />
+                                            </StackPanel>
+                                            <Button
+                                                Grid.Column="1"
+                                                Width="32"
+                                                Height="32"
+                                                Padding="0"
+                                                HorizontalAlignment="Right"
+                                                VerticalAlignment="Center"
+                                                ToolTipService.ToolTip="对话操作">
+                                                <FontIcon Glyph="&#xE712;" FontSize="14" />
+                                                <Button.Flyout>
+                                                    <MenuFlyout>
+                                                        <MenuFlyoutItem Text="重命名" Tag="{x:Bind Id}" Click="OnAgentRenameConversationClick">
+                                                            <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE70F;" /></MenuFlyoutItem.Icon>
+                                                        </MenuFlyoutItem>
+                                                        <MenuFlyoutItem Text="删除" Tag="{x:Bind Id}" Click="OnAgentDeleteConversationClick">
+                                                            <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE74D;" /></MenuFlyoutItem.Icon>
+                                                        </MenuFlyoutItem>
+                                                    </MenuFlyout>
+                                                </Button.Flyout>
+                                            </Button>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
                         </Grid>
                     </Border>
-                    <Border Grid.Column="1" Padding="14" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
-                        <Grid RowSpacing="10">
+
+                    <Grid Grid.Column="1">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="56" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <Border BorderThickness="0,0,0,1" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}">
+                            <Grid Padding="14,0" ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Button
+                                    x:Name="AgentConversationPaneToggleButton"
+                                    Width="36"
+                                    Height="36"
+                                    Padding="0"
+                                    Click="OnAgentConversationPaneToggleClick"
+                                    ToolTipService.ToolTip="显示或隐藏对话列表">
+                                    <FontIcon Glyph="&#xE700;" FontSize="16" />
+                                </Button>
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="1">
+                                    <TextBlock x:Name="AgentConversationTitleText" Text="新对话" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock x:Name="AgentModelText" Text="正在读取模型配置" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="2" Width="150" VerticalAlignment="Center" Spacing="3" ToolTipService.ToolTip="当前对话的估算上下文占用">
+                                    <TextBlock x:Name="AgentContextUsageText" Text="上下文：计算中" FontSize="12" TextAlignment="Right" TextTrimming="CharacterEllipsis" />
+                                    <ProgressBar x:Name="AgentContextProgressBar" Minimum="0" Maximum="100" Value="0" Height="3" />
+                                    <TextBlock x:Name="AgentContextStatusText" Text="" Visibility="Collapsed" />
+                                </StackPanel>
+                                <Button Grid.Column="3" Width="36" Height="36" Padding="0" ToolTipService.ToolTip="对话操作">
+                                    <FontIcon Glyph="&#xE712;" FontSize="16" />
+                                    <Button.Flyout>
+                                        <MenuFlyout>
+                                            <MenuFlyoutItem Text="重命名对话" Click="OnAgentRenameConversationClick">
+                                                <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE70F;" /></MenuFlyoutItem.Icon>
+                                            </MenuFlyoutItem>
+                                            <MenuFlyoutItem Text="压缩上下文" Click="OnAgentCompactClick">
+                                                <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8B7;" /></MenuFlyoutItem.Icon>
+                                            </MenuFlyoutItem>
+                                            <MenuFlyoutSeparator />
+                                            <MenuFlyoutItem Text="删除对话" Click="OnAgentDeleteConversationClick">
+                                                <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE74D;" /></MenuFlyoutItem.Icon>
+                                            </MenuFlyoutItem>
+                                        </MenuFlyout>
+                                    </Button.Flyout>
+                                </Button>
+                            </Grid>
+                        </Border>
+
+                        <Grid x:Name="AgentMarkdownHost" Grid.Row="1" MaxWidth="900" HorizontalAlignment="Stretch">
+                            <TextBox
+                                x:Name="AgentMarkdownFallbackTextBox"
+                                Margin="24,12"
+                                AcceptsReturn="True"
+                                IsReadOnly="True"
+                                TextWrapping="Wrap"
+                                BorderThickness="0"
+                                Background="Transparent"
+                                ScrollViewer.VerticalScrollBarVisibility="Auto" />
+                        </Grid>
+
+                        <Grid Grid.Row="2" MaxWidth="900" Padding="24,10,24,16" HorizontalAlignment="Stretch">
+                            <Border
+                                Padding="12,8,8,8"
+                                CornerRadius="8"
+                                BorderThickness="1"
+                                BorderBrush="{ThemeResource ControlStrongStrokeColorDefaultBrush}"
+                                Background="{ThemeResource ControlFillColorDefaultBrush}">
+                                <Grid RowSpacing="4">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <TextBox
+                                        x:Name="AgentInputBox"
+                                        AcceptsReturn="True"
+                                        MinHeight="44"
+                                        MaxHeight="132"
+                                        BorderThickness="0"
+                                        Background="Transparent"
+                                        PlaceholderText="给 BXB 助手发送消息"
+                                        TextWrapping="Wrap"
+                                        KeyDown="OnAgentInputKeyDown" />
+                                    <Grid Grid.Row="1">
+                                        <TextBlock Text="Enter 发送 · Shift+Enter 换行" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
+                                        <Button
+                                            x:Name="AgentSendButton"
+                                            Width="36"
+                                            Height="36"
+                                            Padding="0"
+                                            HorizontalAlignment="Right"
+                                            Click="OnAgentSendClick"
+                                            ToolTipService.ToolTip="发送">
+                                            <FontIcon Glyph="&#xE724;" FontSize="16" />
+                                        </Button>
+                                    </Grid>
+                                </Grid>
+                            </Border>
+                        </Grid>
+                    </Grid>
+
+                    <Border
+                        x:Name="AgentStepsDrawer"
+                        Grid.Column="1"
+                        Width="370"
+                        Padding="16"
+                        HorizontalAlignment="Right"
+                        BorderThickness="1,0,0,0"
+                        BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                        Background="{ThemeResource SolidBackgroundFillColorBaseBrush}"
+                        Visibility="Collapsed"
+                        Canvas.ZIndex="20">
+                        <Grid RowSpacing="12">
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="*" />
                             </Grid.RowDefinitions>
-                            <TextBlock Text="工作过程" FontSize="18" FontWeight="SemiBold" />
+                            <Grid>
+                                <TextBlock Text="工作过程" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                <Button Width="36" Height="36" Padding="0" HorizontalAlignment="Right" Click="OnAgentStepsDrawerCloseClick" ToolTipService.ToolTip="关闭工作过程">
+                                    <FontIcon Glyph="&#xE711;" FontSize="14" />
+                                </Button>
+                            </Grid>
                             <Grid Grid.Row="1">
                                 <TextBox
                                     x:Name="AgentStepsTextBox"
@@ -375,7 +527,32 @@
                                     CanDragTabs="False"
                                     IsAddTabButtonVisible="False"
                                     SelectionChanged="OnSettingsModelRoleTabSelectionChanged">
-                                    <TabViewItem Header="对话" IsClosable="False" Tag="chat" />
+                                    <TabView.Resources>
+                                        <ResourceDictionary>
+                                            <ResourceDictionary.ThemeDictionaries>
+                                                <ResourceDictionary x:Key="Light">
+                                                    <SolidColorBrush x:Key="TabViewItemHeaderBackground" Color="#FFF3F3F3" />
+                                                    <SolidColorBrush x:Key="TabViewItemHeaderBackgroundSelected" Color="#FFFFFFFF" />
+                                                    <SolidColorBrush x:Key="TabViewItemHeaderBackgroundPointerOver" Color="#FFE7E7E7" />
+                                                    <SolidColorBrush x:Key="TabViewItemBorderBrush" Color="#FFB8B8B8" />
+                                                    <SolidColorBrush x:Key="TabViewItemSeparator" Color="#FF969696" />
+                                                    <SolidColorBrush x:Key="TabViewSelectedItemBorderBrush" Color="#FF0078D4" />
+                                                </ResourceDictionary>
+                                                <ResourceDictionary x:Key="Dark">
+                                                    <SolidColorBrush x:Key="TabViewItemHeaderBackground" Color="#FF252525" />
+                                                    <SolidColorBrush x:Key="TabViewItemHeaderBackgroundSelected" Color="#FF3A3A3A" />
+                                                    <SolidColorBrush x:Key="TabViewItemHeaderBackgroundPointerOver" Color="#FF333333" />
+                                                    <SolidColorBrush x:Key="TabViewItemBorderBrush" Color="#FF5B5B5B" />
+                                                    <SolidColorBrush x:Key="TabViewItemSeparator" Color="#FF747474" />
+                                                    <SolidColorBrush x:Key="TabViewSelectedItemBorderBrush" Color="#FF60CDFF" />
+                                                </ResourceDictionary>
+                                            </ResourceDictionary.ThemeDictionaries>
+                                            <Thickness x:Key="TabViewItemBorderThickness">1</Thickness>
+                                            <Thickness x:Key="TabViewSelectedItemBorderThickness">1,1,1,3</Thickness>
+                                            <Thickness x:Key="TabViewSelectedItemHeaderMargin">0</Thickness>
+                                        </ResourceDictionary>
+                                    </TabView.Resources>
+                                    <TabViewItem Header="对话" IsClosable="False" Tag="chat" Margin="0,0,8,0" />
                                     <TabViewItem Header="图片转述" IsClosable="False" Tag="image_caption" />
                                 </TabView>
                                 <CheckBox

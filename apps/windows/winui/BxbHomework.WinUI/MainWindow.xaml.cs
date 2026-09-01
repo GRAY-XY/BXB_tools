@@ -6,8 +6,12 @@ using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
+using Windows.ApplicationModel.DataTransfer;
+using Windows.System;
+using Windows.UI.Core;
 using Windows.Storage.Streams;
 
 namespace BxbHomework.WinUI;
@@ -56,6 +60,8 @@ public sealed partial class MainWindow : Window
     };
     private readonly NodeBackendClient _backend = new();
     private readonly ObservableCollection<DisplayItem> _items = new();
+    private readonly ObservableCollection<DisplayItem> _agentConversationItems = new();
+    private readonly List<DisplayItem> _agentConversationCache = new();
     private readonly ObservableCollection<DisplayItem> _settingsProviderItems = new();
     private readonly ObservableCollection<DisplayItem> _settingsPathItems = new();
     private readonly ObservableCollection<PrivateThreadMessage> _privateThreadMessages = new();
@@ -70,6 +76,13 @@ public sealed partial class MainWindow : Window
     private bool _agentMarkdownWebViewUnavailable;
     private int _agentMarkdownRenderVersion;
     private string _selectedAgentMessageId = "";
+    private string _activeConversationId = "";
+    private bool _suppressAgentConversationEvents;
+    private bool _agentConversationPaneCollapsed;
+    private bool _agentConversationPaneAutoCollapsed;
+    private bool _agentShouldFollowLatest = true;
+    private double _agentScrollTop;
+    private bool _agentRequestRunning;
     private bool _suppressComboEvents;
     private bool _deleteDraftArmed;
     private bool _deleteConversationArmed;
@@ -93,6 +106,7 @@ public sealed partial class MainWindow : Window
         SetTitleBar(AppTitleBar);
         SetWindowIcon();
         MainListView.ItemsSource = _items;
+        AgentConversationListView.ItemsSource = _agentConversationItems;
         SettingsProviderListView.ItemsSource = _settingsProviderItems;
         SettingsPathListView.ItemsSource = _settingsPathItems;
         PrivateThreadListView.ItemsSource = _privateThreadMessages;
@@ -163,6 +177,7 @@ public sealed partial class MainWindow : Window
                 case "agent":
                     RenderAgent();
                     await LoadConversationsAsync(loadVersion);
+                    await LoadAgentModelSummaryAsync(loadVersion);
                     break;
                 case "homework":
                     RenderHomework();
@@ -230,6 +245,7 @@ public sealed partial class MainWindow : Window
         HomeTermComboBox.Items.Clear();
         HomeTermComboBox.IsEnabled = true;
         ToolbarCard.Visibility = Visibility.Visible;
+        PageHeaderPanel.Visibility = Visibility.Visible;
         HomePanel.Visibility = Visibility.Collapsed;
         AgentPanel.Visibility = Visibility.Collapsed;
         SplitPanel.Visibility = Visibility.Collapsed;
@@ -245,7 +261,14 @@ public sealed partial class MainWindow : Window
         SetAgentTranscriptPlain("");
         SetAgentStepsMessage("");
         AgentInputBox.Text = "";
-        ConversationComboBox.Items.Clear();
+        AgentConversationSearchBox.Text = "";
+        _agentConversationItems.Clear();
+        _agentConversationCache.Clear();
+        _activeConversationId = "";
+        _selectedAgentMessageId = "";
+        _agentShouldFollowLatest = true;
+        _agentScrollTop = 0;
+        AgentStepsDrawer.Visibility = Visibility.Collapsed;
         _settingsProviderItems.Clear();
         SettingsProviderTypeComboBox.Items.Clear();
         SettingsProviderNameBox.Text = "";
@@ -296,11 +319,13 @@ public sealed partial class MainWindow : Window
     {
         ResetPage();
         _currentPage = "agent";
-        PageTitleText.Text = "Agent Assistant";
-        PageSubtitleText.Text = "对话列表、聊天输入和上下文压缩沿用 Electron 的 agent 流程。";
+        PageHeaderPanel.Visibility = Visibility.Collapsed;
         ToolbarCard.Visibility = Visibility.Collapsed;
         AgentPanel.Visibility = Visibility.Visible;
-        SetAgentStepsMessage("点击一条助手消息查看执行过程。");
+        AgentConversationTitleText.Text = "新对话";
+        AgentModelText.Text = "正在读取模型配置";
+        UpdateAgentConversationPaneVisibility();
+        SetAgentStepsMessage("点击助手消息下方的“查看过程”。");
     }
 
     private void RenderHomework()
@@ -550,15 +575,13 @@ public sealed partial class MainWindow : Window
     {
         loadVersion = loadVersion == 0 ? _pageLoadVersion : loadVersion;
         if (!IsCurrentPageLoad("agent", loadVersion)) return;
-        var selectedMessageId = _selectedAgentMessageId;
-        SetAgentTranscriptPlain("正在加载对话...");
-        _selectedAgentMessageId = selectedMessageId;
-        SetAgentStepsMessage("点击一条助手消息查看执行过程。");
+        if (_agentPreviewMessages.Count == 0)
+        {
+            SetAgentTranscriptPlain("正在加载对话...");
+        }
         var result = await InvokeAsync("agent:conversations:list");
         if (!IsCurrentPageLoad("agent", loadVersion)) return;
-        _items.Clear();
-        _suppressComboEvents = true;
-        ConversationComboBox.Items.Clear();
+        _agentConversationCache.Clear();
         if (result.TryGetProperty("conversations", out var conversations) && conversations.ValueKind == JsonValueKind.Array)
         {
             foreach (var conversation in conversations.EnumerateArray())
@@ -570,32 +593,75 @@ public sealed partial class MainWindow : Window
                     Subtitle = $"{GetString(conversation, "updatedAt", "")} · {GetString(conversation, "messageCount", "0")} 条消息",
                     Data = conversation.Clone(),
                 };
-                _items.Add(item);
-                ConversationComboBox.Items.Add(new ComboItem { Key = item.Id, Label = item.Title, Data = item.Data });
+                _agentConversationCache.Add(item);
             }
         }
         var activeId = GetString(result, "activeId", "");
-        for (var index = 0; index < ConversationComboBox.Items.Count; index += 1)
-        {
-            if ((ConversationComboBox.Items[index] as ComboItem)?.Key == activeId)
-            {
-                ConversationComboBox.SelectedIndex = index;
-                break;
-            }
-        }
-        if (ConversationComboBox.SelectedIndex < 0 && ConversationComboBox.Items.Count > 0)
-        {
-            ConversationComboBox.SelectedIndex = 0;
-        }
-        _suppressComboEvents = false;
-        _selectedAgentMessageId = selectedMessageId;
+        ApplyAgentConversationFilter(activeId);
         if (result.TryGetProperty("activeConversation", out var active))
         {
             ShowConversation(active);
         }
-        else if (ConversationComboBox.Items.Count == 0)
+        else if (_agentConversationCache.Count == 0)
         {
-            SetAgentTranscriptPlain("暂无对话。点击“新建”开始。");
+            _activeConversationId = "";
+            AgentConversationTitleText.Text = "新对话";
+            SetAgentTranscriptPlain("");
+        }
+    }
+
+    private async Task LoadAgentModelSummaryAsync(int loadVersion)
+    {
+        if (!IsCurrentPageLoad("agent", loadVersion)) return;
+        var config = await InvokeAsync("config:model:load");
+        if (!IsCurrentPageLoad("agent", loadVersion)) return;
+
+        var activeProviderId = GetSettingsProviderIdForRole(config, "chat");
+        JsonElement? activeProvider = null;
+        if (TryGetSettingsProviderArray(config, "chat", out var providers))
+        {
+            foreach (var provider in providers.EnumerateArray())
+            {
+                if (FirstString(provider, "id", "providerId") == activeProviderId)
+                {
+                    activeProvider = provider.Clone();
+                    break;
+                }
+            }
+        }
+
+        var providerName = activeProvider.HasValue
+            ? FirstString(activeProvider.Value, "name", "providerName", "id")
+            : GetString(config, "providerName", "默认提供商");
+        var modelName = activeProvider.HasValue
+            ? FirstString(activeProvider.Value, "modelName", "model")
+            : GetString(config, "modelName", "");
+        AgentModelText.Text = string.IsNullOrWhiteSpace(modelName) ? providerName : $"{providerName} · {modelName}";
+    }
+
+    private void ApplyAgentConversationFilter(string? selectedId = null)
+    {
+        var query = AgentConversationSearchBox.Text.Trim();
+        var targetId = selectedId ?? _activeConversationId;
+        _suppressAgentConversationEvents = true;
+        try
+        {
+            _agentConversationItems.Clear();
+            foreach (var item in _agentConversationCache)
+            {
+                if (query.Length == 0
+                    || item.Title.Contains(query, StringComparison.CurrentCultureIgnoreCase)
+                    || item.Subtitle.Contains(query, StringComparison.CurrentCultureIgnoreCase))
+                {
+                    _agentConversationItems.Add(item);
+                }
+            }
+
+            AgentConversationListView.SelectedItem = _agentConversationItems.FirstOrDefault(item => item.Id == targetId);
+        }
+        finally
+        {
+            _suppressAgentConversationEvents = false;
         }
     }
 
@@ -1523,15 +1589,61 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async void OnConversationComboChanged(object sender, SelectionChangedEventArgs args)
+    private async void OnAgentConversationSelectionChanged(object sender, SelectionChangedEventArgs args)
     {
-        if (_suppressComboEvents || _currentPage != "agent") return;
-        if (ConversationComboBox.SelectedItem is not ComboItem item) return;
+        if (_suppressAgentConversationEvents || _currentPage != "agent") return;
+        if (AgentConversationListView.SelectedItem is not DisplayItem item || item.Id == _activeConversationId) return;
         await RunUiAsync(async () =>
         {
-            var selected = await InvokeAsync("agent:conversations:select", new { conversationId = item.Key });
+            _agentShouldFollowLatest = true;
+            _agentScrollTop = 0;
+            AgentStepsDrawer.Visibility = Visibility.Collapsed;
+            var selected = await InvokeAsync("agent:conversations:select", new { conversationId = item.Id });
             if (selected.TryGetProperty("activeConversation", out var active)) ShowConversation(active);
+            FocusAgentInput();
         });
+    }
+
+    private void OnAgentConversationSearchTextChanged(object sender, TextChangedEventArgs args)
+    {
+        ApplyAgentConversationFilter();
+    }
+
+    private void OnAgentConversationPaneToggleClick(object sender, RoutedEventArgs args)
+    {
+        var isVisible = AgentConversationPane.Visibility == Visibility.Visible;
+        _agentConversationPaneCollapsed = isVisible;
+        if (!isVisible)
+        {
+            _agentConversationPaneAutoCollapsed = false;
+        }
+        UpdateAgentConversationPaneVisibility();
+    }
+
+    private void OnAgentPanelSizeChanged(object sender, SizeChangedEventArgs args)
+    {
+        _agentConversationPaneAutoCollapsed = args.NewSize.Width < 820;
+        UpdateAgentConversationPaneVisibility();
+        if (args.NewSize.Width < 760 && AgentStepsDrawer.Visibility == Visibility.Visible)
+        {
+            AgentStepsDrawer.Width = Math.Max(300, args.NewSize.Width - 24);
+        }
+        else
+        {
+            AgentStepsDrawer.Width = 370;
+        }
+    }
+
+    private void UpdateAgentConversationPaneVisibility()
+    {
+        var collapsed = _agentConversationPaneCollapsed || _agentConversationPaneAutoCollapsed;
+        AgentConversationColumn.Width = collapsed ? new GridLength(0) : new GridLength(260);
+        AgentConversationPane.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private void OnAgentStepsDrawerCloseClick(object sender, RoutedEventArgs args)
+    {
+        AgentStepsDrawer.Visibility = Visibility.Collapsed;
     }
 
     private async void OnAgentNewConversationClick(object sender, RoutedEventArgs args)
@@ -1541,8 +1653,11 @@ public sealed partial class MainWindow : Window
             _deleteConversationArmed = false;
             await InvokeAsync("agent:conversations:create", new { title = "新对话" });
             AgentInputBox.Text = "";
-            SetAgentStepsMessage("已开始新对话。");
+            AgentStepsDrawer.Visibility = Visibility.Collapsed;
+            _agentShouldFollowLatest = true;
+            _agentScrollTop = 0;
             await LoadConversationsAsync();
+            FocusAgentInput();
         });
     }
 
@@ -1550,12 +1665,12 @@ public sealed partial class MainWindow : Window
     {
         await RunUiAsync(async () =>
         {
-            if (ConversationComboBox.SelectedItem is not ComboItem item) return;
-            _deleteConversationArmed = false;
-            var nextTitle = await PromptConversationTitleAsync(item.Label);
+            var conversationId = ConversationIdFromSender(sender);
+            var item = _agentConversationCache.FirstOrDefault(candidate => candidate.Id == conversationId);
+            if (item is null) return;
+            var nextTitle = await PromptConversationTitleAsync(item.Title);
             if (nextTitle is null) return;
-            await InvokeAsync("agent:conversations:rename", new { conversationId = item.Key, title = nextTitle });
-            SetAgentStepsMessage("对话已重命名。");
+            await InvokeAsync("agent:conversations:rename", new { conversationId = item.Id, title = nextTitle });
             SetStatus("对话已重命名");
             await LoadConversationsAsync();
         });
@@ -1565,18 +1680,34 @@ public sealed partial class MainWindow : Window
     {
         await RunUiAsync(async () =>
         {
-            if (ConversationComboBox.SelectedItem is not ComboItem item) return;
-            if (!_deleteConversationArmed)
-            {
-                _deleteConversationArmed = true;
-                SetStatus("再次点击确认删除对话。");
-                return;
-            }
-            await InvokeAsync("agent:conversations:delete", new { conversationId = item.Key });
-            _deleteConversationArmed = false;
-            SetAgentStepsMessage("对话已删除。");
+            var conversationId = ConversationIdFromSender(sender);
+            var item = _agentConversationCache.FirstOrDefault(candidate => candidate.Id == conversationId);
+            if (item is null || !await ConfirmConversationDeleteAsync(item.Title)) return;
+            await InvokeAsync("agent:conversations:delete", new { conversationId = item.Id });
+            AgentStepsDrawer.Visibility = Visibility.Collapsed;
+            SetStatus("对话已删除");
             await LoadConversationsAsync();
+            FocusAgentInput();
         });
+    }
+
+    private string ConversationIdFromSender(object sender)
+    {
+        return (sender as FrameworkElement)?.Tag?.ToString() ?? _activeConversationId;
+    }
+
+    private async Task<bool> ConfirmConversationDeleteAsync(string title)
+    {
+        var dialog = new ContentDialog
+        {
+            XamlRoot = RootNavigation.XamlRoot,
+            Title = "删除对话",
+            Content = $"确定删除“{title}”吗？此操作无法撤销。",
+            PrimaryButtonText = "删除",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Close,
+        };
+        return await dialog.ShowAsync() == ContentDialogResult.Primary;
     }
 
     private async Task<string?> PromptConversationTitleAsync(string currentTitle)
@@ -1619,8 +1750,14 @@ public sealed partial class MainWindow : Window
         await RunUiAsync(async () =>
         {
             SetAgentStepsMessage("正在压缩上下文...");
-            await InvokeAsync("agent:compact", new { conversationId = (ConversationComboBox.SelectedItem as ComboItem)?.Key });
-            SetAgentStepsMessage("上下文已压缩。");
+            var result = await InvokeAsync("agent:compact", new { conversationId = _activeConversationId });
+            var changed = GetString(result, "changed", "false") == "true";
+            var before = GetString(result, "beforeTokens", "");
+            var after = GetString(result, "afterTokens", "");
+            SetAgentStepsMessage(changed && !string.IsNullOrWhiteSpace(before) && !string.IsNullOrWhiteSpace(after)
+                ? $"上下文已压缩：{before} -> {after} tokens。"
+                : GetString(result, "summary", "近期上下文较少，暂时无需压缩。"));
+            SetStatus(changed ? "上下文压缩完成" : "当前没有可压缩的旧对话");
             await LoadConversationsAsync();
         });
     }
@@ -1628,6 +1765,20 @@ public sealed partial class MainWindow : Window
     private async void OnAgentSendClick(object sender, RoutedEventArgs args)
     {
         await RunUiAsync(SendAgentAsync);
+    }
+
+    private async void OnAgentInputKeyDown(object sender, KeyRoutedEventArgs args)
+    {
+        if (args.Key != VirtualKey.Enter) return;
+        var shiftState = Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Shift);
+        if ((shiftState & CoreVirtualKeyStates.Down) == CoreVirtualKeyStates.Down) return;
+        args.Handled = true;
+        await RunUiAsync(SendAgentAsync);
+    }
+
+    private void FocusAgentInput()
+    {
+        DispatcherQueue.TryEnqueue(() => AgentInputBox.Focus(FocusState.Programmatic));
     }
 
     private async void OnFilterComboChanged(object sender, SelectionChangedEventArgs args)
@@ -1687,37 +1838,58 @@ public sealed partial class MainWindow : Window
 
     private async Task SendAgentAsync()
     {
+        if (_agentRequestRunning) return;
         var text = AgentInputBox.Text.Trim();
         if (string.IsNullOrWhiteSpace(text)) return;
         if (text == "/compact")
         {
-            await InvokeAsync("agent:compact", new { conversationId = (ConversationComboBox.SelectedItem as ComboItem)?.Key });
+            var compactResult = await InvokeAsync("agent:compact", new { conversationId = _activeConversationId });
             AgentInputBox.Text = "";
-            SetAgentStepsMessage("上下文已压缩。");
+            SetAgentStepsMessage(GetString(compactResult, "summary", "上下文处理完成。"));
             await LoadConversationsAsync();
+            FocusAgentInput();
             return;
         }
+
+        _agentRequestRunning = true;
+        AgentSendButton.IsEnabled = false;
         AgentInputBox.Text = "";
         var userMessageId = NewAgentMessageId();
         var assistantMessageId = NewAgentMessageId();
         _selectedAgentMessageId = assistantMessageId;
+        _agentShouldFollowLatest = true;
         _agentPreviewMessages.Add(new AgentChatMessage(userMessageId, "user", text));
-        _agentPreviewMessages.Add(new AgentChatMessage(assistantMessageId, "assistant", "执行中...", null, true));
+        _agentPreviewMessages.Add(new AgentChatMessage(assistantMessageId, "assistant", "", null, true));
         RenderAgentMessages(_agentPreviewMessages);
         SetAgentStepsMessage("正在请求模型...");
-        var result = await InvokeAsync("agent:chat", new
+        try
         {
-            text,
-            conversationId = (ConversationComboBox.SelectedItem as ComboItem)?.Key,
-            userMessageId,
-            assistantMessageId,
-        });
-        var finalSteps = result.TryGetProperty("steps", out var resultSteps) ? resultSteps.Clone() : (JsonElement?)null;
-        _agentPreviewMessages[^1] = new AgentChatMessage(assistantMessageId, "assistant", GetString(result, "message", "执行完成。"), finalSteps, false);
-        RenderAgentMessages(_agentPreviewMessages);
-        ShowSelectedAgentSteps();
-        await LoadConversationsAsync();
-        ShowSelectedAgentSteps();
+            var result = await InvokeAsync("agent:chat", new
+            {
+                text,
+                conversationId = _activeConversationId,
+                userMessageId,
+                assistantMessageId,
+            });
+            var finalSteps = result.TryGetProperty("steps", out var resultSteps) ? resultSteps.Clone() : (JsonElement?)null;
+            _agentPreviewMessages[^1] = new AgentChatMessage(assistantMessageId, "assistant", GetString(result, "message", "执行完成。"), finalSteps, false);
+            RenderAgentMessages(_agentPreviewMessages);
+            if (AgentStepsDrawer.Visibility == Visibility.Visible) ShowSelectedAgentSteps();
+            await LoadConversationsAsync();
+            if (AgentStepsDrawer.Visibility == Visibility.Visible) ShowSelectedAgentSteps();
+        }
+        catch (Exception error)
+        {
+            _agentPreviewMessages[^1] = new AgentChatMessage(assistantMessageId, "assistant", $"执行失败：{CleanErrorMessage(error.Message)}", null, false);
+            RenderAgentMessages(_agentPreviewMessages);
+            throw;
+        }
+        finally
+        {
+            _agentRequestRunning = false;
+            AgentSendButton.IsEnabled = true;
+            FocusAgentInput();
+        }
     }
 
     private async Task OpenWorkspaceItemAsync(DisplayItem item)
@@ -2258,7 +2430,9 @@ public sealed partial class MainWindow : Window
     {
         _agentPreviewMessages.Clear();
         _selectedAgentMessageId = "";
-        RenderAgentMessages(new[] { new AgentChatMessage(NewAgentMessageId(), "assistant", text) });
+        RenderAgentMessages(string.IsNullOrWhiteSpace(text)
+            ? Array.Empty<AgentChatMessage>()
+            : new[] { new AgentChatMessage(NewAgentMessageId(), "assistant", text) });
     }
 
     private void RenderAgentMessages(IReadOnlyList<AgentChatMessage> messages)
@@ -2287,9 +2461,14 @@ public sealed partial class MainWindow : Window
                     message.Id,
                     message.Role,
                     message.Text,
-                    IsSelected: message.Id == _selectedAgentMessageId,
-                    message.IsRunning)),
-                GetCurrentUiTheme()));
+                    message.IsRunning,
+                    StepCount: message.Steps.HasValue && message.Steps.Value.ValueKind == JsonValueKind.Array
+                        ? message.Steps.Value.GetArrayLength()
+                        : 0)),
+                GetCurrentUiTheme(),
+                _agentShouldFollowLatest,
+                _agentScrollTop,
+                version));
             AgentMarkdownFallbackTextBox.Visibility = Visibility.Collapsed;
             _agentMarkdownWebView.Visibility = Visibility.Visible;
         }
@@ -2327,19 +2506,66 @@ public sealed partial class MainWindow : Window
             messages.Select(message =>
             {
                 var label = message.Role == "user" ? "你" : "助手";
-                var selected = message.Id == _selectedAgentMessageId ? "（已选中）" : "";
-                return $"{label}{selected}:\n{message.Text}";
+                return $"{label}:\n{message.Text}";
             }));
     }
 
-    private void OnAgentMarkdownWebMessageReceived(string json)
+    private async void OnAgentMarkdownWebMessageReceived(string json)
     {
         try
         {
             using var document = JsonDocument.Parse(json);
             var root = document.RootElement;
-            if (GetString(root, "type", "") != "select-message") return;
-            SelectAgentMessage(GetString(root, "id", ""));
+            var type = GetString(root, "type", "");
+            if (type == "scroll-state")
+            {
+                if (root.TryGetProperty("viewVersion", out var viewVersion)
+                    && viewVersion.TryGetInt32(out var postedVersion)
+                    && postedVersion != _agentMarkdownRenderVersion)
+                {
+                    return;
+                }
+                _agentShouldFollowLatest = root.TryGetProperty("nearBottom", out var nearBottom)
+                    && nearBottom.ValueKind == JsonValueKind.True;
+                if (root.TryGetProperty("scrollTop", out var scrollTop) && scrollTop.TryGetDouble(out var position))
+                {
+                    _agentScrollTop = position;
+                }
+                return;
+            }
+            if (type == "show-process")
+            {
+                SelectAgentMessage(GetString(root, "id", ""));
+                return;
+            }
+            if (type == "copy-message")
+            {
+                var messageId = GetString(root, "id", "");
+                var message = _agentPreviewMessages.FirstOrDefault(item => item.Id == messageId);
+                if (message is not null)
+                {
+                    var package = new DataPackage();
+                    package.SetText(message.Text);
+                    Clipboard.SetContent(package);
+                    SetStatus("消息已复制");
+                }
+                return;
+            }
+            if (type == "send-suggestion")
+            {
+                AgentInputBox.Text = GetString(root, "text", "");
+                await RunUiAsync(SendAgentAsync);
+                return;
+            }
+            if (type == "open-link")
+            {
+                var href = GetString(root, "href", "");
+                if (Uri.TryCreate(href, UriKind.Absolute, out var uri)
+                    && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+                {
+                    await Launcher.LaunchUriAsync(uri);
+                }
+            }
         }
         catch (Exception error)
         {
@@ -2376,6 +2602,7 @@ public sealed partial class MainWindow : Window
         var message = _agentPreviewMessages.FirstOrDefault(item => item.Id == messageId && item.Role == "assistant");
         if (message is null) return;
         _selectedAgentMessageId = messageId;
+        AgentStepsDrawer.Visibility = Visibility.Visible;
         ShowSelectedAgentSteps();
         if (_agentMarkdownWebViewUnavailable || _agentMarkdownWebView is null || _agentMarkdownWebView.Visibility != Visibility.Visible)
         {
@@ -2706,6 +2933,21 @@ public sealed partial class MainWindow : Window
 
     private void ShowConversation(JsonElement conversation)
     {
+        var conversationId = FirstString(conversation, "id", "conversationId");
+        var conversationChanged = !string.Equals(conversationId, _activeConversationId, StringComparison.Ordinal);
+        if (conversationChanged)
+        {
+            _agentShouldFollowLatest = true;
+            _agentScrollTop = 0;
+            _selectedAgentMessageId = "";
+            AgentStepsDrawer.Visibility = Visibility.Collapsed;
+        }
+        _activeConversationId = conversationId;
+        AgentConversationTitleText.Text = FirstString(conversation, "title") is { Length: > 0 } title
+            ? title
+            : _agentConversationCache.FirstOrDefault(item => item.Id == conversationId)?.Title ?? "新对话";
+        ApplyAgentConversationFilter(conversationId);
+        UpdateAgentContextMeter(conversation);
         _agentPreviewMessages.Clear();
         if (conversation.TryGetProperty("messages", out var messages) && messages.ValueKind == JsonValueKind.Array)
         {
@@ -2723,10 +2965,42 @@ public sealed partial class MainWindow : Window
         }
         if (!_agentPreviewMessages.Any(message => message.Id == _selectedAgentMessageId))
         {
-            _selectedAgentMessageId = _agentPreviewMessages.LastOrDefault(message => message.Role == "assistant")?.Id ?? "";
+            _selectedAgentMessageId = "";
         }
         RenderAgentMessages(_agentPreviewMessages);
-        ShowSelectedAgentSteps();
+        if (AgentStepsDrawer.Visibility == Visibility.Visible) ShowSelectedAgentSteps();
+    }
+
+    private void UpdateAgentContextMeter(JsonElement conversation)
+    {
+        if (!conversation.TryGetProperty("context", out var context) || context.ValueKind != JsonValueKind.Object)
+        {
+            AgentContextUsageText.Text = "上下文：尚未计算";
+            AgentContextProgressBar.Value = 0;
+            AgentContextStatusText.Text = "";
+            return;
+        }
+
+        var current = GetString(context, "currentTokens", "0");
+        var limit = GetString(context, "contextLength", "0");
+        var percentText = GetString(context, "usagePercent", "0");
+        _ = double.TryParse(percentText, out var percent);
+        AgentContextProgressBar.Value = Math.Clamp(percent, 0, 100);
+        AgentContextUsageText.Text = limit == "0"
+            ? $"上下文：约 {current} tokens"
+            : $"上下文：约 {current} / {limit} tokens";
+
+        var compactedAt = GetString(context, "lastCompactedAt", "");
+        var before = GetString(context, "lastBeforeTokens", "");
+        var after = GetString(context, "lastAfterTokens", "");
+        if (!string.IsNullOrWhiteSpace(compactedAt) && !string.IsNullOrWhiteSpace(before) && !string.IsNullOrWhiteSpace(after))
+        {
+            AgentContextStatusText.Text = $"上次压缩 {before} -> {after}";
+        }
+        else
+        {
+            AgentContextStatusText.Text = limit == "0" ? "设置上下文长度后启用自动压缩" : $"{percent:0}%";
+        }
     }
 
     private void ShowHomeworkDetail(JsonElement detail)
