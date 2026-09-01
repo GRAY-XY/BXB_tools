@@ -65,29 +65,43 @@ Purpose:
 
 Layout:
 
-- Left: conversation list.
-- Middle: chat messages and composer.
-- Right: expandable work-process timeline.
-- Top toolbar: quick prompts, new conversation, and context usage meter.
+- Left: a collapsible page-level conversation sidebar with new-chat, search, and recent conversations.
+- Middle: a centered reading column with an integrated bottom composer. Do not wrap the whole transcript in a card.
+- Right: a work-process drawer that is closed by default and opens for one explicit assistant message.
+- Top: the active conversation title, active chat provider/model summary, compact context meter, and an overflow menu.
+- On narrow windows, collapse the conversation sidebar automatically and overlay the work-process drawer instead of permanently reducing message width.
 
 Conversation requirements:
 
 - Create a new conversation.
+- Search saved conversations by title or summary text.
 - Select a saved conversation and restore messages.
 - Rename a conversation.
 - Delete a conversation after in-app confirmation.
+- Put per-conversation rename/delete actions in an overflow menu instead of occupying the reading toolbar.
 - Store conversations only in Electron userData.
 - Do not use native blocking dialogs for destructive chat actions because they can break composer focus in Electron.
 
 Chat requirements:
 
-- User messages align right; assistant messages align left.
-- User and assistant bubbles use visibly different colors.
+- User messages align right in a restrained accent bubble with no persistent role label.
+- Assistant messages align left as open document-style content, not as full-width bordered cards.
 - Assistant messages render Markdown, tables, code blocks, and inline/display math such as `$...$`, `$$...$$`, `\(...\)`, and `\[...\]`.
-- Message bodies must not overflow the page; wide tables/code scroll inside the bubble.
-- New messages auto-scroll into view.
+- Message bodies must not overflow the page; wide tables/code scroll inside the reading column.
+- Assistant actions such as copy and view-process appear on hover/focus and must not require selecting the whole message.
+- Opening work process must show structured steps for the chosen message and never render raw JSON.
+- Opening a conversation scrolls to the latest message once. During generation, auto-follow only while the user remains near the bottom.
+- If the user scrolls upward, preserve that position and show a jump-to-latest control.
 - The composer remains focusable after new-chat, select-chat, rename, and delete flows.
-- `/compact` summarizes older conversation context and keeps the compressed summary plus recent turns.
+- The composer uses one bordered input surface, grows up to a bounded height, sends with `Enter`, and inserts a newline with `Shift+Enter`.
+- Keep manual context compression in the conversation overflow menu and continue supporting `/compact`.
+- `/compact` asks the active chat model to summarize eligible older rounds and keeps the compressed summary plus recent complete rounds.
+- Keep the full visible transcript separate from model context. Compression must never delete or replace visible user/assistant messages.
+- When Settings has a positive context length, estimate the complete request budget before every model request, including system prompts, tool schemas, current tool results, and output reserve.
+- Automatically compress around 75% of the configured context window and target about 50% after compression. Preserve roughly 15% of the latest context as complete rounds.
+- Merge the previous summary with only newly eligible older rounds. Do not resend and summarize recent rounds that will also be kept verbatim.
+- A failed or empty compression response must preserve the original context and surface the failure in Agent progress.
+- Serialize chat and manual compression operations per conversation to prevent duplicate compaction and state overwrites.
 
 Agent progress requirements:
 
@@ -101,6 +115,7 @@ Context meter:
 - Prefer `usage.prompt_tokens` or `usage.promptTokens`.
 - Fall back to an estimated count from recent messages.
 - Use the configured context length from Settings.
+- Show the last compression before/after estimate without replacing the transcript.
 
 Composer paste handling:
 
@@ -440,6 +455,8 @@ Manual smoke checklist:
 - Task detail renders readable text and attachments.
 - Agent can call at least `list_courses` and `list_tasks`.
 - Agent composer remains usable after chat create/select/delete flows.
+- Agent conversation search, overflow rename/delete, and the optional work-process drawer remain usable in both themes.
+- Scrolling upward during a long Agent response prevents forced auto-scroll and exposes the jump-to-latest control.
 - Markdown math renders in assistant messages.
 - Draft creation opens as a form and returns to list/detail after creation.
 - Approved draft submission shows the confirmation screen and requires a second click.

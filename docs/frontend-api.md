@@ -558,11 +558,31 @@ type AgentChatResult = {
 
 type AgentCompactResult = {
   ok: true;
+  changed: boolean;
   summary: string;
   keptTurns: number;
   previousTurns: number;
+  beforeTokens?: number;
+  afterTokens?: number;
   usage?: AgentChatResult["usage"];
+  context?: AgentContextUsage;
   conversation?: AgentConversationSummary;
+};
+
+type AgentContextUsage = {
+  estimatedTokens: number;
+  lastPromptTokens: number;
+  currentTokens: number;
+  contextLength: number;
+  usagePercent: number;
+  autoCompressionEnabled: boolean;
+  triggerTokens: number;
+  targetTokens: number;
+  compactionCount: number;
+  lastCompactedAt: string;
+  lastCompactionReason: string;
+  lastBeforeTokens: number;
+  lastAfterTokens: number;
 };
 
 type AgentConversationState = {
@@ -583,6 +603,7 @@ type AgentConversationSummary = {
   createdAt: string;
   updatedAt: string;
   messageCount: number;
+  context?: AgentContextUsage;
 };
 
 type AgentProgressPayload = {
@@ -591,7 +612,7 @@ type AgentProgressPayload = {
 };
 
 type AgentStep = {
-  kind: "llm" | "tool" | "done" | string;
+  kind: "llm" | "tool" | "context" | "done" | string;
   title: string;
   detail?: string;
   at: string;
