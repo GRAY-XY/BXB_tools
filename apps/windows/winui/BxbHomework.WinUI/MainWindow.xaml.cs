@@ -10,6 +10,7 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.ApplicationModel.DataTransfer;
+using Windows.Security.Credentials;
 using Windows.System;
 using Windows.UI.Core;
 using Windows.Storage.Streams;
@@ -49,6 +50,7 @@ internal sealed record ModelProviderPreset(string Type, string Name, string Base
 
 public sealed partial class MainWindow : Window
 {
+    private const string BanxuebangCredentialResource = "com.grayxy.bxbhomework.banxuebang";
     private static readonly JsonSerializerOptions PrettyJsonOptions = new() { WriteIndented = true };
     private static readonly IReadOnlyList<ModelProviderPreset> ModelProviderPresets = new[]
     {
@@ -98,6 +100,8 @@ public sealed partial class MainWindow : Window
     private bool _suppressSettingsThemeCombo;
     private bool _suppressSettingsImageCaptionEnabled;
     private bool _deleteProviderArmed;
+    private bool _homeHasSavedCredential;
+    private bool _homeLoginRunning;
 
     public MainWindow()
     {
@@ -114,6 +118,7 @@ public sealed partial class MainWindow : Window
         _backend.LogReceived += (_, message) => DispatcherQueue.TryEnqueue(() => SetStatus(message));
 
         RootNavigation.SelectedItem = RootNavigation.MenuItems[0];
+        LoadSavedLoginCredential();
         RenderHome();
         _ = InitializeAsync();
     }
@@ -306,11 +311,9 @@ public sealed partial class MainWindow : Window
         PageSubtitleText.Text = "登录状态、当前学期和应用数据路径。";
         HomePanel.Visibility = Visibility.Visible;
         ListTitleText.Text = "会话";
-        PrimaryActionButton.Content = "浏览器登录";
-        SecondaryActionButton.Content = "刷新会话";
+        PrimaryActionButton.Content = "刷新会话";
+        SecondaryActionButton.Content = "打开数据目录";
         SecondaryActionButton.Visibility = Visibility.Visible;
-        ThirdActionButton.Content = "打开数据目录";
-        ThirdActionButton.Visibility = Visibility.Visible;
         _backend.ProgressReceived += OnBackendProgressReceived;
         SetHomeSessionBlocks(_session);
     }
@@ -491,7 +494,7 @@ public sealed partial class MainWindow : Window
             HomeScopeText.Text = "-";
             HomePendingTaskText.Text = "-";
             HomeTermText.Text = "-";
-            HomeSessionFileText.Text = "等待后端返回当前登录状态。";
+            UpdateHomeCredentialStatus();
             HomeTermComboBox.Items.Clear();
             HomeTermComboBox.PlaceholderText = "未读取到学期";
             return;
@@ -504,14 +507,12 @@ public sealed partial class MainWindow : Window
         var subject = GetString(value, "currentSubject.name", "未知课程");
         var term = CurrentTermLabel(value);
         var pending = GetString(value, "currentSubject.unSubmitCount", "0");
-        var sessionFile = GetString(value, "sessionFile", "");
-
         HomeSessionStatusText.Text = ready;
         HomeUserText.Text = user;
         HomeScopeText.Text = $"{className} · {subject}";
         HomePendingTaskText.Text = pending;
         HomeTermText.Text = string.IsNullOrWhiteSpace(term) ? "未知学期" : term;
-        HomeSessionFileText.Text = string.IsNullOrWhiteSpace(sessionFile) ? "-" : sessionFile;
+        UpdateHomeCredentialStatus();
         PopulateHomeTermCombo(value);
     }
 
@@ -1400,7 +1401,6 @@ public sealed partial class MainWindow : Window
             switch (_currentPage)
             {
                 case "home":
-                    await ToolAsync("login_in_browser");
                     await RefreshSessionAsync();
                     break;
                 case "agent":
@@ -1437,7 +1437,7 @@ public sealed partial class MainWindow : Window
             switch (_currentPage)
             {
                 case "home":
-                    await RefreshSessionAsync();
+                    await InvokeAsync("app:open-path", new { key = "dataRoot" });
                     break;
                 case "agent":
                     await InvokeAsync("agent:conversations:create", new { title = "新对话" });
@@ -1472,9 +1472,6 @@ public sealed partial class MainWindow : Window
         {
             switch (_currentPage)
             {
-                case "home":
-                    await InvokeAsync("app:open-path", new { key = "dataRoot" });
-                    break;
                 case "agent":
                     await InvokeAsync("agent:compact");
                     await LoadConversationsAsync();
@@ -2330,6 +2327,184 @@ public sealed partial class MainWindow : Window
             await RefreshSessionAsync();
             SetStatus($"已切换学期：{item.Label}");
         });
+    }
+
+    private async void OnHomeCredentialLoginClick(object sender, RoutedEventArgs args)
+    {
+        if (_homeLoginRunning) return;
+
+        var username = HomeAccountBox.Text.Trim();
+        var password = HomePasswordBox.Password;
+        if (string.IsNullOrWhiteSpace(username))
+        {
+            HomeLoginStatusText.Text = "请输入办学帮账号。";
+            HomeAccountBox.Focus(FocusState.Programmatic);
+            return;
+        }
+        if (string.IsNullOrEmpty(password))
+        {
+            HomeLoginStatusText.Text = "请输入办学帮密码。";
+            HomePasswordBox.Focus(FocusState.Programmatic);
+            return;
+        }
+        if (HomeAgreeTermsCheckBox.IsChecked != true)
+        {
+            HomeLoginStatusText.Text = "登录前需要确认同意办学帮登录页的用户协议和隐私政策。";
+            HomeAgreeTermsCheckBox.Focus(FocusState.Programmatic);
+            return;
+        }
+
+        _homeLoginRunning = true;
+        SetHomeLoginControlsEnabled(false);
+        HomeLoginStatusText.Text = "正在登录并读取账号信息...";
+        SetStatus("正在登录办学帮...");
+
+        try
+        {
+            var result = await InvokeAsync("session:login", new
+            {
+                username,
+                password,
+                agreeTerms = true,
+                timeoutMs = 60000,
+            });
+            if (GetString(result, "ready", "false") != "true")
+            {
+                throw new InvalidOperationException("登录未完成，请检查账号和密码后重试。");
+            }
+
+            await RefreshSessionAsync();
+            var credentialMessage = "";
+            if (HomeRememberCredentialCheckBox.IsChecked == true)
+            {
+                try
+                {
+                    SaveLoginCredential(username, password);
+                    credentialMessage = "账号和密码已保存到 Windows 凭据保险库。";
+                }
+                catch
+                {
+                    credentialMessage = "登录成功，但账号密码未能保存，请稍后重试。";
+                }
+            }
+            else
+            {
+                ClearSavedLoginCredentials();
+                HomePasswordBox.Password = "";
+                credentialMessage = "未保存账号和密码。";
+            }
+
+            HomeLoginStatusText.Text = $"登录成功。{credentialMessage}";
+            SetStatus("办学帮登录成功");
+        }
+        catch (Exception error)
+        {
+            var message = CleanErrorMessage(error.Message);
+            HomeLoginStatusText.Text = message;
+            SetStatus(message);
+        }
+        finally
+        {
+            password = string.Empty;
+            _homeLoginRunning = false;
+            SetHomeLoginControlsEnabled(true);
+        }
+    }
+
+    private async void OnHomeClearCredentialClick(object sender, RoutedEventArgs args)
+    {
+        if (!_homeHasSavedCredential || _homeLoginRunning) return;
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = RootNavigation.XamlRoot,
+            Title = "清除已保存凭据",
+            Content = "确定从 Windows 凭据保险库中移除已保存的办学帮账号和密码吗？当前登录会话不会退出。",
+            PrimaryButtonText = "清除",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Close,
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+        ClearSavedLoginCredentials();
+        HomeAccountBox.Text = "";
+        HomePasswordBox.Password = "";
+        HomeRememberCredentialCheckBox.IsChecked = false;
+        HomeLoginStatusText.Text = "已清除保存的账号和密码。";
+        SetStatus("已清除办学帮登录凭据");
+    }
+
+    private void LoadSavedLoginCredential()
+    {
+        try
+        {
+            var vault = new PasswordVault();
+            var credentials = vault.FindAllByResource(BanxuebangCredentialResource);
+            var credential = credentials.FirstOrDefault();
+            if (credential is null)
+            {
+                UpdateHomeCredentialStatus();
+                return;
+            }
+
+            credential.RetrievePassword();
+            HomeAccountBox.Text = credential.UserName;
+            HomePasswordBox.Password = credential.Password;
+            HomeRememberCredentialCheckBox.IsChecked = true;
+            _homeHasSavedCredential = true;
+            HomeLoginStatusText.Text = $"已读取保存的账号：{credential.UserName}";
+        }
+        catch
+        {
+            _homeHasSavedCredential = false;
+        }
+
+        UpdateHomeCredentialStatus();
+    }
+
+    private void SaveLoginCredential(string username, string password)
+    {
+        ClearSavedLoginCredentials();
+        var vault = new PasswordVault();
+        vault.Add(new PasswordCredential(BanxuebangCredentialResource, username, password));
+        _homeHasSavedCredential = true;
+        UpdateHomeCredentialStatus();
+    }
+
+    private void ClearSavedLoginCredentials()
+    {
+        try
+        {
+            var vault = new PasswordVault();
+            foreach (var credential in vault.FindAllByResource(BanxuebangCredentialResource))
+            {
+                vault.Remove(credential);
+            }
+        }
+        catch
+        {
+            // PasswordVault throws when the resource has no matching credentials.
+        }
+
+        _homeHasSavedCredential = false;
+        UpdateHomeCredentialStatus();
+    }
+
+    private void UpdateHomeCredentialStatus()
+    {
+        if (HomeCredentialStatusText is null || HomeClearCredentialButton is null) return;
+        HomeCredentialStatusText.Text = _homeHasSavedCredential ? "Windows 凭据保险库" : "未保存";
+        HomeClearCredentialButton.IsEnabled = _homeHasSavedCredential && !_homeLoginRunning;
+    }
+
+    private void SetHomeLoginControlsEnabled(bool enabled)
+    {
+        HomeAccountBox.IsEnabled = enabled;
+        HomePasswordBox.IsEnabled = enabled;
+        HomeRememberCredentialCheckBox.IsEnabled = enabled;
+        HomeAgreeTermsCheckBox.IsEnabled = enabled;
+        HomeLoginButton.IsEnabled = enabled;
+        HomeClearCredentialButton.IsEnabled = enabled && _homeHasSavedCredential;
     }
 
     private async void OnHomeTermRefreshClick(object sender, RoutedEventArgs args)

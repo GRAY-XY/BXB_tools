@@ -966,7 +966,6 @@ async function callTool(name, args = {}) {
 function safeToolSchemas() {
   const tools = [
     { name: "session_status", description: "读取当前伴学邦登录状态和上下文。", parameters: { type: "object", properties: {} } },
-    { name: "login_in_browser", description: "打开浏览器让用户手动登录伴学邦。", parameters: { type: "object", properties: {} } },
     { name: "refresh_context", description: "刷新当前伴学邦学期、班级、课程上下文。", parameters: { type: "object", properties: {} } },
     { name: "list_terms", description: "列出可用学期。", parameters: { type: "object", properties: {} } },
     {
@@ -1915,6 +1914,16 @@ async function handleRequest(request, emitProgress) {
   const params = request?.params && typeof request.params === "object" ? request.params : {};
   if (method === "app.info" || method === "app:info") return appInfo();
   if (method === "app.openPath" || method === "app:open-path") return openAppPath(params.key || params.path || "workspaceDir");
+  if (method === "session.loginWithCredentials" || method === "session:login") {
+    await ensurePlaywrightBrowsers();
+    return client.loginWithCredentials({
+      username: String(params.username || ""),
+      password: String(params.password || ""),
+      headless: true,
+      timeoutMs: Number(params.timeoutMs || 60000),
+      agreeTerms: params.agreeTerms !== false,
+    });
+  }
   if (method === "tool.call" || method === "bxb:tool") return callTool(String(params.name || ""), params.args || {});
   if (method === "session.status" || method === "bxb:session") return callTool("session_status", {});
   if (method === "modelConfig.load" || method === "config:model:load") return loadModelConfig();

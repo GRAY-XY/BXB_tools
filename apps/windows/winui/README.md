@@ -101,6 +101,7 @@ Current prototype method groups:
 - `app.info`
 - `app.openPath`
 - `session.status`
+- `session:login` (headless credential login; credentials are never persisted by the Node bridge)
 - `tool.call`
 - `modelConfig.load`
 - `modelConfig.save`

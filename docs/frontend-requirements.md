@@ -42,9 +42,11 @@ Required content:
 
 - Runtime summary: Electron UI, Agent availability, and login state.
 - Login card:
-  - Browser login.
+  - Native account and password fields inside the app; login must not open a visible browser window.
+  - Explicit agreement checkbox for the Banxuebang login-page terms and privacy policy.
+  - Optional account/password saving through Windows Credential Locker only.
+  - Clear-saved-credential action with an in-app confirmation.
   - Refresh session.
-  - Local-session storage note.
 - Session summary:
   - Account name.
   - Class name.
@@ -56,6 +58,9 @@ Rules:
 
 - Do not show the current course on the home page.
 - Do not render raw `session_status` JSON in normal UI.
+- Never persist the Banxuebang account or password in JSON configuration, app data files, project files, backend logs, or diagnostics.
+- Only write saved credentials after a successful login. A failed credential save must not turn an otherwise successful login into a failed session.
+- If Banxuebang requires a captcha or additional verification, show a concise unsupported-verification message without exposing login-page text.
 
 ## Agent Page
 
