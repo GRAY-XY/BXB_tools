@@ -1245,11 +1245,22 @@ export class BanxuebangClient {
       if (agreeTerms) {
         const checkbox = page.locator('input[type="checkbox"]').first();
         if ((await checkbox.count()) > 0 && !(await checkbox.isChecked())) {
-          await checkbox.check({ force: true });
+          const visibleControl = checkbox.locator("xpath=..").locator(".el-checkbox__inner");
+          if ((await visibleControl.count()) > 0 && (await visibleControl.isVisible())) {
+            await visibleControl.click();
+          } else {
+            await checkbox.evaluate((element) => element.click());
+          }
+          if (!(await checkbox.isChecked())) {
+            throw new Error("无法确认办学帮用户协议和隐私政策，请稍后重试。");
+          }
         }
       }
 
-      const loginButton = page.getByRole("button", { name: /登录/ }).first();
+      const loginButton = page.getByRole("button", { name: /登\s*录/ }).first();
+      if ((await loginButton.count()) === 0 || !(await loginButton.isVisible())) {
+        throw new Error("无法找到办学帮登录按钮，请稍后重试。");
+      }
       await loginButton.click();
 
       try {
@@ -1262,10 +1273,9 @@ export class BanxuebangClient {
           undefined,
           { timeout: timeoutMs },
         );
-      } catch (error) {
-        const bodyText = (await page.locator("body").innerText().catch(() => "")) || "";
+      } catch {
         throw new Error(
-          `Login did not complete. URL: ${page.url()}. Page text preview: ${bodyText.slice(0, 300)}`,
+          "账号登录未完成，请检查账号和密码；如果办学帮要求验证码或额外验证，当前内置登录暂时无法完成。",
         );
       }
 

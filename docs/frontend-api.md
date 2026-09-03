@@ -1,6 +1,16 @@
 # Frontend API
 
-This document describes the API surface exposed to the desktop frontend by the Electron preload layer.
+This document describes the API surface exposed to the desktop frontends. The active WinUI client uses the JSONL Node bridge; the retained Electron client uses the preload API documented below.
+
+## WinUI Credential Login
+
+The WinUI home page calls the dedicated bridge method instead of exposing credential login as an autonomous Agent tool:
+
+```json
+{"method":"session:login","params":{"username":"ACCOUNT","password":"PASSWORD","agreeTerms":true,"timeoutMs":60000}}
+```
+
+The bridge always runs this login headlessly and returns the normal summarized session result. It must not persist or log the account/password. If the user enables saving, WinUI writes the credentials to Windows Credential Locker only after the session is established. `login_in_browser` remains a direct maintenance/legacy tool but is not part of the autonomous Agent tool set.
 
 The frontend must access backend features only through `window.bxb`. Do not import Node modules from React code and do not read local files directly from the renderer.
 
@@ -223,7 +233,6 @@ This is the main bridge from UI to the local Banxuebang tool registry.
 Common frontend calls:
 
 ```ts
-await window.bxb.callTool("login_in_browser", {});
 await window.bxb.callTool("list_terms", {});
 await window.bxb.callTool("set_current_term", { term_name: "2025-2026下学期" });
 await window.bxb.callTool("list_courses", {});
@@ -387,7 +396,6 @@ Frontend rule:
 The desktop Agent currently receives the safe read/draft helper subset:
 
 - `session_status`
-- `login_in_browser`
 - `refresh_context`
 - `list_terms`
 - `set_current_term`
