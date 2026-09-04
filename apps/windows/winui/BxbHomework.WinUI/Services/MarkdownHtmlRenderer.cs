@@ -6,7 +6,7 @@ namespace BxbHomework.WinUI.Services;
 internal static class MarkdownHtmlRenderer
 {
     public static string RenderConversation(
-        IEnumerable<(string Id, string Role, string Text, bool IsRunning, int StepCount)> messages,
+        IEnumerable<(string Id, string Role, string Text, bool IsRunning, JsonElement? Steps, bool ProcessExpanded)> messages,
         string theme = "light",
         bool followLatest = true,
         double scrollTop = 0,
@@ -19,7 +19,10 @@ internal static class MarkdownHtmlRenderer
             role = message.Role == "user" ? "user" : "assistant",
             text = message.Text,
             running = message.IsRunning,
-            stepCount = message.StepCount,
+            steps = message.Steps.HasValue && message.Steps.Value.ValueKind == JsonValueKind.Array
+                ? message.Steps.Value.EnumerateArray().Select(step => step.Clone()).ToArray()
+                : Array.Empty<JsonElement>(),
+            processExpanded = message.ProcessExpanded,
         }).ToList();
         var payload = JsonSerializer.Serialize(rows);
         var viewState = JsonSerializer.Serialize(new { followLatest, scrollTop, viewVersion });
@@ -51,6 +54,8 @@ internal static class MarkdownHtmlRenderer
       --user-bg: rgba(0, 120, 212, .10);
       --link: #0067c0;
       --button-hover: rgba(0,0,0,.065);
+      --process-line: rgba(0,0,0,.14);
+      --process-active: #0067c0;
     }
     html[data-theme="dark"] {
       color-scheme: dark;
@@ -62,6 +67,8 @@ internal static class MarkdownHtmlRenderer
       --user-bg: rgba(0, 120, 212, .22);
       --link: #65baff;
       --button-hover: rgba(255,255,255,.09);
+      --process-line: rgba(255,255,255,.18);
+      --process-active: #65baff;
     }
     html, body {
       margin: 0;
@@ -113,25 +120,98 @@ internal static class MarkdownHtmlRenderer
       user-select: none;
     }
     .assistant-body { min-width: 0; }
-    .assistant-status {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      min-height: 28px;
+    .process {
+      margin: 0 0 10px;
       color: var(--muted);
       font-size: 13px;
     }
-    .status-dot {
+    .process > summary {
+      min-height: 30px;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      width: fit-content;
+      max-width: 100%;
+      cursor: pointer;
+      user-select: none;
+      list-style: none;
+      border-radius: 6px;
+      padding: 1px 5px 1px 2px;
+    }
+    .process > summary::-webkit-details-marker { display: none; }
+    .process > summary:hover { color: var(--fg); background: var(--button-hover); }
+    .process-indicator {
+      width: 14px;
+      height: 14px;
+      flex: 0 0 14px;
+      box-sizing: border-box;
+      border: 2px solid var(--process-line);
+      border-top-color: var(--process-active);
+      border-radius: 50%;
+    }
+    .process.running .process-indicator { animation: spin .9s linear infinite; }
+    .process.complete .process-indicator {
+      border: 0;
+      border-radius: 0;
+      color: var(--muted);
+    }
+    .process.complete .process-indicator::before { content: "✓"; font-weight: 600; }
+    .process-label { color: var(--fg); font-weight: 600; white-space: nowrap; }
+    .process-current { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .process-chevron { margin-left: 1px; transform: rotate(0deg); transition: transform .14s ease; }
+    .process[open] > summary .process-chevron { transform: rotate(90deg); }
+    .process-timeline {
+      margin: 7px 0 3px 7px;
+      padding: 2px 0 2px 17px;
+      border-left: 1px solid var(--process-line);
+    }
+    .process-step { position: relative; padding: 1px 0 13px; color: var(--fg); }
+    .process-step:last-child { padding-bottom: 3px; }
+    .process-step::before {
+      content: "";
+      position: absolute;
       width: 7px;
       height: 7px;
+      left: -21px;
+      top: 7px;
       border-radius: 50%;
-      background: var(--link);
-      animation: pulse 1.2s ease-in-out infinite;
+      background: var(--process-line);
+      box-shadow: 0 0 0 3px var(--bg);
     }
+    .process-step.active::before { background: var(--process-active); }
+    .step-heading { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+    .step-title { font-weight: 600; overflow-wrap: anywhere; }
+    .step-meta { color: var(--muted); font-size: 11px; white-space: nowrap; }
+    .step-disclosure > summary {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      width: fit-content;
+      max-width: 100%;
+      cursor: pointer;
+      list-style: none;
+      border-radius: 5px;
+      padding: 1px 4px 1px 0;
+    }
+    .step-disclosure > summary::-webkit-details-marker { display: none; }
+    .step-disclosure > summary:hover { background: var(--button-hover); }
+    .step-disclosure-chevron {
+      color: var(--muted);
+      font-size: 12px;
+      transform: rotate(0deg);
+      transition: transform .14s ease;
+    }
+    .step-disclosure[open] > summary .step-disclosure-chevron { transform: rotate(90deg); }
+    .step-detail-content { padding-left: 15px; }
+    .step-detail { margin-top: 4px; color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+    .step-fields { display: grid; grid-template-columns: minmax(72px, auto) minmax(0, 1fr); gap: 3px 12px; margin-top: 5px; }
+    .step-field-name { color: var(--muted); }
+    .step-field-value { color: var(--fg); white-space: pre-wrap; overflow-wrap: anywhere; }
     @keyframes pulse {
       0%, 100% { opacity: .35; transform: scale(.85); }
       50% { opacity: 1; transform: scale(1); }
     }
+    @keyframes spin { to { transform: rotate(360deg); } }
     .message-actions {
       display: flex;
       gap: 4px;
@@ -285,6 +365,100 @@ internal static class MarkdownHtmlRenderer
       });
     }
 
+    const stepKindLabels = {
+      llm: '模型',
+      tool: '工具',
+      context: '上下文',
+      vision: '图片',
+      done: '完成',
+      error: '错误',
+      canceled: '已停止'
+    };
+    const stepFieldLabels = {
+      task_id: 'Task ID', taskId: 'Task ID', draft_id: '草稿 ID', draftId: '草稿 ID',
+      filePath: '路径', path: '路径', fileName: '名称', name: '名称', title: '标题',
+      message: '信息', status: '状态', ok: '成功', error: '错误', text: '内容', content: '内容',
+      count: '数量', total: '总数', page: '页码', size: '大小'
+    };
+
+    function truncateText(value, limit = 520) {
+      const text = String(value == null ? '' : value);
+      return text.length > limit ? `${text.slice(0, limit)}…` : text;
+    }
+
+    function summarizeStepValue(value) {
+      if (value == null) return '';
+      if (typeof value === 'boolean') return value ? '是' : '否';
+      if (typeof value === 'string' || typeof value === 'number') return truncateText(value);
+      if (Array.isArray(value)) {
+        const primitives = value.filter(item => item == null || ['string', 'number', 'boolean'].includes(typeof item)).slice(0, 5);
+        return primitives.length ? `${primitives.map(item => summarizeStepValue(item)).join('、')}${value.length > primitives.length ? ` 等 ${value.length} 项` : ''}` : `${value.length} 项`;
+      }
+      if (typeof value === 'object') {
+        for (const key of ['message', 'title', 'name', 'status', 'ok', 'error', 'summary', 'text']) {
+          if (Object.prototype.hasOwnProperty.call(value, key)) return summarizeStepValue(value[key]);
+        }
+        return `${Object.keys(value).length} 个字段`;
+      }
+      return truncateText(value);
+    }
+
+    function renderStepDetail(detail) {
+      if (!detail) return '';
+      let parsed;
+      try { parsed = JSON.parse(detail); } catch { parsed = null; }
+      if (!parsed || typeof parsed !== 'object') {
+        return `<div class="step-detail">${escapeHtml(truncateText(detail, 1200))}</div>`;
+      }
+      const entries = (Array.isArray(parsed) ? parsed.map((value, index) => [String(index + 1), value]) : Object.entries(parsed))
+        .filter(([key]) => key !== 'raw' && key !== 'html')
+        .slice(0, 12)
+        .map(([key, value]) => [stepFieldLabels[key] || key, summarizeStepValue(value)])
+        .filter(([, value]) => value);
+      if (!entries.length) return '<div class="step-detail">结果为空。</div>';
+      return `<div class="step-fields">${entries.map(([key, value]) => `<div class="step-field-name">${escapeHtml(key)}</div><div class="step-field-value">${escapeHtml(value)}</div>`).join('')}</div>`;
+    }
+
+    function formatStepTime(value) {
+      const date = new Date(value || '');
+      return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
+
+    function processDuration(steps) {
+      if (steps.length < 2) return '';
+      const start = new Date(steps[0].at || '').getTime();
+      const end = new Date(steps[steps.length - 1].at || '').getTime();
+      if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return '';
+      const seconds = Math.max(1, Math.round((end - start) / 1000));
+      return seconds < 60 ? `${seconds} 秒` : `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`;
+    }
+
+    function renderProcess(message) {
+      const steps = Array.isArray(message.steps) ? message.steps : [];
+      if (!message.running && !steps.length) return '';
+      const latest = steps.length ? steps[steps.length - 1] : null;
+      const currentTitle = latest && (latest.title || latest.kind) ? String(latest.title || latest.kind) : '准备请求模型';
+      const duration = processDuration(steps);
+      const statusText = message.running ? 'Thinking' : '执行过程';
+      const secondaryText = message.running
+        ? currentTitle
+        : `${steps.length} 个步骤${duration ? ` · ${duration}` : ''}`;
+      const timeline = steps.length
+        ? steps.map((step, index) => {
+            const title = escapeHtml(step.title || step.kind || `步骤 ${index + 1}`);
+            const meta = [stepKindLabels[step.kind] || step.kind || '', formatStepTime(step.at)].filter(Boolean).join(' · ');
+            const active = message.running && index === steps.length - 1 ? ' active' : '';
+            const heading = `<span class="step-title">${title}</span>${meta ? `<span class="step-meta">${escapeHtml(meta)}</span>` : ''}`;
+            const detail = renderStepDetail(step.detail || '');
+            const body = detail
+              ? `<details class="step-disclosure"><summary>${heading}<span class="step-disclosure-chevron">›</span></summary><div class="step-detail-content">${detail}</div></details>`
+              : `<div class="step-heading">${heading}</div>`;
+            return `<div class="process-step${active}">${body}</div>`;
+          }).join('')
+        : '<div class="step-detail">正在准备请求模型…</div>';
+      return `<details class="process ${message.running ? 'running' : 'complete'}" data-process-id="${escapeHtml(message.id || '')}"${message.processExpanded ? ' open' : ''}><summary><span class="process-indicator"></span><span class="process-label">${statusText}</span><span class="process-current">· ${escapeHtml(secondaryText)}</span><span class="process-chevron">›</span></summary><div class="process-timeline">${timeline}</div></details>`;
+    }
+
     function renderMessage(message) {
       const raw = md.render(message.text || "");
       const clean = DOMPurify.sanitize(raw, {
@@ -297,14 +471,10 @@ internal static class MarkdownHtmlRenderer
         return `<section class="message user" data-id="${id}"><div class="user-bubble content">${clean}</div></section>`;
       }
       const running = message.running ? " running" : "";
-      const status = message.running
-        ? `<div class="assistant-status"><span class="status-dot"></span><span>正在处理请求</span></div>`
-        : "";
-      const processLabel = Number(message.stepCount || 0) > 0
-        ? `查看过程 · ${Number(message.stepCount)} 步`
-        : "查看过程";
+      const process = renderProcess(message);
       const content = clean ? `<div class="content">${clean}</div>` : "";
-      return `<section class="message assistant${running}" data-id="${id}"><div class="assistant-avatar">BXB</div><div class="assistant-body">${status}${content}<div class="message-actions"><button class="message-action" type="button" data-action="copy">复制</button><button class="message-action" type="button" data-action="process">${processLabel}</button></div></div></section>`;
+      const copyAction = clean ? '<div class="message-actions"><button class="message-action" type="button" data-action="copy">复制</button></div>' : '';
+      return `<section class="message assistant${running}" data-id="${id}"><div class="assistant-avatar">BXB</div><div class="assistant-body">${process}${content}${copyAction}</div></section>`;
     }
 
     function escapeHtml(text) {
@@ -330,6 +500,12 @@ internal static class MarkdownHtmlRenderer
       }
     }
 
+    document.querySelectorAll('details.process[data-process-id]').forEach((details) => {
+      details.addEventListener('toggle', () => {
+        postMessage({ type: 'process-state', id: details.getAttribute('data-process-id') || '', expanded: details.open });
+      });
+    });
+
     document.addEventListener("click", (event) => {
       const link = event.target.closest && event.target.closest("a[href]");
       if (link) {
@@ -349,7 +525,7 @@ internal static class MarkdownHtmlRenderer
         const message = action.closest(".message.assistant[data-id]");
         const id = message ? message.getAttribute("data-id") || "" : "";
         if (!id) return;
-        postMessage({ type: action.getAttribute("data-action") === "copy" ? "copy-message" : "show-process", id });
+        postMessage({ type: "copy-message", id });
       }
     });
 

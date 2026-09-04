@@ -82,6 +82,7 @@ public sealed partial class MainWindow : Window
     private JsonElement? _draftSubmitPreview;
     private JsonElement? _draftMessagePreview;
     private readonly List<AgentChatMessage> _agentPreviewMessages = new();
+    private readonly HashSet<string> _expandedAgentProcessIds = new(StringComparer.Ordinal);
     private WebView2? _agentMarkdownWebView;
     private bool _agentMarkdownWebViewUnavailable;
     private int _agentMarkdownRenderVersion;
@@ -272,6 +273,8 @@ public sealed partial class MainWindow : Window
         ThirdActionButton.Visibility = Visibility.Collapsed;
         FourthActionButton.Visibility = Visibility.Collapsed;
         DangerActionButton.Visibility = Visibility.Collapsed;
+        ThirdActionButton.IsEnabled = true;
+        DangerActionButton.IsEnabled = true;
         DetailPrimaryButton.Visibility = Visibility.Collapsed;
         DetailSecondaryButton.Visibility = Visibility.Collapsed;
         SetAgentStepsMessage("");
@@ -369,6 +372,12 @@ public sealed partial class MainWindow : Window
         PrimaryActionButton.Content = "刷新";
         SecondaryActionButton.Content = "打开文件夹";
         SecondaryActionButton.Visibility = Visibility.Visible;
+        ThirdActionButton.Content = "重命名";
+        ThirdActionButton.Visibility = Visibility.Visible;
+        ThirdActionButton.IsEnabled = false;
+        DangerActionButton.Content = "删除文件";
+        DangerActionButton.Visibility = Visibility.Visible;
+        DangerActionButton.IsEnabled = false;
     }
 
     private void RenderMessages()
@@ -1506,6 +1515,9 @@ public sealed partial class MainWindow : Window
                     }
                     await ApproveDraftAsync();
                     break;
+                case "workspace":
+                    await RenameWorkspaceFileAsync();
+                    break;
                 case "settings":
                     await InvokeAsync("update:open-url");
                     break;
@@ -1545,6 +1557,10 @@ public sealed partial class MainWindow : Window
             else if (_currentPage == "drafts")
             {
                 await DeleteDraftAsync();
+            }
+            else if (_currentPage == "workspace")
+            {
+                await DeleteWorkspaceFileAsync();
             }
         });
     }
@@ -1981,6 +1997,12 @@ public sealed partial class MainWindow : Window
 
     private async void OnMainListSelectionChanged(object sender, SelectionChangedEventArgs args)
     {
+        if (_currentPage == "workspace")
+        {
+            var hasWorkspaceFile = MainListView.SelectedItem is DisplayItem selected && !IsStateItem(selected);
+            ThirdActionButton.IsEnabled = hasWorkspaceFile;
+            DangerActionButton.IsEnabled = hasWorkspaceFile;
+        }
         if (MainListView.SelectedItem is not DisplayItem item) return;
         if (IsStateItem(item)) return;
         await RunUiAsync(async () =>
@@ -2119,6 +2141,119 @@ public sealed partial class MainWindow : Window
         }
         var result = await ToolAsync("read_workspace_file", new { file = GetString(item.Data, "relativePath", item.Title), max_chars = 8000 });
         SetDetail(FormatWorkspacePreview(result));
+    }
+
+    private async Task RenameWorkspaceFileAsync()
+    {
+        if (MainListView.SelectedItem is not DisplayItem item || IsStateItem(item))
+        {
+            SetStatus("请先选择要重命名的文件");
+            return;
+        }
+
+        var newName = await PromptWorkspaceFileNameAsync(item.Title);
+        if (newName is null || string.Equals(newName, item.Title, StringComparison.Ordinal)) return;
+        var result = await InvokeAsync("workspace:rename", new
+        {
+            file = GetString(item.Data, "relativePath", item.Id),
+            newName,
+        });
+        var renamed = result.GetProperty("file").Clone();
+        SynchronizePendingWorkspaceRename(GetString(result, "oldPath", ""), renamed);
+        await LoadWorkspaceFilesAsync();
+        var relativePath = GetString(renamed, "relativePath", "");
+        MainListView.SelectedItem = _items.FirstOrDefault(candidate => candidate.Id == relativePath);
+        SetStatus($"已重命名为：{GetString(renamed, "name", newName)}");
+    }
+
+    private async Task DeleteWorkspaceFileAsync()
+    {
+        if (MainListView.SelectedItem is not DisplayItem item || IsStateItem(item))
+        {
+            SetStatus("请先选择要删除的文件");
+            return;
+        }
+        if (!await ConfirmWorkspaceFileDeleteAsync(item.Title)) return;
+
+        var path = GetString(item.Data, "path", "");
+        await InvokeAsync("workspace:delete", new { file = GetString(item.Data, "relativePath", item.Id) });
+        RemovePendingWorkspaceFile(path);
+        SetDetail("文件已删除。选择其他文件进行预览。");
+        await LoadWorkspaceFilesAsync();
+        SetStatus($"已删除文件：{item.Title}");
+    }
+
+    private async Task<string?> PromptWorkspaceFileNameAsync(string currentName)
+    {
+        var input = new TextBox
+        {
+            Text = currentName,
+            MaxLength = 255,
+            PlaceholderText = "输入新的文件名",
+        };
+        input.Loaded += (_, _) =>
+        {
+            input.Focus(FocusState.Programmatic);
+            var extensionLength = Path.GetExtension(currentName).Length;
+            input.SelectionStart = 0;
+            input.SelectionLength = Math.Max(0, currentName.Length - extensionLength);
+        };
+        var dialog = new ContentDialog
+        {
+            XamlRoot = RootNavigation.XamlRoot,
+            Title = "重命名文件",
+            Content = input,
+            PrimaryButtonText = "保存",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Primary,
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return null;
+        var name = input.Text.Trim();
+        if (!string.IsNullOrWhiteSpace(name)) return name;
+        SetStatus("文件名不能为空");
+        return null;
+    }
+
+    private async Task<bool> ConfirmWorkspaceFileDeleteAsync(string name)
+    {
+        var dialog = new ContentDialog
+        {
+            XamlRoot = RootNavigation.XamlRoot,
+            Title = "删除文件",
+            Content = $"确定永久删除“{name}”吗？此操作无法撤销。",
+            PrimaryButtonText = "删除",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Close,
+        };
+        return await dialog.ShowAsync() == ContentDialogResult.Primary;
+    }
+
+    private void SynchronizePendingWorkspaceRename(string oldPath, JsonElement renamed)
+    {
+        if (string.IsNullOrWhiteSpace(oldPath)) return;
+        for (var index = 0; index < _agentComposerFiles.Count; index++)
+        {
+            if (!string.Equals(_agentComposerFiles[index].Path, oldPath, StringComparison.OrdinalIgnoreCase)) continue;
+            _agentComposerFiles[index] = new DisplayItem
+            {
+                Id = _agentComposerFiles[index].Id,
+                Title = GetString(renamed, "name", _agentComposerFiles[index].Title),
+                Subtitle = GetString(renamed, "relativePath", _agentComposerFiles[index].Subtitle),
+                Path = GetString(renamed, "path", _agentComposerFiles[index].Path),
+                Data = renamed.Clone(),
+            };
+        }
+        UpdateAgentComposerFilesVisibility();
+    }
+
+    private void RemovePendingWorkspaceFile(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return;
+        foreach (var pending in _agentComposerFiles.Where(candidate => string.Equals(candidate.Path, path, StringComparison.OrdinalIgnoreCase)).ToList())
+        {
+            _agentComposerFiles.Remove(pending);
+        }
+        UpdateAgentComposerFilesVisibility();
     }
 
     private async Task OpenPrivateContactAsync(DisplayItem item)
@@ -2823,12 +2958,14 @@ public sealed partial class MainWindow : Window
     private void RenderAgentMessages(IReadOnlyList<AgentChatMessage> messages)
     {
         var snapshot = messages.ToList();
-        RenderAgentFallback(snapshot);
         if (AgentPanel.Visibility == Visibility.Visible && !_agentMarkdownWebViewUnavailable)
         {
+            if (_agentMarkdownWebView is null) RenderAgentFallback(snapshot);
             var version = ++_agentMarkdownRenderVersion;
             _ = RenderAgentMarkdownAsync(snapshot, version);
+            return;
         }
+        RenderAgentFallback(snapshot);
     }
 
     private async Task RenderAgentMarkdownAsync(IReadOnlyList<AgentChatMessage> messages, int version)
@@ -2847,9 +2984,8 @@ public sealed partial class MainWindow : Window
                     message.Role,
                     message.Text,
                     message.IsRunning,
-                    StepCount: message.Steps.HasValue && message.Steps.Value.ValueKind == JsonValueKind.Array
-                        ? message.Steps.Value.GetArrayLength()
-                        : 0)),
+                    message.Steps,
+                    ProcessExpanded: _expandedAgentProcessIds.Contains(message.Id))),
                 GetCurrentUiTheme(),
                 _agentShouldFollowLatest,
                 _agentScrollTop,
@@ -2923,6 +3059,16 @@ public sealed partial class MainWindow : Window
                 SelectAgentMessage(GetString(root, "id", ""));
                 return;
             }
+            if (type == "process-state")
+            {
+                var messageId = GetString(root, "id", "");
+                if (string.IsNullOrWhiteSpace(messageId)) return;
+                var expanded = root.TryGetProperty("expanded", out var expandedValue)
+                    && expandedValue.ValueKind == JsonValueKind.True;
+                if (expanded) _expandedAgentProcessIds.Add(messageId);
+                else _expandedAgentProcessIds.Remove(messageId);
+                return;
+            }
             if (type == "copy-message")
             {
                 var messageId = GetString(root, "id", "");
@@ -2972,11 +3118,12 @@ public sealed partial class MainWindow : Window
             if (string.IsNullOrWhiteSpace(messageId)) return;
             if (progress.TryGetProperty("steps", out var steps))
             {
-                SetAgentMessageSteps(messageId, steps.Clone(), isRunning: true);
+                var updated = SetAgentMessageSteps(messageId, steps.Clone(), isRunning: true);
                 if (_selectedAgentMessageId == messageId)
                 {
                     SetAgentStepsFromSteps(steps);
                 }
+                if (updated && _currentPage == "agent") RenderAgentMessages(_agentPreviewMessages);
             }
         });
     }
@@ -3020,16 +3167,17 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void SetAgentMessageSteps(string messageId, JsonElement steps, bool isRunning)
+    private bool SetAgentMessageSteps(string messageId, JsonElement steps, bool isRunning)
     {
         for (var index = 0; index < _agentPreviewMessages.Count; index += 1)
         {
             if (_agentPreviewMessages[index].Id == messageId)
             {
                 _agentPreviewMessages[index] = _agentPreviewMessages[index] with { Steps = steps.Clone(), IsRunning = isRunning };
-                return;
+                return true;
             }
         }
+        return false;
     }
 
     private void ReplaceAgentMessage(string messageId, string text, JsonElement? steps, bool isRunning)
@@ -3339,6 +3487,7 @@ public sealed partial class MainWindow : Window
             _agentShouldFollowLatest = true;
             _agentScrollTop = 0;
             _selectedAgentMessageId = "";
+            _expandedAgentProcessIds.Clear();
             AgentStepsDrawer.Visibility = Visibility.Collapsed;
         }
         _activeConversationId = conversationId;

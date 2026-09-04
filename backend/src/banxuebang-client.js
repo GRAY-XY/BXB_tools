@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
@@ -1102,12 +1102,37 @@ export class BanxuebangClient {
       throw new Error("New workspace file name must stay inside the workspace.");
     }
 
-    await rename(oldPath, nextPath);
+    const samePath = process.platform === "win32"
+      ? path.resolve(oldPath).toLowerCase() === path.resolve(nextPath).toLowerCase()
+      : path.resolve(oldPath) === path.resolve(nextPath);
+    if (!samePath) {
+      try {
+        await stat(nextPath);
+        throw new Error(`Workspace file "${nextName}" already exists.`);
+      } catch (error) {
+        if (error?.code !== "ENOENT") throw error;
+      }
+    }
+
+    if (oldPath !== nextPath) await rename(oldPath, nextPath);
     const fileStat = await stat(nextPath);
     return {
       workspaceDir,
       oldPath,
       file: summarizeLocalFile(nextPath, workspaceDir, fileStat),
+    };
+  }
+
+  async deleteWorkspaceFile({ file } = {}) {
+    const filePath = await this.resolveWorkspaceFile(file);
+    const workspaceDir = await this.ensureWorkspaceDir();
+    const fileStat = await stat(filePath);
+    const deleted = summarizeLocalFile(filePath, workspaceDir, fileStat);
+    await unlink(filePath);
+    return {
+      ok: true,
+      workspaceDir,
+      deleted,
     };
   }
 

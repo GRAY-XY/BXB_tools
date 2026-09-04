@@ -1405,6 +1405,39 @@ function safeToolSchemas() {
   }));
 }
 
+const AGENT_TOOL_TITLES = Object.freeze({
+  session_status: "检查登录状态",
+  refresh_context: "刷新课程上下文",
+  list_terms: "读取学期列表",
+  set_current_term: "切换当前学期",
+  list_courses: "读取课程列表",
+  set_current_subject: "切换当前课程",
+  list_tasks: "读取作业列表",
+  open_task: "打开作业详情",
+  read_task_content: "读取作业内容",
+  get_current_subject_gpa: "读取课程 GPA",
+  get_achievement_overview: "读取成绩概览",
+  download_task_attachment: "下载作业附件",
+  read_task_attachment: "读取作业附件",
+  list_workspace_files: "读取工作区文件",
+  read_workspace_file: "读取工作区文件内容",
+  rename_workspace_file: "重命名工作区文件",
+  write_workspace_text_file: "写入工作区文本",
+  extract_pdf_text: "读取 PDF",
+  extract_docx_text: "读取 Word 文档",
+  run_python_snippet: "运行 Python 计算",
+  web_search: "搜索网页",
+  read_web_page: "读取网页内容",
+  collect_task_submission_context: "整理作业提交信息",
+  draft_task_submission: "保存作业草稿",
+  list_submission_drafts: "读取草稿列表",
+  get_submission_draft: "读取草稿详情",
+});
+
+function agentToolTitle(name) {
+  return AGENT_TOOL_TITLES[String(name || "")] || String(name || "未知工具");
+}
+
 async function withConversationLock(conversationId, operation) {
   const state = await loadConversationState();
   const key = String(conversationId || state.activeId || "__active_conversation__");
@@ -1757,7 +1790,7 @@ async function runAgent({ text, attachments, conversationId, userMessageId, assi
       }
 
       let messages = buildAgentMessages(config, conversation, runtimeMessages);
-      pushStep("llm", `第 ${index + 1} 轮请求模型`);
+      pushStep("llm", index === 0 ? "正在分析请求" : "正在结合工具结果继续分析");
       let response = await fetch(deriveChatUrl(config.baseUrl), {
         method: "POST",
         signal,
@@ -1823,16 +1856,17 @@ async function runAgent({ text, attachments, conversationId, userMessageId, assi
       for (const call of toolCalls) {
         throwIfAgentAborted(signal);
         const toolName = call?.function?.name;
+        const toolTitle = agentToolTitle(toolName);
         try {
           const args = JSON.parse(call?.function?.arguments || "{}");
-          pushStep("tool", `调用工具 ${toolName}`, JSON.stringify(args, null, 2));
+          pushStep("tool", `正在${toolTitle}`, JSON.stringify(args, null, 2));
           const result = await callTool(toolName, args, { signal });
-          pushStep("tool", `工具 ${toolName} 已完成`, JSON.stringify(result, null, 2).slice(0, 4000));
+          pushStep("tool", `${toolTitle}完成`, JSON.stringify(result, null, 2).slice(0, 4000));
           runtimeMessages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) });
         } catch (error) {
           if (isAgentAbort(error, signal)) throw error;
           const message = String(error?.message || error || "工具调用失败");
-          pushStep("tool", `工具 ${toolName} 失败`, message);
+          pushStep("tool", `${toolTitle}失败`, message);
           runtimeMessages.push({
             role: "tool",
             tool_call_id: call.id,
@@ -2401,6 +2435,12 @@ async function handleRequest(request, emitProgress) {
   }
   if (method === "workspace.importPaths" || method === "workspace:import") return importWorkspacePaths(params.paths || []);
   if (method === "workspace.savePastes" || method === "workspace:save-pastes") return saveWorkspacePastes(params.items);
+  if (method === "workspace.rename" || method === "workspace:rename") {
+    return client.renameWorkspaceFile({ file: params.file, newName: params.newName || params.new_name });
+  }
+  if (method === "workspace.delete" || method === "workspace:delete") {
+    return client.deleteWorkspaceFile({ file: params.file });
+  }
   if (method === "workspace.open" || method === "workspace:open") return openAppPath("workspaceDir");
   if (method === "workspace.imageDataUrl" || method === "workspace:image-data-url") return getWorkspaceImageDataUrl(params.filePath);
   if (method === "workspace.docxPreview" || method === "workspace:docx-preview") return getWorkspaceDocxPreview(params.filePath);

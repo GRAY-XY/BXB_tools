@@ -118,6 +118,8 @@ Current prototype method groups:
 - `agent.reset`
 - `workspace.importPaths`
 - `workspace.savePastes`
+- `workspace.rename`
+- `workspace.delete`
 - `workspace.open`
 - `workspace.imageDataUrl`
 - `update.check`
@@ -127,7 +129,7 @@ Current prototype method groups:
 - `update.cancel`
 - `update.openUrl`
 
-The WinUI shell currently exposes native pages for Home, Agent, Homework, Drafts, Private Messages, Workspace, Updates, and Settings. Complex confirmation flows such as draft submission, private-message sending, and installer launch are available in the backend but should still be surfaced through dedicated confirmation UI before normal use.
+The WinUI shell currently exposes native pages for Home, Agent, Homework, Drafts, Private Messages, Workspace, Updates, and Settings. Agent messages show a live inline `Thinking` row with the current step and an expandable structured timeline; individual step arguments and results are collapsed by default. Complex confirmation flows such as draft submission, private-message sending, and installer launch are available in the backend but should still be surfaced through dedicated confirmation UI before normal use.
 
 Draft JSON is stored in `%APPDATA%\bxb-homework-electron\.banxuebang\drafts`. The installer migrates drafts written by older builds under the packaged payload before replacing the installation directory.
 
