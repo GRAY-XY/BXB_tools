@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { fetch as undiciFetch, ProxyAgent } from "undici";
 import { BanxuebangClient } from "../src/banxuebang-client.js";
+import { DraftStore, migrateDraftFiles } from "../src/draft-store.js";
 import {
   contextBudget,
   contextDefaults,
@@ -38,6 +39,10 @@ const WINDOWS_RELEASE_TITLE_PREFIX = "BXB Homework v";
 const LEGACY_WINDOWS_PREVIEW_TITLE_PREFIX = "BXB Homework Win v";
 const MAX_INLINE_IMAGE_BYTES = 25 * 1024 * 1024;
 const MAX_PASTED_FILE_BYTES = 25 * 1024 * 1024;
+const DEFAULT_PDF_VISION_MAX_PAGES = 12;
+const MAX_PDF_VISION_PAGES = 30;
+const PDF_VISION_BATCH_SIZE = 4;
+const PDF_VISION_PAGE_WIDTH = 1280;
 const IMAGE_MIME_BY_EXTENSION = new Map([
   [".png", "image/png"],
   [".jpg", "image/jpeg"],
@@ -56,12 +61,22 @@ const PASTED_IMAGE_EXTENSION_BY_MIME = new Map([
   ["image/avif", ".avif"],
 ]);
 const DEFAULT_SYSTEM_PROMPT =
-  "你是伴学邦桌面助手。需要真实数据时必须调用工具，不要猜测。需要联网资料时先调用 web_search；需要阅读某个搜索结果时再调用 read_web_page。用户提到工作区文件时，先调用 list_workspace_files 定位文件，再按需调用 read_workspace_file；需要整理文件名时可调用 rename_workspace_file。不要上传、提交、私信或删除任何内容。处理作业草稿时先调用 collect_task_submission_context；信息不足就说明缺什么；信息足够才调用 draft_task_submission 保存草稿等待用户审核。如果作业已过期且可能无法补交，可以在草稿提示字段中建议用户私信老师，但只能保存草稿等待用户审核。给出或保存草稿正文时，draft_text 必须是纯文本正文，不要使用 Markdown 标题、列表、表格、代码块、加粗、引用或其他 Markdown 格式；如果需要给用户说明保存状态，可以在助手回复里用 Markdown，但草稿正文内容本身必须保持纯文本。";
+  "你是伴学邦桌面助手。需要真实数据时必须调用工具，不要猜测。需要联网资料时先调用 web_search；需要阅读某个搜索结果时再调用 read_web_page。用户提到工作区文件时，先调用 list_workspace_files 定位文件，再按需调用 read_workspace_file；需要整理文件名时可调用 rename_workspace_file。读取 PDF 时必须同时检查工具结果中的 visualAnalysis，并说明未分析的页码或视觉分析错误。不要上传、提交、私信或删除任何内容。处理作业草稿时先调用 collect_task_submission_context；信息不足就说明缺什么；信息足够才调用 draft_task_submission 保存草稿等待用户审核。如果作业已过期且可能无法补交，可以在草稿提示字段中建议用户私信老师，但只能保存草稿等待用户审核。给出或保存草稿正文时，draft_text 必须是纯文本正文，不要使用 Markdown 标题、列表、表格、代码块、加粗、引用或其他 Markdown 格式；如果需要给用户说明保存状态，可以在助手回复里用 Markdown，但草稿正文内容本身必须保持纯文本。";
 
-const client = new BanxuebangClient(new SessionStore(sessionFile));
+process.env.BANXUEBANG_SESSION_FILE = sessionFile;
+process.env.BANXUEBANG_DRAFT_DIR = draftDir;
+process.env.BANXUEBANG_WORKSPACE_DIR = workspaceDir;
+
+await migrateDraftFiles(
+  [path.join(repoRoot, ".banxuebang", "drafts"), path.join(process.cwd(), ".banxuebang", "drafts")],
+  draftDir,
+);
+
+const client = new BanxuebangClient(new SessionStore(sessionFile), new DraftStore(draftDir));
 const toolDefinitions = createToolDefinitions(client);
 let conversationStatePromise = null;
 const conversationLocks = new Map();
+const activeAgentRuns = new Map();
 let updateState = {
   status: "idle",
   update: null,
@@ -72,10 +87,6 @@ let updateState = {
   message: "",
 };
 const updateProxyAgents = new Map();
-
-process.env.BANXUEBANG_SESSION_FILE = sessionFile;
-process.env.BANXUEBANG_DRAFT_DIR = draftDir;
-process.env.BANXUEBANG_WORKSPACE_DIR = workspaceDir;
 
 function writeResponse(response) {
   process.stdout.write(`${JSON.stringify(response)}\n`);
@@ -782,13 +793,17 @@ function newConversation(title = "新对话") {
 
 function normalizeConversationMessage(message) {
   const source = message && typeof message === "object" ? message : {};
+  const interrupted = source.isRunning === true;
+  const text = String(source.text ?? source.content ?? source.message ?? "");
   return {
     ...source,
     id: String(source.id || safeId()),
     role: String(source.role || "") === "user" ? "user" : "assistant",
-    text: String(source.text ?? source.content ?? source.message ?? ""),
+    text: interrupted && !text ? "上次生成在应用退出前中断。" : text,
     at: String(source.at || source.createdAt || nowIso()),
     steps: Array.isArray(source.steps) ? source.steps : [],
+    isRunning: false,
+    status: interrupted ? "interrupted" : String(source.status || "completed"),
   };
 }
 
@@ -947,7 +962,7 @@ async function deleteConversation(conversationId) {
   return listConversations();
 }
 
-async function callTool(name, args = {}) {
+async function callTool(name, args = {}, { signal } = {}) {
   if (
     [
       "interactive_login",
@@ -960,7 +975,148 @@ async function callTool(name, args = {}) {
   ) {
     await ensurePlaywrightBrowsers();
   }
-  return executeTool(toolDefinitions, name, args || {});
+  throwIfAgentAborted(signal);
+  const result = await waitForAgentOperation(executeTool(toolDefinitions, name, args || {}), signal);
+  throwIfAgentAborted(signal);
+  return waitForAgentOperation(enhancePdfToolResult(name, args || {}, result, { signal }), signal);
+}
+
+function normalizePdfPageNumbers(value) {
+  if (!Array.isArray(value)) return [];
+  return Array.from(new Set(value
+    .map((item) => Number.parseInt(item, 10))
+    .filter((item) => Number.isFinite(item) && item > 0)));
+}
+
+function pdfResultContainer(name, result) {
+  if (name === "extract_pdf_text") return result;
+  if (name === "read_workspace_file") return result?.file;
+  if (name === "read_task_attachment") return result?.read;
+  return null;
+}
+
+async function renderPdfPages(filePath, { pageNumbers = [], maxPages = DEFAULT_PDF_VISION_MAX_PAGES } = {}) {
+  const pdfParseModule = await import("pdf-parse");
+  const PDFParse = pdfParseModule.PDFParse || pdfParseModule.default?.PDFParse;
+  if (typeof PDFParse !== "function") throw new Error("pdf-parse 未提供 PDF 页面渲染能力。");
+
+  const parser = new PDFParse({ data: await fs.readFile(filePath) });
+  try {
+    const options = {
+      desiredWidth: PDF_VISION_PAGE_WIDTH,
+      imageDataUrl: true,
+      imageBuffer: false,
+      ...(pageNumbers.length ? { partial: pageNumbers } : { first: maxPages }),
+    };
+    const screenshots = await parser.getScreenshot(options);
+    return {
+      pages: screenshots.pages || [],
+      totalPages: Number.parseInt(screenshots.total, 10) || screenshots.pages?.length || 0,
+    };
+  } finally {
+    await parser.destroy();
+  }
+}
+
+function pdfVisionRoute(config) {
+  const imageRoleEnabled = config.modelRoles?.image_caption?.enabled === true;
+  const role = imageRoleEnabled ? "image_caption" : "chat";
+  const provider = getActiveProvider(config, role);
+  if (!provider.apiKey || !provider.baseUrl || !provider.modelName) {
+    throw new Error(imageRoleEnabled
+      ? "图片转述已启用，但当前图片转述提供商配置不完整。"
+      : "图片转述未启用，PDF 图片将交给主模型，但当前主模型配置不完整。");
+  }
+  return {
+    role,
+    route: imageRoleEnabled ? "image_caption" : "chat_multimodal",
+    provider,
+  };
+}
+
+async function requestPdfVisionBatch(route, fileName, pages, signal) {
+  const content = [{
+    type: "text",
+    text: `请分析 PDF“${fileName}”的以下页面。重点提取图片、图表、受力图、几何图、坐标图、手写内容和扫描文字中无法仅靠 PDF 文本层获得的信息。按“第 N 页”分组，用简洁中文准确转述；看不清的内容要明确说明，不要猜测。`,
+  }];
+  for (const page of pages) {
+    content.push({ type: "text", text: `第 ${page.pageNumber} 页` });
+    content.push({ type: "image_url", image_url: { url: page.dataUrl, detail: "high" } });
+  }
+
+  const response = await fetch(deriveChatUrl(route.provider.baseUrl), {
+    method: "POST",
+    signal,
+    headers: { Authorization: `Bearer ${route.provider.apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: route.provider.modelName,
+      messages: [{ role: "user", content }],
+      temperature: chatTemperature(route.provider, 0.1),
+    }),
+  });
+  const raw = await response.text();
+  if (!response.ok) throw new Error(`视觉模型返回 HTTP ${response.status}: ${raw.slice(0, 1200)}`);
+  const text = summaryResponseText(raw ? JSON.parse(raw) : {});
+  if (!text) throw new Error("视觉模型没有返回可用的 PDF 页面描述。");
+  return text;
+}
+
+async function describePdfVisuals(filePath, args = {}, { signal } = {}) {
+  const config = await readModelConfigInternal();
+  const route = pdfVisionRoute(config);
+  const requestedMax = Number.parseInt(args.max_pages, 10);
+  const maxPages = Math.min(MAX_PDF_VISION_PAGES, Math.max(1, requestedMax || DEFAULT_PDF_VISION_MAX_PAGES));
+  const allRequestedPages = normalizePdfPageNumbers(args.page_numbers);
+  const requestedPages = allRequestedPages.slice(0, maxPages);
+  const rendered = await renderPdfPages(filePath, { pageNumbers: requestedPages, maxPages });
+  const descriptions = [];
+  for (let index = 0; index < rendered.pages.length; index += PDF_VISION_BATCH_SIZE) {
+    descriptions.push(await requestPdfVisionBatch(
+      route,
+      path.basename(filePath),
+      rendered.pages.slice(index, index + PDF_VISION_BATCH_SIZE),
+      signal,
+    ));
+  }
+
+  const analyzedPages = rendered.pages.map((page) => page.pageNumber);
+  const fullText = descriptions.join("\n\n");
+  const requestedTextLimit = Number.parseInt(args.max_chars, 10);
+  const textLimit = Math.min(12000, Math.max(1000, requestedTextLimit || 6000));
+  return {
+    ok: true,
+    route: route.route,
+    role: route.role,
+    providerName: route.provider.name,
+    modelName: route.provider.modelName,
+    totalPages: rendered.totalPages,
+    requestedPages: allRequestedPages,
+    analyzedPages,
+    omittedRequestedPages: allRequestedPages.slice(requestedPages.length),
+    omittedPages: Math.max(0, rendered.totalPages - analyzedPages.length),
+    pagesTruncated: rendered.totalPages > analyzedPages.length || allRequestedPages.length > requestedPages.length,
+    textTruncated: fullText.length > textLimit,
+    truncated: rendered.totalPages > analyzedPages.length
+      || allRequestedPages.length > requestedPages.length
+      || fullText.length > textLimit,
+    text: fullText.slice(0, textLimit),
+  };
+}
+
+async function enhancePdfToolResult(name, args, result, { signal } = {}) {
+  const container = pdfResultContainer(name, result);
+  if (!container || String(container.extension || "").toLowerCase() !== ".pdf" || !container.path) return result;
+
+  let visualAnalysis;
+  try {
+    visualAnalysis = await describePdfVisuals(container.path, args, { signal });
+  } catch (error) {
+    visualAnalysis = { ok: false, error: String(error?.message || error || "PDF 图片分析失败。") };
+  }
+
+  if (name === "read_workspace_file") return { ...result, file: { ...container, visualAnalysis } };
+  if (name === "read_task_attachment") return { ...result, read: { ...container, visualAnalysis } };
+  return { ...result, visualAnalysis };
 }
 
 function safeToolSchemas() {
@@ -1031,10 +1187,17 @@ function safeToolSchemas() {
     },
     {
       name: "read_task_attachment",
-      description: "下载并读取任务附件文本，支持 txt/html/pdf/docx 等可解析格式。",
+      description: "下载并读取任务附件。PDF 会同时提取文本并逐页进行视觉分析，无需再次调用 extract_pdf_text。",
       parameters: {
         type: "object",
-        properties: { task_id: { type: "string" }, file_id: { type: "string" }, max_chars: { type: "number" }, directory: { type: "string" } },
+        properties: {
+          task_id: { type: "string" },
+          file_id: { type: "string" },
+          max_chars: { type: "number" },
+          directory: { type: "string" },
+          max_pages: { type: "number", description: "PDF 视觉分析最大页数，默认 12，最大 30。" },
+          page_numbers: { type: "array", items: { type: "integer" }, description: "可选，只分析指定 PDF 页码。" },
+        },
         required: ["file_id"],
       },
     },
@@ -1045,8 +1208,17 @@ function safeToolSchemas() {
     },
     {
       name: "read_workspace_file",
-      description: "读取工作区文件内容，可按相对路径或文件名查找。",
-      parameters: { type: "object", properties: { file: { type: "string" }, max_chars: { type: "number" } }, required: ["file"] },
+      description: "读取工作区文件内容。PDF 会同时提取文本并逐页进行视觉分析。",
+      parameters: {
+        type: "object",
+        properties: {
+          file: { type: "string" },
+          max_chars: { type: "number" },
+          max_pages: { type: "number", description: "PDF 视觉分析最大页数，默认 12，最大 30。" },
+          page_numbers: { type: "array", items: { type: "integer" }, description: "可选，只分析指定 PDF 页码。" },
+        },
+        required: ["file"],
+      },
     },
     {
       name: "rename_workspace_file",
@@ -1060,8 +1232,17 @@ function safeToolSchemas() {
     },
     {
       name: "extract_pdf_text",
-      description: "从本地 PDF 文件提取文本。",
-      parameters: { type: "object", properties: { local_path: { type: "string" }, max_chars: { type: "number" } }, required: ["local_path"] },
+      description: "提取本地 PDF 文本并逐页进行视觉分析；返回结果的 visualAnalysis 说明使用的模型角色、页码和图片转述。",
+      parameters: {
+        type: "object",
+        properties: {
+          local_path: { type: "string" },
+          max_chars: { type: "number" },
+          max_pages: { type: "number", description: "视觉分析最大页数，默认 12，最大 30。" },
+          page_numbers: { type: "array", items: { type: "integer" }, description: "可选，只分析指定页码。" },
+        },
+        required: ["local_path"],
+      },
     },
     {
       name: "extract_docx_text",
@@ -1143,6 +1324,36 @@ async function withConversationLock(conversationId, operation) {
   }
 }
 
+function throwIfAgentAborted(signal) {
+  if (!signal?.aborted) return;
+  const error = new Error("用户已停止生成。");
+  error.name = "AbortError";
+  throw error;
+}
+
+function isAgentAbort(error, signal) {
+  return signal?.aborted === true || error?.name === "AbortError";
+}
+
+async function waitForAgentOperation(operation, signal) {
+  if (!signal) return operation;
+  throwIfAgentAborted(signal);
+  let onAbort;
+  const aborted = new Promise((_, reject) => {
+    onAbort = () => {
+      const error = new Error("用户已停止生成。");
+      error.name = "AbortError";
+      reject(error);
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([operation, aborted]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
+}
+
 function usagePromptTokens(usage) {
   return Math.max(0, Number.parseInt(usage?.prompt_tokens ?? usage?.promptTokens, 10) || 0);
 }
@@ -1161,7 +1372,7 @@ function isContextLimitError(status, body) {
   return /context.{0,24}(length|window|limit)|maximum context|too many tokens|token.{0,16}(limit|maximum)|上下文.{0,12}(超|限制)/i.test(String(body || ""));
 }
 
-async function requestContextSummary(config, previousSummary, turns, maxSummaryChars) {
+async function requestContextSummary(config, previousSummary, turns, maxSummaryChars, signal) {
   const instruction = [
     "你负责压缩伴学邦桌面助手的旧对话，使后续模型可以无缝继续任务。",
     "系统覆盖所有核心主题及其最终结论，优先说明用户目标和当前进度，并突出最新主线。",
@@ -1172,6 +1383,7 @@ async function requestContextSummary(config, previousSummary, turns, maxSummaryC
   ].join("\n");
   const response = await fetch(deriveChatUrl(config.baseUrl), {
     method: "POST",
+    signal,
     headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model: config.modelName,
@@ -1235,7 +1447,9 @@ async function compactConversationContext(config, conversation, {
   reason = "automatic",
   runtimeMessages = [],
   onStart,
+  signal,
 } = {}) {
+  throwIfAgentAborted(signal);
   const tools = safeToolSchemas();
   const budget = contextBudget(config.contextLength);
   const beforeTokens = estimateMessagesTokens(buildAgentMessages(config, conversation, runtimeMessages), tools);
@@ -1274,7 +1488,8 @@ async function compactConversationContext(config, conversation, {
   let nextSummary = conversation.contextState.summary;
   let usage = null;
   for (const batch of summaryBatches(flattenRounds(older), summaryInputLimit)) {
-    const generated = await requestContextSummary(config, nextSummary, batch, maxSummaryChars);
+    throwIfAgentAborted(signal);
+    const generated = await requestContextSummary(config, nextSummary, batch, maxSummaryChars, signal);
     nextSummary = generated.summary;
     usage = generated.usage || usage;
   }
@@ -1305,18 +1520,35 @@ async function compactConversationContext(config, conversation, {
   };
 }
 
-async function runAgent({ text, conversationId, userMessageId, assistantMessageId } = {}, { emitProgress } = {}) {
+async function runAgent({ text, conversationId, userMessageId, assistantMessageId } = {}, { emitProgress, signal } = {}) {
   const config = await readModelConfigInternal();
   const prompt = String(text || "").trim();
   if (!prompt) throw new Error("消息不能为空。");
-  if (!config.apiKey || !config.baseUrl || !config.modelName) {
-    return { message: "还没有配置大模型。请先到“设置”填写 API Key、调用链接和模型名称。", steps: [], usage: null };
-  }
 
   const { state, conversation } = await getActiveConversation(conversationId);
   const steps = [];
   const userId = String(userMessageId || safeId());
   const assistantId = String(assistantMessageId || safeId());
+  const startedAt = nowIso();
+  const assistantMessage = {
+    id: assistantId,
+    role: "assistant",
+    text: "",
+    at: startedAt,
+    steps,
+    isRunning: true,
+    status: "running",
+  };
+  conversation.messages = conversation.messages.filter((message) => message.id !== userId && message.id !== assistantId);
+  conversation.messages.push(
+    { id: userId, role: "user", text: prompt, at: startedAt, steps: [], status: "completed" },
+    assistantMessage,
+  );
+  if (conversation.title === "新对话") conversation.title = prompt.slice(0, 28) || "新对话";
+  conversation.updatedAt = startedAt;
+  state.activeId = conversation.id;
+  await saveConversationState(state);
+
   const pushStep = (kind, title, detail = "") => {
     const step = { kind, title, detail, at: nowIso() };
     steps.push(step);
@@ -1328,115 +1560,155 @@ async function runAgent({ text, conversationId, userMessageId, assistantMessageI
       steps,
     });
   };
-  const runtimeMessages = [{ role: "user", content: prompt }];
-  const maxToolRounds = Math.max(1, Number.parseInt(config.maxToolRounds || 6, 10));
+  const finishTurn = async (content, status) => {
+    assistantMessage.text = content;
+    assistantMessage.at = nowIso();
+    assistantMessage.steps = [...steps];
+    assistantMessage.isRunning = false;
+    assistantMessage.status = status;
+    conversation.turns.push({ role: "user", content: prompt }, { role: "assistant", content });
+    conversation.updatedAt = nowIso();
+    conversationContextInfo(conversation, config);
+    state.activeId = conversation.id;
+    await saveConversationState(state);
+    return {
+      message: content,
+      messageId: assistantId,
+      steps,
+      usage,
+      canceled: status === "canceled",
+      conversation: conversationSummary(conversation, config),
+    };
+  };
   let usage = null;
-  let autoCompressionFailed = false;
-  let emergencyCompressionUsed = false;
 
-  for (let index = 0; index < maxToolRounds; index += 1) {
-    if (!autoCompressionFailed) {
-      try {
+  try {
+    throwIfAgentAborted(signal);
+    if (!config.apiKey || !config.baseUrl || !config.modelName) {
+      return finishTurn("还没有配置大模型。请先到“设置”填写 API Key、调用链接和模型名称。", "completed");
+    }
+
+    const runtimeMessages = [{ role: "user", content: prompt }];
+    const maxToolRounds = Math.max(1, Number.parseInt(config.maxToolRounds || 6, 10));
+    let autoCompressionFailed = false;
+    let emergencyCompressionUsed = false;
+
+    for (let index = 0; index < maxToolRounds; index += 1) {
+      throwIfAgentAborted(signal);
+      if (!autoCompressionFailed) {
+        try {
+          const compression = await compactConversationContext(config, conversation, {
+            reason: index === 0 ? "before_request" : "before_tool_round",
+            runtimeMessages,
+            signal,
+            onStart: ({ beforeTokens }) => pushStep("context", "正在自动压缩上下文", `当前约 ${beforeTokens} tokens`),
+          });
+          if (compression.changed) {
+            pushStep("context", "已自动压缩上下文", `${compression.beforeTokens} -> ${compression.afterTokens} tokens`);
+            state.activeId = conversation.id;
+            await saveConversationState(state);
+          }
+        } catch (error) {
+          if (isAgentAbort(error, signal)) throw error;
+          autoCompressionFailed = true;
+          pushStep("context", "自动压缩失败，保留原上下文", String(error?.message || error));
+        }
+      }
+
+      let messages = buildAgentMessages(config, conversation, runtimeMessages);
+      pushStep("llm", `第 ${index + 1} 轮请求模型`);
+      let response = await fetch(deriveChatUrl(config.baseUrl), {
+        method: "POST",
+        signal,
+        headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: config.modelName,
+          messages,
+          tools: safeToolSchemas(),
+          tool_choice: "auto",
+          temperature: chatTemperature(config, normalizeTemperature(config.chatTemperature, 0.2)),
+        }),
+      });
+      let raw = await response.text();
+      throwIfAgentAborted(signal);
+      if (!response.ok && !emergencyCompressionUsed && isContextLimitError(response.status, raw)) {
+        emergencyCompressionUsed = true;
         const compression = await compactConversationContext(config, conversation, {
-          reason: index === 0 ? "before_request" : "before_tool_round",
+          force: true,
+          reason: "context_limit_retry",
           runtimeMessages,
-          onStart: ({ beforeTokens }) => pushStep("context", "正在自动压缩上下文", `当前约 ${beforeTokens} tokens`),
+          signal,
+          onStart: ({ beforeTokens }) => pushStep("context", "模型上下文超限，正在紧急压缩", `当前约 ${beforeTokens} tokens`),
         });
         if (compression.changed) {
-          pushStep(
-            "context",
-            "已自动压缩上下文",
-            `${compression.beforeTokens} -> ${compression.afterTokens} tokens`,
-          );
+          pushStep("context", "紧急压缩完成，重试模型请求", `${compression.beforeTokens} -> ${compression.afterTokens} tokens`);
           state.activeId = conversation.id;
           await saveConversationState(state);
+          messages = buildAgentMessages(config, conversation, runtimeMessages);
+          response = await fetch(deriveChatUrl(config.baseUrl), {
+            method: "POST",
+            signal,
+            headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: config.modelName,
+              messages,
+              tools: safeToolSchemas(),
+              tool_choice: "auto",
+              temperature: chatTemperature(config, normalizeTemperature(config.chatTemperature, 0.2)),
+            }),
+          });
+          raw = await response.text();
+          throwIfAgentAborted(signal);
         }
-      } catch (error) {
-        autoCompressionFailed = true;
-        pushStep("context", "自动压缩失败，保留原上下文", String(error?.message || error));
+      }
+      if (!response.ok) throw new Error(`模型服务返回 HTTP ${response.status}: ${raw.slice(0, 1200)}`);
+      const payload = raw ? JSON.parse(raw) : {};
+      usage = payload.usage || usage;
+      conversation.contextState = {
+        ...normalizeContextState(conversation.contextState),
+        lastPromptTokens: usagePromptTokens(payload.usage) || conversation.contextState?.lastPromptTokens || 0,
+        contextLength: Math.max(0, Number.parseInt(config.contextLength, 10) || 0),
+      };
+      const message = payload?.choices?.[0]?.message || {};
+      const toolCalls = message.tool_calls || [];
+
+      if (!toolCalls.length) {
+        const content = typeof message.content === "string" ? message.content : "执行完成。";
+        pushStep("done", "模型已生成最终回答");
+        return finishTurn(content, "completed");
+      }
+
+      runtimeMessages.push({ role: "assistant", content: message.content || "", tool_calls: toolCalls });
+      for (const call of toolCalls) {
+        throwIfAgentAborted(signal);
+        const toolName = call?.function?.name;
+        try {
+          const args = JSON.parse(call?.function?.arguments || "{}");
+          pushStep("tool", `调用工具 ${toolName}`, JSON.stringify(args, null, 2));
+          const result = await callTool(toolName, args, { signal });
+          pushStep("tool", `工具 ${toolName} 已完成`, JSON.stringify(result, null, 2).slice(0, 4000));
+          runtimeMessages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) });
+        } catch (error) {
+          if (isAgentAbort(error, signal)) throw error;
+          const message = String(error?.message || error || "工具调用失败");
+          pushStep("tool", `工具 ${toolName} 失败`, message);
+          runtimeMessages.push({
+            role: "tool",
+            tool_call_id: call.id,
+            content: JSON.stringify({ ok: false, error: { message } }),
+          });
+        }
       }
     }
-    let messages = buildAgentMessages(config, conversation, runtimeMessages);
-    pushStep("llm", `第 ${index + 1} 轮请求模型`);
-    let response = await fetch(deriveChatUrl(config.baseUrl), {
-      method: "POST",
-      headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: config.modelName,
-        messages,
-        tools: safeToolSchemas(),
-        tool_choice: "auto",
-        temperature: chatTemperature(config, normalizeTemperature(config.chatTemperature, 0.2)),
-      }),
-    });
-    let raw = await response.text();
-    if (!response.ok && !emergencyCompressionUsed && isContextLimitError(response.status, raw)) {
-      emergencyCompressionUsed = true;
-      const compression = await compactConversationContext(config, conversation, {
-        force: true,
-        reason: "context_limit_retry",
-        runtimeMessages,
-        onStart: ({ beforeTokens }) => pushStep("context", "模型上下文超限，正在紧急压缩", `当前约 ${beforeTokens} tokens`),
-      });
-      if (compression.changed) {
-        pushStep("context", "紧急压缩完成，重试模型请求", `${compression.beforeTokens} -> ${compression.afterTokens} tokens`);
-        state.activeId = conversation.id;
-        await saveConversationState(state);
-        messages = buildAgentMessages(config, conversation, runtimeMessages);
-        response = await fetch(deriveChatUrl(config.baseUrl), {
-          method: "POST",
-          headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model: config.modelName,
-            messages,
-            tools: safeToolSchemas(),
-            tool_choice: "auto",
-            temperature: chatTemperature(config, normalizeTemperature(config.chatTemperature, 0.2)),
-          }),
-        });
-        raw = await response.text();
-      }
-    }
-    if (!response.ok) throw new Error(`模型服务返回 HTTP ${response.status}: ${raw.slice(0, 1200)}`);
-    const payload = raw ? JSON.parse(raw) : {};
-    usage = payload.usage || usage;
-    conversation.contextState = {
-      ...normalizeContextState(conversation.contextState),
-      lastPromptTokens: usagePromptTokens(payload.usage) || conversation.contextState?.lastPromptTokens || 0,
-      contextLength: Math.max(0, Number.parseInt(config.contextLength, 10) || 0),
-    };
-    const message = payload?.choices?.[0]?.message || {};
-    const toolCalls = message.tool_calls || [];
-
-    if (!toolCalls.length) {
-      const content = typeof message.content === "string" ? message.content : "执行完成。";
-      const timestamp = nowIso();
-      const assistantTimestamp = nowIso();
-      pushStep("done", "模型已生成最终回答");
-      conversation.turns.push({ role: "user", content: prompt }, { role: "assistant", content });
-      conversation.messages.push(
-        { id: userId, role: "user", text: prompt, at: timestamp, steps: [] },
-        { id: assistantId, role: "assistant", text: content, at: assistantTimestamp, steps },
-      );
-      if (conversation.title === "新对话") conversation.title = prompt.slice(0, 28) || "新对话";
-      conversation.updatedAt = nowIso();
-      conversationContextInfo(conversation, config);
-      state.activeId = conversation.id;
-      await saveConversationState(state);
-      return { message: content, messageId: assistantId, steps, usage, conversation: conversationSummary(conversation, config) };
-    }
-
-    runtimeMessages.push({ role: "assistant", content: message.content || "", tool_calls: toolCalls });
-    for (const call of toolCalls) {
-      const toolName = call?.function?.name;
-      const args = JSON.parse(call?.function?.arguments || "{}");
-      pushStep("tool", `调用工具 ${toolName}`, JSON.stringify(args, null, 2));
-      const result = await callTool(toolName, args);
-      pushStep("tool", `工具 ${toolName} 已完成`, JSON.stringify(result, null, 2).slice(0, 4000));
-      runtimeMessages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) });
-    }
+    throw new Error(`模型连续请求工具超过 ${maxToolRounds} 轮，仍未给出最终回答。`);
+  } catch (error) {
+    const canceled = isAgentAbort(error, signal);
+    const message = canceled ? "已停止生成。" : `执行失败：${String(error?.message || error).slice(0, 2000)}`;
+    pushStep(canceled ? "canceled" : "error", canceled ? "用户已停止生成" : "执行失败", canceled ? "" : String(error?.message || error));
+    const result = await finishTurn(message, canceled ? "canceled" : "failed");
+    if (canceled) return result;
+    throw error;
   }
-  throw new Error(`模型连续请求工具超过 ${maxToolRounds} 轮，仍未给出最终回答。`);
 }
 
 async function compactAgentContext(conversationId) {
@@ -1943,7 +2215,30 @@ async function handleRequest(request, emitProgress) {
   if (method === "conversation.rename" || method === "agent:conversations:rename") return renameConversation(params.conversationId, params.title);
   if (method === "conversation.delete" || method === "agent:conversations:delete") return deleteConversation(params.conversationId);
   if (method === "agent.chat" || method === "agent:chat") {
-    return withConversationLock(params.conversationId, () => runAgent(params, { emitProgress }));
+    const runId = String(params.assistantMessageId || safeId());
+    const controller = new AbortController();
+    const run = {
+      runId,
+      conversationId: String(params.conversationId || ""),
+      assistantMessageId: String(params.assistantMessageId || ""),
+      controller,
+    };
+    activeAgentRuns.set(runId, run);
+    try {
+      return await withConversationLock(params.conversationId, () => runAgent(params, { emitProgress, signal: controller.signal }));
+    } finally {
+      if (activeAgentRuns.get(runId) === run) activeAgentRuns.delete(runId);
+    }
+  }
+  if (method === "agent.cancel" || method === "agent:cancel") {
+    const assistantMessageId = String(params.assistantMessageId || "");
+    const conversationId = String(params.conversationId || "");
+    const matches = [...activeAgentRuns.values()].filter((run) => (
+      (assistantMessageId && run.assistantMessageId === assistantMessageId)
+      || (!assistantMessageId && conversationId && run.conversationId === conversationId)
+    ));
+    for (const run of matches) run.controller.abort();
+    return { ok: true, cancellationRequested: matches.length > 0, canceledRuns: matches.length };
   }
   if (method === "agent.compact" || method === "agent:compact") {
     return withConversationLock(params.conversationId, () => compactAgentContext(params.conversationId));

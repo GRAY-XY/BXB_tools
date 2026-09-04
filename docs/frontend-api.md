@@ -90,6 +90,8 @@ type AppInfo = {
 };
 ```
 
+`draftDir` is the durable draft store. WinUI must construct its draft service with this explicit path; it must not fall back to a working-directory-relative `.banxuebang/drafts` directory. Upgrades should migrate drafts created by older builds from that legacy location before replacing the installation directory.
+
 Frontend usage:
 
 - Display these paths in a dedicated Settings path card with short descriptions and open buttons.
@@ -240,12 +242,12 @@ await window.bxb.callTool("list_tasks", { subject_name: "全部课程", list_typ
 await window.bxb.callTool("list_tasks", { subject_name: "AP宏观经济学", class_id: "CLASS_ID", list_type: "all", page: 1, size: 30 });
 await window.bxb.callTool("read_task_content", { task_id: "TASK_ID", max_chars: 6000 });
 await window.bxb.callTool("download_task_attachment", { task_id: "TASK_ID", file_id: "FILE_ID" });
-await window.bxb.callTool("read_task_attachment", { task_id: "TASK_ID", file_id: "FILE_ID", max_chars: 6000 });
+await window.bxb.callTool("read_task_attachment", { task_id: "TASK_ID", file_id: "FILE_ID", max_chars: 6000, max_pages: 12 });
 await window.bxb.callTool("list_workspace_files", {});
-await window.bxb.callTool("read_workspace_file", { file: "assignment.pdf", max_chars: 8000 });
+await window.bxb.callTool("read_workspace_file", { file: "assignment.pdf", max_chars: 8000, page_numbers: [1, 2] });
 await window.bxb.callTool("rename_workspace_file", { file: "assignment.pdf", new_name: "AP Macro Unit 4 Homework.pdf" });
 await window.bxb.callTool("write_workspace_text_file", { file_name: "notes.md", content: "..." });
-await window.bxb.callTool("extract_pdf_text", { local_path: "D:/path/to/file.pdf", max_chars: 6000 });
+await window.bxb.callTool("extract_pdf_text", { local_path: "D:/path/to/file.pdf", max_chars: 6000, max_pages: 12 });
 await window.bxb.callTool("extract_docx_text", { local_path: "D:/path/to/file.docx", max_chars: 6000 });
 await window.bxb.callTool("run_python_snippet", { code: "print(sum(range(101)))", timeout_ms: 5000 });
 await window.bxb.callTool("web_search", { query: "AP economics latest news", max_results: 5 });
@@ -290,6 +292,38 @@ await window.bxb.callTool("send_approved_draft_private_message", {
   confirmation_token: contactPreview.confirmationToken,
 });
 ```
+
+An active Agent request can be canceled independently of page navigation:
+
+```js
+await window.bxb.invoke("agent:cancel", { conversationId, assistantMessageId });
+```
+
+The response includes `cancellationRequested` and `canceledRuns`. Agent requests persist the user message and running assistant placeholder before the first model call; completion, failure, cancellation, or interrupted-app recovery replaces that placeholder by message ID.
+
+For PDF results, `extract_pdf_text` adds `visualAnalysis` directly, `read_workspace_file` adds it under `file`, and `read_task_attachment` adds it under `read`:
+
+```ts
+type PdfVisualAnalysis = {
+  ok: boolean;
+  route?: "image_caption" | "chat_multimodal";
+  role?: "image_caption" | "chat";
+  providerName?: string;
+  modelName?: string;
+  totalPages?: number;
+  requestedPages?: number[];
+  analyzedPages?: number[];
+  omittedRequestedPages?: number[];
+  omittedPages?: number;
+  pagesTruncated?: boolean;
+  textTruncated?: boolean;
+  truncated?: boolean;
+  text?: string;
+  error?: string;
+};
+```
+
+When `image_caption` is enabled, page images use its active provider. When disabled, they use the active chat provider and the chat model is assumed to support multimodal image input. `omittedPages` is the count of document pages not analyzed, while `omittedRequestedPages` identifies explicitly requested pages dropped by the page limit. Visual failure does not discard the normal PDF text result.
 
 ### Tool Results
 

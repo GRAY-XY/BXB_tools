@@ -85,6 +85,8 @@ public sealed partial class MainWindow : Window
     private bool _agentShouldFollowLatest = true;
     private double _agentScrollTop;
     private bool _agentRequestRunning;
+    private bool _agentStopRequested;
+    private string _runningAgentMessageId = "";
     private bool _suppressComboEvents;
     private bool _deleteDraftArmed;
     private bool _deleteConversationArmed;
@@ -198,7 +200,7 @@ public sealed partial class MainWindow : Window
                     break;
                 case "drafts":
                     RenderDrafts();
-                    await LoadDraftsAsync("pending_review", loadVersion);
+                    await LoadDraftsAsync("all", loadVersion);
                     break;
                 case "settings":
                     RenderSettings();
@@ -263,16 +265,7 @@ public sealed partial class MainWindow : Window
         DangerActionButton.Visibility = Visibility.Collapsed;
         DetailPrimaryButton.Visibility = Visibility.Collapsed;
         DetailSecondaryButton.Visibility = Visibility.Collapsed;
-        SetAgentTranscriptPlain("");
         SetAgentStepsMessage("");
-        AgentInputBox.Text = "";
-        AgentConversationSearchBox.Text = "";
-        _agentConversationItems.Clear();
-        _agentConversationCache.Clear();
-        _activeConversationId = "";
-        _selectedAgentMessageId = "";
-        _agentShouldFollowLatest = true;
-        _agentScrollTop = 0;
         AgentStepsDrawer.Visibility = Visibility.Collapsed;
         _settingsProviderItems.Clear();
         SettingsProviderTypeComboBox.Items.Clear();
@@ -325,9 +318,14 @@ public sealed partial class MainWindow : Window
         PageHeaderPanel.Visibility = Visibility.Collapsed;
         ToolbarCard.Visibility = Visibility.Collapsed;
         AgentPanel.Visibility = Visibility.Visible;
-        AgentConversationTitleText.Text = "新对话";
+        if (string.IsNullOrWhiteSpace(_activeConversationId))
+        {
+            AgentConversationTitleText.Text = "新对话";
+        }
         AgentModelText.Text = "正在读取模型配置";
         UpdateAgentConversationPaneVisibility();
+        UpdateAgentSendButtonState();
+        RenderAgentMessages(_agentPreviewMessages);
         SetAgentStepsMessage("点击助手消息下方的“查看过程”。");
     }
 
@@ -389,12 +387,12 @@ public sealed partial class MainWindow : Window
         ListTitleText.Text = "草稿";
         FilterComboBox.Visibility = Visibility.Visible;
         SetFilterItems(
+            ("all", "全部"),
             ("pending_review", "待审核"),
             ("approved", "已通过"),
             ("rejected", "已驳回"),
             ("submitted", "已提交"),
-            ("sent_to_teacher", "已私信老师"),
-            ("all", "全部"));
+            ("sent_to_teacher", "已私信老师"));
         PrimaryActionButton.Content = "刷新草稿";
         SecondaryActionButton.Content = "保存正文";
         SecondaryActionButton.Visibility = Visibility.Visible;
@@ -601,7 +599,22 @@ public sealed partial class MainWindow : Window
         ApplyAgentConversationFilter(activeId);
         if (result.TryGetProperty("activeConversation", out var active))
         {
-            ShowConversation(active);
+            var loadedConversationId = FirstString(active, "id", "conversationId");
+            var preserveRunningPreview = _agentRequestRunning
+                && _agentPreviewMessages.Any(message => message.IsRunning)
+                && string.Equals(loadedConversationId, _activeConversationId, StringComparison.Ordinal);
+            if (!preserveRunningPreview)
+            {
+                ShowConversation(active);
+            }
+            else
+            {
+                AgentConversationTitleText.Text = FirstString(active, "title") is { Length: > 0 } title
+                    ? title
+                    : AgentConversationTitleText.Text;
+                UpdateAgentContextMeter(active);
+                RenderAgentMessages(_agentPreviewMessages);
+            }
         }
         else if (_agentConversationCache.Count == 0)
         {
@@ -812,7 +825,7 @@ public sealed partial class MainWindow : Window
                 });
             }
         }
-        SetDetail(_items.Count == 0 ? "暂无草稿。" : "选择左侧草稿查看和编辑。");
+        SetDetail(_items.Count == 0 ? "当前筛选下暂无草稿。" : "选择左侧草稿查看和编辑。");
         SetDraftActionButtons(_items.Count > 0);
     }
 
@@ -846,7 +859,7 @@ public sealed partial class MainWindow : Window
     private void CancelDraftCreator()
     {
         RenderDrafts();
-        _ = LoadDraftsAsync((FilterComboBox.SelectedItem as ComboItem)?.Key ?? "pending_review");
+        _ = LoadDraftsAsync((FilterComboBox.SelectedItem as ComboItem)?.Key ?? "all");
         SetStatus("已取消创建草稿");
     }
 
@@ -1421,7 +1434,7 @@ public sealed partial class MainWindow : Window
                         await CreateManualDraftAsync();
                         break;
                     }
-                    await LoadDraftsAsync((FilterComboBox.SelectedItem as ComboItem)?.Key ?? "pending_review");
+                    await LoadDraftsAsync((FilterComboBox.SelectedItem as ComboItem)?.Key ?? "all");
                     break;
                 case "settings":
                     await LoadModelOptionsAsync();
@@ -1761,14 +1774,58 @@ public sealed partial class MainWindow : Window
 
     private async void OnAgentSendClick(object sender, RoutedEventArgs args)
     {
+        if (_agentRequestRunning)
+        {
+            await RunUiAsync(StopAgentAsync);
+            return;
+        }
         await RunUiAsync(SendAgentAsync);
+    }
+
+    private async Task StopAgentAsync()
+    {
+        if (!_agentRequestRunning || _agentStopRequested) return;
+        _agentStopRequested = true;
+        UpdateAgentSendButtonState();
+        SetStatus("正在停止生成...");
+        try
+        {
+            var result = await InvokeAsync("agent:cancel", new
+            {
+                conversationId = _activeConversationId,
+                assistantMessageId = _runningAgentMessageId,
+            });
+            if (GetString(result, "cancellationRequested", "false") != "true")
+            {
+                _agentStopRequested = false;
+                UpdateAgentSendButtonState();
+                SetStatus("当前请求已经结束");
+            }
+        }
+        catch
+        {
+            _agentStopRequested = false;
+            UpdateAgentSendButtonState();
+            throw;
+        }
     }
 
     private async void OnAgentInputKeyDown(object sender, KeyRoutedEventArgs args)
     {
         if (args.Key != VirtualKey.Enter) return;
-        var shiftState = Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Shift);
-        if ((shiftState & CoreVirtualKeyStates.Down) == CoreVirtualKeyStates.Down) return;
+        var controlState = Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control);
+        if ((controlState & CoreVirtualKeyStates.Down) == CoreVirtualKeyStates.Down)
+        {
+            var selectionStart = AgentInputBox.SelectionStart;
+            var selectionLength = AgentInputBox.SelectionLength;
+            AgentInputBox.Text = AgentInputBox.Text
+                .Remove(selectionStart, selectionLength)
+                .Insert(selectionStart, Environment.NewLine);
+            AgentInputBox.SelectionStart = selectionStart + Environment.NewLine.Length;
+            AgentInputBox.SelectionLength = 0;
+            args.Handled = true;
+            return;
+        }
         args.Handled = true;
         await RunUiAsync(SendAgentAsync);
     }
@@ -1791,7 +1848,7 @@ public sealed partial class MainWindow : Window
         }
         else if (_currentPage == "drafts")
         {
-            await RunUiAsync(() => LoadDraftsAsync((FilterComboBox.SelectedItem as ComboItem)?.Key ?? "pending_review"));
+            await RunUiAsync(() => LoadDraftsAsync((FilterComboBox.SelectedItem as ComboItem)?.Key ?? "all"));
         }
     }
 
@@ -1848,11 +1905,13 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        _agentRequestRunning = true;
-        AgentSendButton.IsEnabled = false;
-        AgentInputBox.Text = "";
         var userMessageId = NewAgentMessageId();
         var assistantMessageId = NewAgentMessageId();
+        _agentRequestRunning = true;
+        _agentStopRequested = false;
+        _runningAgentMessageId = assistantMessageId;
+        UpdateAgentSendButtonState();
+        AgentInputBox.Text = "";
         _selectedAgentMessageId = assistantMessageId;
         _agentShouldFollowLatest = true;
         _agentPreviewMessages.Add(new AgentChatMessage(userMessageId, "user", text));
@@ -1869,7 +1928,7 @@ public sealed partial class MainWindow : Window
                 assistantMessageId,
             });
             var finalSteps = result.TryGetProperty("steps", out var resultSteps) ? resultSteps.Clone() : (JsonElement?)null;
-            _agentPreviewMessages[^1] = new AgentChatMessage(assistantMessageId, "assistant", GetString(result, "message", "执行完成。"), finalSteps, false);
+            ReplaceAgentMessage(assistantMessageId, GetString(result, "message", "执行完成。"), finalSteps, false);
             RenderAgentMessages(_agentPreviewMessages);
             if (AgentStepsDrawer.Visibility == Visibility.Visible) ShowSelectedAgentSteps();
             await LoadConversationsAsync();
@@ -1877,16 +1936,27 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception error)
         {
-            _agentPreviewMessages[^1] = new AgentChatMessage(assistantMessageId, "assistant", $"执行失败：{CleanErrorMessage(error.Message)}", null, false);
+            ReplaceAgentMessage(assistantMessageId, $"执行失败：{CleanErrorMessage(error.Message)}", null, false);
             RenderAgentMessages(_agentPreviewMessages);
             throw;
         }
         finally
         {
             _agentRequestRunning = false;
-            AgentSendButton.IsEnabled = true;
-            FocusAgentInput();
+            _agentStopRequested = false;
+            _runningAgentMessageId = "";
+            UpdateAgentSendButtonState();
+            if (_currentPage == "agent") FocusAgentInput();
         }
+    }
+
+    private void UpdateAgentSendButtonState()
+    {
+        AgentSendIcon.Glyph = _agentRequestRunning ? "\uE71A" : "\uE724";
+        AgentSendButton.IsEnabled = !_agentStopRequested;
+        ToolTipService.SetToolTip(AgentSendButton, _agentRequestRunning
+            ? (_agentStopRequested ? "正在停止" : "停止生成")
+            : "发送");
     }
 
     private async Task OpenWorkspaceItemAsync(DisplayItem item)
@@ -1967,7 +2037,7 @@ public sealed partial class MainWindow : Window
         await ToolAsync("delete_submission_draft", new { draft_id = GetString(_selectedDraft.Value, "draftId", "") });
         _selectedDraft = null;
         _deleteDraftArmed = false;
-        await LoadDraftsAsync((FilterComboBox.SelectedItem as ComboItem)?.Key ?? "pending_review");
+        await LoadDraftsAsync((FilterComboBox.SelectedItem as ComboItem)?.Key ?? "all");
     }
 
     private async Task PrepareDraftSubmitAsync()
@@ -2822,6 +2892,20 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private void ReplaceAgentMessage(string messageId, string text, JsonElement? steps, bool isRunning)
+    {
+        for (var index = 0; index < _agentPreviewMessages.Count; index += 1)
+        {
+            if (_agentPreviewMessages[index].Id == messageId)
+            {
+                _agentPreviewMessages[index] = new AgentChatMessage(messageId, "assistant", text, steps, isRunning);
+                return;
+            }
+        }
+
+        _agentPreviewMessages.Add(new AgentChatMessage(messageId, "assistant", text, steps, isRunning));
+    }
+
     private void SetAgentStepsMessage(string message)
     {
         AgentStepsTextBox.Text = message;
@@ -3135,7 +3219,8 @@ public sealed partial class MainWindow : Window
                     string.IsNullOrWhiteSpace(id) ? NewAgentMessageId() : id,
                     role,
                     FirstString(message, "text", "content", "message"),
-                    steps));
+                    steps,
+                    GetString(message, "isRunning", "false") == "true"));
             }
         }
         if (!_agentPreviewMessages.Any(message => message.Id == _selectedAgentMessageId))

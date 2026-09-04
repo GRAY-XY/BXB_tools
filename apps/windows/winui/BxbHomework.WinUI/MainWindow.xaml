@@ -348,16 +348,16 @@
                                     </Grid.RowDefinitions>
                                     <TextBox
                                         x:Name="AgentInputBox"
-                                        AcceptsReturn="True"
+                                        AcceptsReturn="False"
                                         MinHeight="44"
                                         MaxHeight="132"
                                         BorderThickness="0"
                                         Background="Transparent"
                                         PlaceholderText="给 BXB 助手发送消息"
                                         TextWrapping="Wrap"
-                                        KeyDown="OnAgentInputKeyDown" />
+                                        PreviewKeyDown="OnAgentInputKeyDown" />
                                     <Grid Grid.Row="1">
-                                        <TextBlock Text="Enter 发送 · Shift+Enter 换行" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
+                                        <TextBlock Text="Enter 发送 · Ctrl+Enter 换行" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
                                         <Button
                                             x:Name="AgentSendButton"
                                             Width="36"
@@ -366,7 +366,7 @@
                                             HorizontalAlignment="Right"
                                             Click="OnAgentSendClick"
                                             ToolTipService.ToolTip="发送">
-                                            <FontIcon Glyph="&#xE724;" FontSize="16" />
+                                            <FontIcon x:Name="AgentSendIcon" Glyph="&#xE724;" FontSize="16" />
                                         </Button>
                                     </Grid>
                                 </Grid>
