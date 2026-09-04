@@ -20,6 +20,17 @@ import {
 } from "../src/context-manager.js";
 import { SessionStore } from "../src/session-store.js";
 import { createToolDefinitions, executeTool } from "../src/tool-definitions.js";
+import {
+  CORE_AGENT_SYSTEM_PROMPT,
+  DEFAULT_CUSTOM_INSTRUCTIONS,
+  IMAGE_TRANSCRIPTION_SYSTEM_PROMPT,
+  PDF_VISION_SYSTEM_PROMPT,
+  buildAgentSystemPrompt,
+  buildContextSummaryPrompt,
+  buildImageVisionRequest,
+  buildPdfVisionRequest,
+  normalizeCustomInstructions,
+} from "../src/agent-prompts.js";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..", "..");
@@ -43,6 +54,8 @@ const DEFAULT_PDF_VISION_MAX_PAGES = 12;
 const MAX_PDF_VISION_PAGES = 30;
 const PDF_VISION_BATCH_SIZE = 4;
 const PDF_VISION_PAGE_WIDTH = 1280;
+const MAX_AGENT_INPUT_IMAGES = 8;
+const MAX_AGENT_INPUT_IMAGE_BYTES = 25 * 1024 * 1024;
 const IMAGE_MIME_BY_EXTENSION = new Map([
   [".png", "image/png"],
   [".jpg", "image/jpeg"],
@@ -60,9 +73,6 @@ const PASTED_IMAGE_EXTENSION_BY_MIME = new Map([
   ["image/bmp", ".bmp"],
   ["image/avif", ".avif"],
 ]);
-const DEFAULT_SYSTEM_PROMPT =
-  "你是伴学邦桌面助手。需要真实数据时必须调用工具，不要猜测。需要联网资料时先调用 web_search；需要阅读某个搜索结果时再调用 read_web_page。用户提到工作区文件时，先调用 list_workspace_files 定位文件，再按需调用 read_workspace_file；需要整理文件名时可调用 rename_workspace_file。读取 PDF 时必须同时检查工具结果中的 visualAnalysis，并说明未分析的页码或视觉分析错误。不要上传、提交、私信或删除任何内容。处理作业草稿时先调用 collect_task_submission_context；信息不足就说明缺什么；信息足够才调用 draft_task_submission 保存草稿等待用户审核。如果作业已过期且可能无法补交，可以在草稿提示字段中建议用户私信老师，但只能保存草稿等待用户审核。给出或保存草稿正文时，draft_text 必须是纯文本正文，不要使用 Markdown 标题、列表、表格、代码块、加粗、引用或其他 Markdown 格式；如果需要给用户说明保存状态，可以在助手回复里用 Markdown，但草稿正文内容本身必须保持纯文本。";
-
 process.env.BANXUEBANG_SESSION_FILE = sessionFile;
 process.env.BANXUEBANG_DRAFT_DIR = draftDir;
 process.env.BANXUEBANG_WORKSPACE_DIR = workspaceDir;
@@ -503,7 +513,7 @@ function normalizeModelConfig(rawConfig) {
     longPasteThreshold: normalizeLongPasteThreshold(source.longPasteThreshold, 4000),
     maxToolRounds: Math.max(1, Number.parseInt(source.maxToolRounds ?? 6, 10) || 6),
     theme: normalizeTheme(source.theme),
-    systemPrompt: String(source.systemPrompt || "").trim() || DEFAULT_SYSTEM_PROMPT,
+    customInstructions: normalizeCustomInstructions(source),
   };
 }
 
@@ -544,7 +554,7 @@ function modelConfigForStorage(config) {
     longPasteThreshold: normalized.longPasteThreshold,
     maxToolRounds: normalized.maxToolRounds,
     theme: normalized.theme,
-    systemPrompt: normalized.systemPrompt,
+    customInstructions: normalized.customInstructions,
   };
 }
 
@@ -586,7 +596,12 @@ function publicModelConfig(config) {
     providerName: active.name,
     modelRoles: publicRoles,
     providers: config.providers.map(publicProvider),
-    defaultSystemPrompt: DEFAULT_SYSTEM_PROMPT,
+    customInstructions: config.customInstructions,
+    coreSystemPrompt: CORE_AGENT_SYSTEM_PROMPT,
+    defaultCustomInstructions: DEFAULT_CUSTOM_INSTRUCTIONS,
+    effectiveSystemPrompt: buildAgentSystemPrompt(config.customInstructions),
+    systemPrompt: buildAgentSystemPrompt(config.customInstructions),
+    defaultSystemPrompt: CORE_AGENT_SYSTEM_PROMPT,
     configPath: modelConfigPath,
   };
 }
@@ -666,7 +681,11 @@ async function saveModelConfig(config) {
     longPasteThreshold: incoming.longPasteThreshold ?? existing.longPasteThreshold,
     maxToolRounds: incoming.maxToolRounds ?? existing.maxToolRounds,
     theme: incoming.theme ?? existing.theme,
-    systemPrompt: incoming.systemPrompt ?? existing.systemPrompt,
+    customInstructions: Object.prototype.hasOwnProperty.call(incoming, "customInstructions")
+      ? incoming.customInstructions
+      : Object.prototype.hasOwnProperty.call(incoming, "systemPrompt")
+        ? normalizeCustomInstructions(incoming)
+        : existing.customInstructions,
   });
   await writeJson(modelConfigPath, normalized);
   return loadModelConfig();
@@ -832,7 +851,7 @@ function normalizeConversation(raw) {
 function buildAgentMessages(config, conversation, runtimeMessages = []) {
   const compacted = summaryMessage(conversation.contextState?.summary);
   return [
-    { role: "system", content: String(config.systemPrompt || "").trim() || DEFAULT_SYSTEM_PROMPT },
+    { role: "system", content: buildAgentSystemPrompt(config.customInstructions) },
     ...(compacted ? [compacted] : []),
     ...conversation.turns,
     ...runtimeMessages,
@@ -978,7 +997,7 @@ async function callTool(name, args = {}, { signal } = {}) {
   throwIfAgentAborted(signal);
   const result = await waitForAgentOperation(executeTool(toolDefinitions, name, args || {}), signal);
   throwIfAgentAborted(signal);
-  return waitForAgentOperation(enhancePdfToolResult(name, args || {}, result, { signal }), signal);
+  return waitForAgentOperation(enhanceReadableToolResult(name, args || {}, result, { signal }), signal);
 }
 
 function normalizePdfPageNumbers(value) {
@@ -1037,7 +1056,7 @@ function pdfVisionRoute(config) {
 async function requestPdfVisionBatch(route, fileName, pages, signal) {
   const content = [{
     type: "text",
-    text: `请分析 PDF“${fileName}”的以下页面。重点提取图片、图表、受力图、几何图、坐标图、手写内容和扫描文字中无法仅靠 PDF 文本层获得的信息。按“第 N 页”分组，用简洁中文准确转述；看不清的内容要明确说明，不要猜测。`,
+    text: buildPdfVisionRequest(fileName),
   }];
   for (const page of pages) {
     content.push({ type: "text", text: `第 ${page.pageNumber} 页` });
@@ -1050,7 +1069,10 @@ async function requestPdfVisionBatch(route, fileName, pages, signal) {
     headers: { Authorization: `Bearer ${route.provider.apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model: route.provider.modelName,
-      messages: [{ role: "user", content }],
+      messages: [
+        { role: "system", content: PDF_VISION_SYSTEM_PROMPT },
+        { role: "user", content },
+      ],
       temperature: chatTemperature(route.provider, 0.1),
     }),
   });
@@ -1059,6 +1081,73 @@ async function requestPdfVisionBatch(route, fileName, pages, signal) {
   const text = summaryResponseText(raw ? JSON.parse(raw) : {});
   if (!text) throw new Error("视觉模型没有返回可用的 PDF 页面描述。");
   return text;
+}
+
+async function requestImageVisionBatch(route, images, signal) {
+  const content = [{ type: "text", text: buildImageVisionRequest() }];
+  for (const image of images) {
+    content.push({ type: "text", text: `图片：${image.fileName}` });
+    content.push({ type: "image_url", image_url: { url: image.dataUrl, detail: "high" } });
+  }
+
+  const response = await fetch(deriveChatUrl(route.provider.baseUrl), {
+    method: "POST",
+    signal,
+    headers: { Authorization: `Bearer ${route.provider.apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: route.provider.modelName,
+      messages: [
+        { role: "system", content: IMAGE_TRANSCRIPTION_SYSTEM_PROMPT },
+        { role: "user", content },
+      ],
+      temperature: chatTemperature(route.provider, 0.1),
+    }),
+  });
+  const raw = await response.text();
+  if (!response.ok) throw new Error(`视觉模型返回 HTTP ${response.status}: ${raw.slice(0, 1200)}`);
+  const text = summaryResponseText(raw ? JSON.parse(raw) : {});
+  if (!text) throw new Error("视觉模型没有返回可用的图片描述。");
+  return text;
+}
+
+async function loadWorkspaceImages(attachments) {
+  const source = Array.isArray(attachments) ? attachments : [];
+  if (source.length > MAX_AGENT_INPUT_IMAGES) throw new Error(`每条消息最多附带 ${MAX_AGENT_INPUT_IMAGES} 张图片。`);
+  const entries = source;
+  const images = [];
+  for (const entry of entries) {
+    const requestedPath = entry?.path
+      || (entry?.relativePath ? path.join(workspaceDir, String(entry.relativePath)) : "");
+    if (!requestedPath) throw new Error("附带图片缺少工作区路径。");
+    const image = await getWorkspaceImageDataUrl(requestedPath);
+    if (image.sizeBytes > MAX_AGENT_INPUT_IMAGE_BYTES) throw new Error(`图片“${image.fileName}”超过 25 MB。`);
+    images.push({
+      fileName: image.fileName,
+      path: image.path,
+      relativePath: path.relative(workspaceDir, image.path).replaceAll("\\", "/"),
+      mimeType: image.mimeType,
+      sizeBytes: image.sizeBytes,
+      dataUrl: image.dataUrl,
+    });
+  }
+  return images;
+}
+
+async function describeLoadedImages(config, images, signal) {
+  const route = pdfVisionRoute(config);
+  const descriptions = [];
+  for (let index = 0; index < images.length; index += PDF_VISION_BATCH_SIZE) {
+    descriptions.push(await requestImageVisionBatch(route, images.slice(index, index + PDF_VISION_BATCH_SIZE), signal));
+  }
+  return {
+    ok: true,
+    route: route.route,
+    role: route.role,
+    providerName: route.provider.name,
+    modelName: route.provider.modelName,
+    images: images.map(({ fileName, relativePath, mimeType, sizeBytes }) => ({ fileName, relativePath, mimeType, sizeBytes })),
+    text: descriptions.join("\n\n"),
+  };
 }
 
 async function describePdfVisuals(filePath, args = {}, { signal } = {}) {
@@ -1103,15 +1192,24 @@ async function describePdfVisuals(filePath, args = {}, { signal } = {}) {
   };
 }
 
-async function enhancePdfToolResult(name, args, result, { signal } = {}) {
+async function enhanceReadableToolResult(name, args, result, { signal } = {}) {
   const container = pdfResultContainer(name, result);
-  if (!container || String(container.extension || "").toLowerCase() !== ".pdf" || !container.path) return result;
+  if (!container || !container.path) return result;
+  const extension = String(container.extension || "").toLowerCase();
+  const isPdf = extension === ".pdf";
+  const isImage = IMAGE_MIME_BY_EXTENSION.has(extension);
+  if (!isPdf && !isImage) return result;
 
   let visualAnalysis;
   try {
-    visualAnalysis = await describePdfVisuals(container.path, args, { signal });
+    visualAnalysis = isPdf
+      ? await describePdfVisuals(container.path, args, { signal })
+      : await describeLoadedImages(await readModelConfigInternal(), [{
+          ...(await getLocalImageDataUrl(container.path)),
+          relativePath: path.relative(workspaceDir, container.path).replaceAll("\\", "/"),
+        }], signal);
   } catch (error) {
-    visualAnalysis = { ok: false, error: String(error?.message || error || "PDF 图片分析失败。") };
+    visualAnalysis = { ok: false, error: String(error?.message || error || "图片分析失败。") };
   }
 
   if (name === "read_workspace_file") return { ...result, file: { ...container, visualAnalysis } };
@@ -1187,7 +1285,7 @@ function safeToolSchemas() {
     },
     {
       name: "read_task_attachment",
-      description: "下载并读取任务附件。PDF 会同时提取文本并逐页进行视觉分析，无需再次调用 extract_pdf_text。",
+      description: "下载并读取任务附件。PDF 会提取文本并逐页进行视觉分析，图片会进行视觉分析；无需重复读取。",
       parameters: {
         type: "object",
         properties: {
@@ -1208,7 +1306,7 @@ function safeToolSchemas() {
     },
     {
       name: "read_workspace_file",
-      description: "读取工作区文件内容。PDF 会同时提取文本并逐页进行视觉分析。",
+      description: "读取工作区文件内容。PDF 会提取文本并逐页进行视觉分析，普通图片会返回 visualAnalysis。",
       parameters: {
         type: "object",
         properties: {
@@ -1372,15 +1470,33 @@ function isContextLimitError(status, body) {
   return /context.{0,24}(length|window|limit)|maximum context|too many tokens|token.{0,16}(limit|maximum)|上下文.{0,12}(超|限制)/i.test(String(body || ""));
 }
 
-async function requestContextSummary(config, previousSummary, turns, maxSummaryChars, signal) {
-  const instruction = [
-    "你负责压缩伴学邦桌面助手的旧对话，使后续模型可以无缝继续任务。",
-    "系统覆盖所有核心主题及其最终结论，优先说明用户目标和当前进度，并突出最新主线。",
-    "保留已经确认的事实、课程和作业名称、Task ID、草稿 ID、文件路径及读取范围、工具调用的重要结论、待办事项、缺失信息、安全限制和明确的下一步。",
-    "如果任务仍在进行，摘要末尾必须写明最新结果和紧接着要执行的具体步骤。",
-    "不要编造，不要保留 API Key、登录令牌、密码或不必要的完整敏感路径。",
-    `使用用户对话所用的语言，输出纯文本摘要，不要添加开场白，长度不超过 ${maxSummaryChars} 个字符。`,
+function agentImageReferenceText(images) {
+  if (!images.length) return "";
+  return [
+    "本条消息附带以下工作区图片，请结合图片内容回答：",
+    ...images.map((image) => `- ${image.relativePath}（${image.fileName}）`),
   ].join("\n");
+}
+
+function agentUserDisplayText(text, images) {
+  return [
+    String(text || "").trim(),
+    ...images.map((image) => `[图片] ${image.fileName}`),
+  ].filter(Boolean).join("\n");
+}
+
+function agentMultimodalContent(text, images) {
+  return [
+    { type: "text", text },
+    ...images.flatMap((image) => [
+      { type: "text", text: `图片：${image.fileName}` },
+      { type: "image_url", image_url: { url: image.dataUrl, detail: "high" } },
+    ]),
+  ];
+}
+
+async function requestContextSummary(config, previousSummary, turns, maxSummaryChars, signal) {
+  const instruction = buildContextSummaryPrompt(maxSummaryChars);
   const response = await fetch(deriveChatUrl(config.baseUrl), {
     method: "POST",
     signal,
@@ -1471,7 +1587,7 @@ async function compactConversationContext(config, conversation, {
   const turnTokens = estimateMessagesTokens(flattenRounds(rounds));
   let { older, recent } = splitRecentRounds(rounds, turnTokens, contextDefaults.keepRecentRatio);
   const fixedTokens = estimateMessagesTokens([
-    { role: "system", content: String(config.systemPrompt || "").trim() || DEFAULT_SYSTEM_PROMPT },
+    { role: "system", content: buildAgentSystemPrompt(config.customInstructions) },
     ...runtimeMessages,
   ], tools);
   if (budget.targetTokens && fixedTokens + estimateMessagesTokens(flattenRounds(recent)) > budget.targetTokens) {
@@ -1520,10 +1636,14 @@ async function compactConversationContext(config, conversation, {
   };
 }
 
-async function runAgent({ text, conversationId, userMessageId, assistantMessageId } = {}, { emitProgress, signal } = {}) {
+async function runAgent({ text, attachments, conversationId, userMessageId, assistantMessageId } = {}, { emitProgress, signal } = {}) {
   const config = await readModelConfigInternal();
-  const prompt = String(text || "").trim();
-  if (!prompt) throw new Error("消息不能为空。");
+  const typedPrompt = String(text || "").trim();
+  const images = await loadWorkspaceImages(attachments);
+  if (!typedPrompt && !images.length) throw new Error("消息不能为空。");
+  const prompt = [typedPrompt, agentImageReferenceText(images)].filter(Boolean).join("\n\n");
+  const displayText = agentUserDisplayText(typedPrompt, images);
+  let historyUserContent = prompt;
 
   const { state, conversation } = await getActiveConversation(conversationId);
   const steps = [];
@@ -1541,10 +1661,18 @@ async function runAgent({ text, conversationId, userMessageId, assistantMessageI
   };
   conversation.messages = conversation.messages.filter((message) => message.id !== userId && message.id !== assistantId);
   conversation.messages.push(
-    { id: userId, role: "user", text: prompt, at: startedAt, steps: [], status: "completed" },
+    {
+      id: userId,
+      role: "user",
+      text: displayText,
+      attachments: images.map(({ fileName, relativePath, mimeType, sizeBytes }) => ({ fileName, relativePath, mimeType, sizeBytes })),
+      at: startedAt,
+      steps: [],
+      status: "completed",
+    },
     assistantMessage,
   );
-  if (conversation.title === "新对话") conversation.title = prompt.slice(0, 28) || "新对话";
+  if (conversation.title === "新对话") conversation.title = (typedPrompt || images[0]?.fileName || "新对话").slice(0, 28);
   conversation.updatedAt = startedAt;
   state.activeId = conversation.id;
   await saveConversationState(state);
@@ -1566,7 +1694,7 @@ async function runAgent({ text, conversationId, userMessageId, assistantMessageI
     assistantMessage.steps = [...steps];
     assistantMessage.isRunning = false;
     assistantMessage.status = status;
-    conversation.turns.push({ role: "user", content: prompt }, { role: "assistant", content });
+    conversation.turns.push({ role: "user", content: historyUserContent }, { role: "assistant", content });
     conversation.updatedAt = nowIso();
     conversationContextInfo(conversation, config);
     state.activeId = conversation.id;
@@ -1588,7 +1716,20 @@ async function runAgent({ text, conversationId, userMessageId, assistantMessageI
       return finishTurn("还没有配置大模型。请先到“设置”填写 API Key、调用链接和模型名称。", "completed");
     }
 
-    const runtimeMessages = [{ role: "user", content: prompt }];
+    let runtimeMessages;
+    if (images.length && config.modelRoles?.image_caption?.enabled === true) {
+      pushStep("vision", "正在转述附带图片", `${images.length} 张图片`);
+      const visualAnalysis = await describeLoadedImages(config, images, signal);
+      historyUserContent = `${prompt}\n\n图片转述结果：\n${visualAnalysis.text}`;
+      runtimeMessages = [{ role: "user", content: historyUserContent }];
+      pushStep("vision", "附带图片转述完成", `${images.length} 张图片`);
+    } else if (images.length) {
+      runtimeMessages = [{ role: "user", content: agentMultimodalContent(prompt, images) }];
+      pushStep("vision", "附带图片将由主模型直接读取", `${images.length} 张图片`);
+    } else {
+      runtimeMessages = [{ role: "user", content: prompt }];
+    }
+    const contextRuntimeMessages = [{ role: "user", content: historyUserContent }];
     const maxToolRounds = Math.max(1, Number.parseInt(config.maxToolRounds || 6, 10));
     let autoCompressionFailed = false;
     let emergencyCompressionUsed = false;
@@ -1599,7 +1740,7 @@ async function runAgent({ text, conversationId, userMessageId, assistantMessageI
         try {
           const compression = await compactConversationContext(config, conversation, {
             reason: index === 0 ? "before_request" : "before_tool_round",
-            runtimeMessages,
+            runtimeMessages: contextRuntimeMessages,
             signal,
             onStart: ({ beforeTokens }) => pushStep("context", "正在自动压缩上下文", `当前约 ${beforeTokens} tokens`),
           });
@@ -1636,7 +1777,7 @@ async function runAgent({ text, conversationId, userMessageId, assistantMessageI
         const compression = await compactConversationContext(config, conversation, {
           force: true,
           reason: "context_limit_retry",
-          runtimeMessages,
+          runtimeMessages: contextRuntimeMessages,
           signal,
           onStart: ({ beforeTokens }) => pushStep("context", "模型上下文超限，正在紧急压缩", `当前约 ${beforeTokens} tokens`),
         });
@@ -1791,7 +1932,9 @@ async function saveWorkspacePastes(items) {
       const mimeType = String(entry?.mimeType || "").toLowerCase();
       const extension = PASTED_IMAGE_EXTENSION_BY_MIME.get(mimeType);
       if (!extension) throw new Error(`不支持粘贴的图片类型：${mimeType || "未知类型"}`);
-      buffer = Buffer.from(entry?.bytes || []);
+      buffer = typeof entry?.base64 === "string"
+        ? Buffer.from(entry.base64, "base64")
+        : Buffer.from(entry?.bytes || []);
       if (!buffer.length || buffer.byteLength > MAX_PASTED_FILE_BYTES) throw new Error("粘贴图片为空或超过 25 MB。");
       const requestedName = sanitizeWorkspaceName(entry?.name || `pasted-image-${timestamp}${extension}`);
       fileName = `${path.parse(requestedName).name || `pasted-image-${timestamp}`}${extension}`;
@@ -1830,8 +1973,8 @@ function assertWorkspacePath(filePath) {
   return resolved;
 }
 
-async function getWorkspaceImageDataUrl(filePath) {
-  const resolved = assertWorkspacePath(filePath);
+async function getLocalImageDataUrl(filePath) {
+  const resolved = path.resolve(String(filePath || ""));
   const extension = path.extname(resolved).toLowerCase();
   const mimeType = IMAGE_MIME_BY_EXTENSION.get(extension);
   if (!mimeType) throw new Error("This file type is not supported for image preview.");
@@ -1840,6 +1983,10 @@ async function getWorkspaceImageDataUrl(filePath) {
   if (fileStat.size > MAX_INLINE_IMAGE_BYTES) throw new Error("Image is too large to preview inline.");
   const buffer = await fs.readFile(resolved);
   return { fileName: path.basename(resolved), path: resolved, mimeType, sizeBytes: buffer.byteLength, dataUrl: `data:${mimeType};base64,${buffer.toString("base64")}` };
+}
+
+async function getWorkspaceImageDataUrl(filePath) {
+  return getLocalImageDataUrl(assertWorkspacePath(filePath));
 }
 
 function escapeHtml(value) {

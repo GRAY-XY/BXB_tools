@@ -131,4 +131,8 @@ The WinUI shell currently exposes native pages for Home, Agent, Homework, Drafts
 
 Draft JSON is stored in `%APPDATA%\bxb-homework-electron\.banxuebang\drafts`. The installer migrates drafts written by older builds under the packaged payload before replacing the installation directory.
 
-PDF tools extract the text layer and render bounded page images for visual analysis. If the image-caption role is enabled, its active provider handles those images; otherwise the active chat provider is treated as multimodal and receives them directly.
+The Agent composer accepts pasted images, saves them to the managed workspace, and shows removable pending attachments. With image captioning disabled, the active chat provider receives those images directly as multimodal content. With image captioning enabled, its provider transcribes them first and only the transcription is passed to chat. Conversation persistence stores file metadata rather than Base64 image data.
+
+PDF tools extract the text layer and render bounded page images for visual analysis. PDF page images follow the same model-role selection: the image-caption provider handles them when enabled, otherwise the active chat provider is used as the multimodal visual analyzer.
+
+The Agent always receives a backend-owned core policy. Settings stores only lower-priority custom instructions. Legacy editable system prompts migrate automatically, while context compaction and image/PDF visual transcription keep separate specialized prompts.
