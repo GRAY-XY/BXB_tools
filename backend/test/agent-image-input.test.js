@@ -141,6 +141,9 @@ test("disabled image transcription sends pasted images directly to the chat mode
     assert.match(content.find((item) => item.type === "text").text, /pasted\/sample\.png/);
     assert.match(content.find((item) => item.type === "image_url").image_url.url, /^data:image\/png;base64,/);
     assert.match(result.final.result.conversation.title, /请说明图片内容/);
+    assert.equal(result.final.result.steps[0].title, "附带图片将由主模型直接读取");
+    assert.ok(result.final.result.steps.some((step) => step.title === "正在分析请求"));
+    assert.equal(result.final.result.steps.at(-1).title, "模型已生成最终回答");
     assert.doesNotMatch(result.conversationText, /data:image\/png;base64/);
     assert.match(result.conversationText, /sample\.png/);
   } finally {

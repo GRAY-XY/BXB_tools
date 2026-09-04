@@ -120,7 +120,11 @@ Agent progress requirements:
 
 - Subscribe to `onAgentProgress`.
 - Show elapsed time while a request is running.
-- Display each tool/model step as expandable details.
+- Show an inline `Thinking` process row above the active assistant response, followed by the current user-facing step name.
+- Let the inline process row expand and collapse independently for each assistant message. Do not require a separate side panel to inspect routine progress.
+- While running, update the current step and expanded timeline in real time. After completion, retain the collapsed process summary with step count and elapsed duration.
+- Display each tool/model step as a simple timeline. Keep arguments and results collapsed under the individual step by default; expanding a step parses structured details into readable labels and values instead of rendering raw JSON.
+- Keep the user's expanded/collapsed state stable when progress updates rerender the conversation.
 - Preserve final `steps` returned by `chat()`.
 
 Context meter:
@@ -305,12 +309,15 @@ Required actions:
 
 - Refresh files: `list_workspace_files({})`
 - Preview readable files: `read_workspace_file({ file, max_chars: 8000 })`
-- Rename files: `rename_workspace_file({ file, new_name })`
+- Rename a selected file through the user-action `workspace:rename` bridge method.
+- Delete a selected file through the user-action `workspace:delete` bridge method after an in-app confirmation.
 - Create assistant text artifacts: `write_workspace_text_file({ file_name, content })`
 
 UI requirements:
 
-- Include buttons for importing files, refreshing files, and opening the workspace folder.
+- Include buttons for refreshing files, opening the workspace folder, renaming the selected file, and deleting the selected file.
+- Keep rename/delete disabled until a real file is selected. Rename must not overwrite another file; delete must clearly state that it cannot be undone.
+- Deleting files is a direct user action and must not be exposed to the autonomous Agent.
 - File import uses Electron IPC to copy selected files into the managed workspace.
 - Composer-pasted images and long text use Electron IPC to save directly into the managed workspace.
 - The renderer must not read arbitrary local paths directly.

@@ -293,6 +293,15 @@ await window.bxb.callTool("send_approved_draft_private_message", {
 });
 ```
 
+The WinUI workspace page uses dedicated user-action bridge methods for destructive file management:
+
+```json
+{"method":"workspace:rename","params":{"file":"imports/assignment.pdf","newName":"final-assignment.pdf"}}
+{"method":"workspace:delete","params":{"file":"imports/final-assignment.pdf"}}
+```
+
+Both methods resolve files through the managed workspace boundary. Rename refuses to overwrite an existing file. Delete is intentionally absent from the autonomous Agent tool schema and requires an in-app user confirmation.
+
 An active Agent request can be canceled independently of page navigation:
 
 ```js
@@ -702,6 +711,8 @@ Recommended flow:
 8. Treat user input `/compact` as a call to `compactChat()`.
 9. Use `createConversation()` for a new conversation and `selectConversation()` to enter an old one.
 
+The primary Agent UI renders `steps` inside the associated assistant message. A running message shows `Thinking` plus the latest step title; its disclosure row expands into a structured timeline. Each step keeps its arguments and results in a second disclosure that is collapsed by default. Completed messages retain a compact step-count/duration summary. Process expansion state is frontend-only and must survive real-time rerenders. Expanded tool arguments and results should be summarized into labeled fields rather than displayed as raw JSON.
+
 Image-message routing:
 
 - `attachments` accepts at most eight supported images already stored inside the managed workspace; arbitrary local paths are rejected.
@@ -721,6 +732,8 @@ Renderer API to IPC channel mapping:
 | `callTool(name, args)` | `bxb:tool` |
 | `importWorkspaceFiles()` | `workspace:import` |
 | `saveWorkspacePastes(items)` | `workspace:save-pastes` |
+| `renameWorkspaceFile(file, newName)` | `workspace:rename` |
+| `deleteWorkspaceFile(file)` | `workspace:delete` |
 | `openWorkspaceFolder()` | `workspace:open` |
 | `getWorkspaceImageDataUrl(filePath)` | `workspace:image-data-url` |
 | `loadModelConfig()` | `config:model:load` |
