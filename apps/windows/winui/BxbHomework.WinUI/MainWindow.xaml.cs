@@ -11,6 +11,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Security.Credentials;
+using Windows.Storage;
 using Windows.System;
 using Windows.UI.Core;
 using Windows.Storage.Streams;
@@ -51,7 +52,13 @@ internal sealed record ModelProviderPreset(string Type, string Name, string Base
 public sealed partial class MainWindow : Window
 {
     private const string BanxuebangCredentialResource = "com.grayxy.bxbhomework.banxuebang";
+    private const int MaxAgentInputImages = 8;
+    private const long MaxAgentInputImageBytes = 25L * 1024 * 1024;
     private static readonly JsonSerializerOptions PrettyJsonOptions = new() { WriteIndented = true };
+    private static readonly HashSet<string> SupportedClipboardImageTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp", "image/avif",
+    };
     private static readonly IReadOnlyList<ModelProviderPreset> ModelProviderPresets = new[]
     {
         new ModelProviderPreset("moonshot", "Moonshot", "https://api.moonshot.cn/v1", "kimi-k2.5"),
@@ -63,6 +70,7 @@ public sealed partial class MainWindow : Window
     private readonly NodeBackendClient _backend = new();
     private readonly ObservableCollection<DisplayItem> _items = new();
     private readonly ObservableCollection<DisplayItem> _agentConversationItems = new();
+    private readonly ObservableCollection<DisplayItem> _agentComposerFiles = new();
     private readonly List<DisplayItem> _agentConversationCache = new();
     private readonly ObservableCollection<DisplayItem> _settingsProviderItems = new();
     private readonly ObservableCollection<DisplayItem> _settingsPathItems = new();
@@ -94,7 +102,7 @@ public sealed partial class MainWindow : Window
     private int _pageLoadVersion;
     private bool _settingsHasApiKey;
     private string _settingsModelRole = "chat";
-    private string _settingsDefaultSystemPrompt = "";
+    private string _settingsDefaultCustomInstructions = "";
     private JsonElement? _settingsConfig;
     private bool _suppressSettingsProviderCombo;
     private bool _suppressSettingsProviderTypeCombo;
@@ -113,6 +121,7 @@ public sealed partial class MainWindow : Window
         SetWindowIcon();
         MainListView.ItemsSource = _items;
         AgentConversationListView.ItemsSource = _agentConversationItems;
+        AgentComposerFilesListView.ItemsSource = _agentComposerFiles;
         SettingsProviderListView.ItemsSource = _settingsProviderItems;
         SettingsPathListView.ItemsSource = _settingsPathItems;
         PrivateThreadListView.ItemsSource = _privateThreadMessages;
@@ -989,7 +998,7 @@ public sealed partial class MainWindow : Window
     private void ApplySettingsConfig(JsonElement config)
     {
         _settingsConfig = config.Clone();
-        _settingsDefaultSystemPrompt = GetString(config, "defaultSystemPrompt", "");
+        _settingsDefaultCustomInstructions = GetString(config, "defaultCustomInstructions", "");
         PopulateSettingsProviderTypes();
         PopulateSettingsProviders(config);
 
@@ -1028,7 +1037,7 @@ public sealed partial class MainWindow : Window
         SettingsCompactTemperatureBox.Text = GetString(config, "compactTemperature", "0.1");
         SettingsMaxToolRoundsBox.Text = GetString(config, "maxToolRounds", "6");
         SettingsLongPasteThresholdBox.Text = GetString(config, "longPasteThreshold", "4000");
-        SettingsSystemPromptBox.Text = GetString(config, "systemPrompt", "");
+        SettingsCustomInstructionsBox.Text = GetString(config, "customInstructions", "");
         SelectSettingsTheme(GetString(config, "theme", "light"));
         SettingsModelStatusText.Text = _settingsHasApiKey ? "API Key 已保存。留空保存不会覆盖已保存 Key。" : "API Key 未配置。";
 
@@ -1249,7 +1258,7 @@ public sealed partial class MainWindow : Window
             ["compactTemperature"] = SettingsCompactTemperatureBox.Text.Trim(),
             ["maxToolRounds"] = SettingsMaxToolRoundsBox.Text.Trim(),
             ["longPasteThreshold"] = SettingsLongPasteThresholdBox.Text.Trim(),
-            ["systemPrompt"] = SettingsSystemPromptBox.Text.Trim(),
+            ["customInstructions"] = SettingsCustomInstructionsBox.Text.Trim(),
             ["theme"] = GetCurrentSettingsTheme(),
         };
 
@@ -1400,7 +1409,7 @@ public sealed partial class MainWindow : Window
             ("workspaceDir", "工作区", "保存用户导入文件、下载的作业附件和助手生成的本地文件。", GetString(appInfo, "workspaceDir", "")),
             ("draftDir", "草稿库", "保存待审核、已通过和已驳回的本地作业草稿。", GetString(appInfo, "draftDir", "")),
             ("updateDir", "更新缓存", "保存应用内下载的安装器、校验信息和待安装状态。", GetString(appInfo, "updateDir", "")),
-            ("modelConfigPath", "模型配置文件", "保存 API Key、调用链接、模型名、Temperature 和系统提示词。", GetString(appInfo, "modelConfigPath", "")),
+            ("modelConfigPath", "模型配置文件", "保存 API Key、调用链接、模型名、Temperature 和 Agent 自定义指令。", GetString(appInfo, "modelConfigPath", "")),
             ("conversationsPath", "助手对话记录", "保存本地助手会话、标题和上下文压缩后的历史。", GetString(appInfo, "conversationsPath", "")),
             ("payloadRoot", "程序负载目录", "保存打包随附的工具代码和运行依赖，通常不需要手动修改。", GetString(appInfo, "payloadRoot", "")),
             ("browserRoot", "浏览器依赖目录", "保存 Playwright/Chromium 依赖，供登录、网页搜索和页面读取使用。", GetString(appInfo, "browserDependency.browserRoot", "")),
@@ -1830,6 +1839,124 @@ public sealed partial class MainWindow : Window
         await RunUiAsync(SendAgentAsync);
     }
 
+    private async void OnAgentInputPaste(object sender, TextControlPasteEventArgs args)
+    {
+        if (_agentRequestRunning) return;
+        var clipboard = Clipboard.GetContent();
+        var hasBitmap = clipboard.Contains(StandardDataFormats.Bitmap);
+        var hasStorageItems = clipboard.Contains(StandardDataFormats.StorageItems);
+        if (!hasBitmap && !hasStorageItems) return;
+
+        args.Handled = true;
+        await RunUiAsync(async () =>
+        {
+            var remaining = MaxAgentInputImages - _agentComposerFiles.Count;
+            if (remaining <= 0) throw new InvalidOperationException($"每条消息最多附带 {MaxAgentInputImages} 张图片。");
+            var payloads = new List<Dictionary<string, object>>();
+            if (hasStorageItems)
+            {
+                var items = await clipboard.GetStorageItemsAsync();
+                foreach (var file in items.OfType<StorageFile>())
+                {
+                    if (payloads.Count >= remaining) break;
+                    var mimeType = NormalizeClipboardImageType(file.ContentType, file.FileType);
+                    if (!SupportedClipboardImageTypes.Contains(mimeType)) continue;
+                    var properties = await file.GetBasicPropertiesAsync();
+                    if ((long)properties.Size > MaxAgentInputImageBytes)
+                    {
+                        throw new InvalidOperationException($"图片“{file.Name}”超过 25 MB。");
+                    }
+                    var buffer = await FileIO.ReadBufferAsync(file);
+                    payloads.Add(new Dictionary<string, object>
+                    {
+                        ["kind"] = "image",
+                        ["name"] = file.Name,
+                        ["mimeType"] = mimeType,
+                        ["base64"] = Convert.ToBase64String(buffer.ToArray()),
+                    });
+                }
+            }
+
+            if (payloads.Count == 0 && hasBitmap)
+            {
+                var reference = await clipboard.GetBitmapAsync();
+                using var stream = await reference.OpenReadAsync();
+                if ((long)stream.Size > MaxAgentInputImageBytes) throw new InvalidOperationException("粘贴图片超过 25 MB。");
+                var mimeType = NormalizeClipboardImageType(stream.ContentType, ".png");
+                var bytes = await ReadClipboardStreamAsync(stream);
+                payloads.Add(new Dictionary<string, object>
+                {
+                    ["kind"] = "image",
+                    ["name"] = $"pasted-image-{DateTime.Now:yyyyMMdd-HHmmss}.png",
+                    ["mimeType"] = mimeType,
+                    ["base64"] = Convert.ToBase64String(bytes),
+                });
+            }
+
+            if (payloads.Count == 0)
+            {
+                SetStatus("剪贴板中没有支持的图片");
+                return;
+            }
+
+            var result = await InvokeAsync("workspace:save-pastes", new { items = payloads });
+            if (result.TryGetProperty("saved", out var saved) && saved.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var file in saved.EnumerateArray())
+                {
+                    var path = GetString(file, "path", "");
+                    _agentComposerFiles.Add(new DisplayItem
+                    {
+                        Id = Guid.NewGuid().ToString("N"),
+                        Title = GetString(file, "name", "粘贴图片"),
+                        Subtitle = GetString(file, "relativePath", path),
+                        Path = path,
+                        Data = file.Clone(),
+                    });
+                }
+            }
+            UpdateAgentComposerFilesVisibility();
+            SetStatus($"已将 {payloads.Count} 张图片保存到工作区");
+            FocusAgentInput();
+        });
+    }
+
+    private static async Task<byte[]> ReadClipboardStreamAsync(IRandomAccessStreamWithContentType stream)
+    {
+        using var reader = new DataReader(stream.GetInputStreamAt(0));
+        var length = checked((uint)stream.Size);
+        await reader.LoadAsync(length);
+        var bytes = new byte[(int)length];
+        reader.ReadBytes(bytes);
+        return bytes;
+    }
+
+    private static string NormalizeClipboardImageType(string? contentType, string? extension)
+    {
+        if (!string.IsNullOrWhiteSpace(contentType) && SupportedClipboardImageTypes.Contains(contentType)) return contentType.ToLowerInvariant();
+        return (extension ?? "").ToLowerInvariant() switch
+        {
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".gif" => "image/gif",
+            ".webp" => "image/webp",
+            ".bmp" => "image/bmp",
+            ".avif" => "image/avif",
+            _ => "image/png",
+        };
+    }
+
+    private void OnAgentComposerFileRemoveClick(object sender, RoutedEventArgs args)
+    {
+        if (sender is Button { DataContext: DisplayItem item }) _agentComposerFiles.Remove(item);
+        UpdateAgentComposerFilesVisibility();
+        FocusAgentInput();
+    }
+
+    private void UpdateAgentComposerFilesVisibility()
+    {
+        AgentComposerFilesListView.Visibility = _agentComposerFiles.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
     private void FocusAgentInput()
     {
         DispatcherQueue.TryEnqueue(() => AgentInputBox.Focus(FocusState.Programmatic));
@@ -1894,8 +2021,9 @@ public sealed partial class MainWindow : Window
     {
         if (_agentRequestRunning) return;
         var text = AgentInputBox.Text.Trim();
-        if (string.IsNullOrWhiteSpace(text)) return;
-        if (text == "/compact")
+        var attachedImages = _agentComposerFiles.ToList();
+        if (string.IsNullOrWhiteSpace(text) && attachedImages.Count == 0) return;
+        if (text == "/compact" && attachedImages.Count == 0)
         {
             var compactResult = await InvokeAsync("agent:compact", new { conversationId = _activeConversationId });
             AgentInputBox.Text = "";
@@ -1912,9 +2040,14 @@ public sealed partial class MainWindow : Window
         _runningAgentMessageId = assistantMessageId;
         UpdateAgentSendButtonState();
         AgentInputBox.Text = "";
+        _agentComposerFiles.Clear();
+        UpdateAgentComposerFilesVisibility();
         _selectedAgentMessageId = assistantMessageId;
         _agentShouldFollowLatest = true;
-        _agentPreviewMessages.Add(new AgentChatMessage(userMessageId, "user", text));
+        var previewText = string.Join("\n", new[] { text }
+            .Concat(attachedImages.Select(file => $"[图片] {file.Title}"))
+            .Where(value => !string.IsNullOrWhiteSpace(value)));
+        _agentPreviewMessages.Add(new AgentChatMessage(userMessageId, "user", previewText));
         _agentPreviewMessages.Add(new AgentChatMessage(assistantMessageId, "assistant", "", null, true));
         RenderAgentMessages(_agentPreviewMessages);
         SetAgentStepsMessage("正在请求模型...");
@@ -1923,6 +2056,13 @@ public sealed partial class MainWindow : Window
             var result = await InvokeAsync("agent:chat", new
             {
                 text,
+                attachments = attachedImages.Select(file => new
+                {
+                    path = file.Path,
+                    relativePath = GetString(file.Data, "relativePath", ""),
+                    name = file.Title,
+                    mimeType = GetString(file.Data, "mimeType", ""),
+                }).ToArray(),
                 conversationId = _activeConversationId,
                 userMessageId,
                 assistantMessageId,
@@ -2203,10 +2343,10 @@ public sealed partial class MainWindow : Window
         });
     }
 
-    private void OnSettingsRestoreDefaultPromptClick(object sender, RoutedEventArgs args)
+    private void OnSettingsClearCustomInstructionsClick(object sender, RoutedEventArgs args)
     {
-        SettingsSystemPromptBox.Text = _settingsDefaultSystemPrompt;
-        SetStatus("已恢复默认提示词，点击保存设置后生效");
+        SettingsCustomInstructionsBox.Text = _settingsDefaultCustomInstructions;
+        SetStatus("已清空自定义指令，点击保存设置后生效");
     }
 
     private async void OnSettingsLoadModelsClick(object sender, RoutedEventArgs args)

@@ -345,18 +345,56 @@
                                     <Grid.RowDefinitions>
                                         <RowDefinition Height="Auto" />
                                         <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
                                     </Grid.RowDefinitions>
+                                    <ListView
+                                        x:Name="AgentComposerFilesListView"
+                                        Grid.Row="0"
+                                        MaxHeight="104"
+                                        Margin="0,0,0,4"
+                                        SelectionMode="None"
+                                        IsItemClickEnabled="False"
+                                        Visibility="Collapsed"
+                                        ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                        ScrollViewer.VerticalScrollBarVisibility="Disabled">
+                                        <ListView.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <ItemsStackPanel Orientation="Horizontal" />
+                                            </ItemsPanelTemplate>
+                                        </ListView.ItemsPanel>
+                                        <ListView.ItemTemplate>
+                                            <DataTemplate x:DataType="local:DisplayItem" xmlns:local="using:BxbHomework.WinUI">
+                                                <Border Width="230" Padding="10,8" CornerRadius="6" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                                                    <Grid ColumnSpacing="8">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel Spacing="2">
+                                                            <TextBlock Text="{x:Bind Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                            <TextBlock Text="{x:Bind Subtitle}" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" />
+                                                        </StackPanel>
+                                                        <Button Grid.Column="1" Width="30" Height="30" Padding="0" Click="OnAgentComposerFileRemoveClick" ToolTipService.ToolTip="移除待发送图片">
+                                                            <FontIcon Glyph="&#xE711;" FontSize="12" />
+                                                        </Button>
+                                                    </Grid>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ListView.ItemTemplate>
+                                    </ListView>
                                     <TextBox
                                         x:Name="AgentInputBox"
+                                        Grid.Row="1"
                                         AcceptsReturn="False"
                                         MinHeight="44"
                                         MaxHeight="132"
                                         BorderThickness="0"
                                         Background="Transparent"
-                                        PlaceholderText="给 BXB 助手发送消息"
+                                        PlaceholderText="给 BXB 助手发送消息，或粘贴图片"
                                         TextWrapping="Wrap"
+                                        Paste="OnAgentInputPaste"
                                         PreviewKeyDown="OnAgentInputKeyDown" />
-                                    <Grid Grid.Row="1">
+                                    <Grid Grid.Row="2">
                                         <TextBlock Text="Enter 发送 · Ctrl+Enter 换行" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
                                         <Button
                                             x:Name="AgentSendButton"
@@ -722,10 +760,10 @@
                                 <TextBox x:Name="SettingsMaxToolRoundsBox" Header="最大工具轮次" InputScope="Number" />
                                 <TextBox x:Name="SettingsLongPasteThresholdBox" Header="长文本粘贴阈值" InputScope="Number" />
                                 <TextBlock Text="粘贴文本达到该字数时，将保存为工作区 TXT 文件，而不是直接放入输入框。" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                                <TextBox x:Name="SettingsSystemPromptBox" Header="AI 系统提示词" MinHeight="132" AcceptsReturn="True" TextWrapping="Wrap" />
+                                <TextBox x:Name="SettingsCustomInstructionsBox" Header="Agent 自定义指令" PlaceholderText="可选，例如：回答尽量简洁。" MinHeight="132" AcceptsReturn="True" TextWrapping="Wrap" />
                                 <StackPanel Orientation="Horizontal" Spacing="8">
                                     <Button Content="保存设置" Click="OnSettingsSaveConfigClick" />
-                                    <Button Content="恢复默认提示词" Click="OnSettingsRestoreDefaultPromptClick" />
+                                    <Button Content="清空自定义指令" Click="OnSettingsClearCustomInstructionsClick" />
                                 </StackPanel>
                             </StackPanel>
                         </Border>

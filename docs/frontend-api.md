@@ -366,7 +366,7 @@ Composer paste saving:
 
 ```ts
 type WorkspacePasteInput =
-  | { kind: "image"; name?: string; mimeType: string; bytes: Uint8Array }
+  | { kind: "image"; name?: string; mimeType: string; bytes?: Uint8Array; base64?: string }
   | { kind: "text"; name?: string; text: string };
 
 type WorkspacePasteResult = {
@@ -382,7 +382,7 @@ type WorkspacePasteResult = {
 };
 ```
 
-`saveWorkspacePastes()` only accepts image bytes or text and always chooses a unique destination inside the managed workspace. It rejects unsupported image types and items over 25 MB.
+`saveWorkspacePastes()` only accepts image bytes/Base64 or text and always chooses a unique destination inside the managed workspace. WinUI uses Base64 because requests cross the JSONL bridge; Electron may pass byte arrays. It rejects unsupported image types and items over 25 MB.
 
 Image previews:
 
@@ -492,6 +492,8 @@ type ModelConfigInput = {
   compactTemperature?: number | string;
   longPasteThreshold?: number | string;
   maxToolRounds?: number | string;
+  customInstructions?: string;
+  /** @deprecated Migrated to customInstructions; cannot replace the core policy. */
   systemPrompt?: string;
 };
 
@@ -531,6 +533,13 @@ type ModelConfig = ModelConfigInput & {
     };
   };
   providers: ModelProvider[];
+  customInstructions: string;
+  coreSystemPrompt: string;
+  defaultCustomInstructions: string;
+  effectiveSystemPrompt: string;
+  /** @deprecated Compatibility alias for effectiveSystemPrompt. */
+  systemPrompt: string;
+  /** @deprecated Compatibility alias for coreSystemPrompt. */
   defaultSystemPrompt: string;
   hasApiKey: boolean;
   apiKeyMasked: string;
@@ -554,6 +563,10 @@ type ModelTestResult = {
   message: string;
 };
 ```
+
+`coreSystemPrompt` is owned by the backend and is always included in Agent requests. The Settings page edits only `customInstructions`; those instructions are appended as a lower-priority section and cannot replace the core policy. Existing saved `systemPrompt` values migrate automatically: the former built-in default becomes an empty custom instruction, while a genuinely customized legacy value is preserved as `customInstructions`.
+
+Context compaction and PDF visual transcription use dedicated backend prompts. They do not reuse `customInstructions` or replace the main Agent policy.
 
 Security requirements:
 
@@ -583,6 +596,12 @@ type AgentChatInput = {
   text: string;
   requestId?: string;
   conversationId?: string;
+  userMessageId?: string;
+  assistantMessageId?: string;
+  attachments?: Array<{
+    path?: string;
+    relativePath?: string;
+  }>;
 };
 
 type AgentChatResult = {
@@ -635,7 +654,17 @@ type AgentConversationState = {
     title: string;
     createdAt: string;
     updatedAt: string;
-    messages: Array<{ role: "user" | "assistant" | string; text: string; at?: string }>;
+    messages: Array<{
+      role: "user" | "assistant" | string;
+      text: string;
+      at?: string;
+      attachments?: Array<{
+        fileName: string;
+        relativePath: string;
+        mimeType: string;
+        sizeBytes: number;
+      }>;
+    }>;
   } | null;
 };
 
@@ -672,6 +701,14 @@ Recommended flow:
 7. Show `steps` in a right-side timeline or expandable panel.
 8. Treat user input `/compact` as a call to `compactChat()`.
 9. Use `createConversation()` for a new conversation and `selectConversation()` to enter an old one.
+
+Image-message routing:
+
+- `attachments` accepts at most eight supported images already stored inside the managed workspace; arbitrary local paths are rejected.
+- The bridge validates each image, limits it to 25 MB, and persists only file metadata in conversation history. Base64 image data is never written into the conversation JSON.
+- When the `image_caption` role is disabled, the current request sends the images directly to the active chat provider as OpenAI-compatible multimodal `image_url` content. The chat provider is therefore assumed to be multimodal.
+- When the `image_caption` role is enabled, its active provider first produces an untrusted-data-safe visual transcription. The active chat provider then receives the user text, workspace references, and transcription, but not the original image bytes.
+- On later turns, the Agent can revisit a saved image with `read_workspace_file`; that tool attaches `visualAnalysis` using the same enabled/disabled model-role rule.
 
 ## IPC Mapping
 
