@@ -357,6 +357,10 @@ function isFinalDraftStatus(status) {
   return FINAL_DRAFT_STATUSES.has(String(status || "").trim());
 }
 
+function draftNotFoundError(draftId) {
+  return new Error(`找不到草稿 ${draftId}。草稿可能已被删除，请刷新草稿列表后重试。`);
+}
+
 function draftPrivateMessageContactKey(contact) {
   const source = ensureObject(contact?.raw || contact);
   return [
@@ -2436,7 +2440,7 @@ export class BanxuebangClient {
   async getSubmissionDraft(draftId) {
     const draft = await this.draftStore.get(draftId);
     if (!draft) {
-      throw new Error(`Draft ${draftId} was not found.`);
+      throw draftNotFoundError(draftId);
     }
 
     return {
@@ -2468,7 +2472,7 @@ export class BanxuebangClient {
     });
 
     if (!updated) {
-      throw new Error(`Draft ${draftId} was not found.`);
+      throw draftNotFoundError(draftId);
     }
 
     return {
@@ -2495,7 +2499,7 @@ export class BanxuebangClient {
     });
 
     if (!updated) {
-      throw new Error(`Draft ${draftId} was not found.`);
+      throw draftNotFoundError(draftId);
     }
 
     return {
@@ -2523,7 +2527,7 @@ export class BanxuebangClient {
     });
 
     if (!updated) {
-      throw new Error(`Draft ${draftId} was not found.`);
+      throw draftNotFoundError(draftId);
     }
 
     return {
@@ -2538,7 +2542,7 @@ export class BanxuebangClient {
   async deleteSubmissionDraft(draftId) {
     const draft = await this.draftStore.get(draftId);
     if (!draft) {
-      throw new Error(`Draft ${draftId} was not found.`);
+      throw draftNotFoundError(draftId);
     }
 
     await this.draftStore.clear(draftId);
@@ -2554,7 +2558,7 @@ export class BanxuebangClient {
   async prepareDraftSubmission(draftId) {
     const draft = await this.draftStore.get(draftId);
     if (!draft) {
-      throw new Error(`Draft ${draftId} was not found.`);
+      throw draftNotFoundError(draftId);
     }
     if (draft.status !== "approved") {
       throw new Error("只有已通过的草稿可以提交。");
@@ -2722,7 +2726,7 @@ export class BanxuebangClient {
   async prepareDraftPrivateMessage(draftId, { contact } = {}) {
     const draft = await this.draftStore.get(draftId);
     if (!draft) {
-      throw new Error(`Draft ${draftId} was not found.`);
+      throw draftNotFoundError(draftId);
     }
     if (draft.status !== "approved") {
       throw new Error("只有已通过的草稿可以准备私信老师。");

@@ -128,3 +128,7 @@ Current prototype method groups:
 - `update.openUrl`
 
 The WinUI shell currently exposes native pages for Home, Agent, Homework, Drafts, Private Messages, Workspace, Updates, and Settings. Complex confirmation flows such as draft submission, private-message sending, and installer launch are available in the backend but should still be surfaced through dedicated confirmation UI before normal use.
+
+Draft JSON is stored in `%APPDATA%\bxb-homework-electron\.banxuebang\drafts`. The installer migrates drafts written by older builds under the packaged payload before replacing the installation directory.
+
+PDF tools extract the text layer and render bounded page images for visual analysis. If the image-caption role is enabled, its active provider handles those images; otherwise the active chat provider is treated as multimodal and receives them directly.

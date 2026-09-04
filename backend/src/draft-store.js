@@ -5,6 +5,55 @@ const defaultDraftDir = () =>
   process.env.BANXUEBANG_DRAFT_DIR ||
   path.join(process.cwd(), ".banxuebang", "drafts");
 
+const safeDraftId = (draftId) => String(draftId || "").replace(/[^a-zA-Z0-9._-]/g, "_");
+
+function draftTimestamp(draft) {
+  return Date.parse(draft?.updatedAt || draft?.createdAt || 0) || 0;
+}
+
+export async function migrateDraftFiles(sourceDirs, targetDir) {
+  const targetRoot = path.resolve(targetDir);
+  await mkdir(targetRoot, { recursive: true });
+  let migrated = 0;
+
+  for (const sourceDir of new Set(sourceDirs.map((item) => path.resolve(item)))) {
+    if (sourceDir === targetRoot) continue;
+
+    let entries;
+    try {
+      entries = await readdir(sourceDir, { withFileTypes: true });
+    } catch (error) {
+      if (error?.code === "ENOENT") continue;
+      throw error;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+
+      try {
+        const sourceDraft = JSON.parse(await readFile(path.join(sourceDir, entry.name), "utf8"));
+        if (!sourceDraft?.draftId) continue;
+
+        const targetPath = path.join(targetRoot, `${safeDraftId(sourceDraft.draftId)}.json`);
+        let targetDraft = null;
+        try {
+          targetDraft = JSON.parse(await readFile(targetPath, "utf8"));
+        } catch (error) {
+          if (error?.code !== "ENOENT" && !(error instanceof SyntaxError)) throw error;
+        }
+
+        if (targetDraft && draftTimestamp(targetDraft) >= draftTimestamp(sourceDraft)) continue;
+        await writeFile(targetPath, `${JSON.stringify(sourceDraft, null, 2)}\n`, "utf8");
+        migrated += 1;
+      } catch {
+        // A malformed legacy file must not block startup or other drafts.
+      }
+    }
+  }
+
+  return migrated;
+}
+
 export class DraftStore {
   constructor(draftDir = defaultDraftDir()) {
     this.draftDir = draftDir;
@@ -80,7 +129,6 @@ export class DraftStore {
   }
 
   _filePath(draftId) {
-    const safeId = String(draftId || "").replace(/[^a-zA-Z0-9._-]/g, "_");
-    return path.join(this.draftDir, `${safeId}.json`);
+    return path.join(this.draftDir, `${safeDraftId(draftId)}.json`);
   }
 }

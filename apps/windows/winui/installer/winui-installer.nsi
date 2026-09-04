@@ -38,6 +38,9 @@ VIAddVersionKey /LANG=1033 "ProductVersion" "${APP_VERSION}"
 
 Section "Install"
   SetOutPath "$TEMP"
+  CreateDirectory "$APPDATA\bxb-homework-electron\.banxuebang\drafts"
+  SetOverwrite on
+  CopyFiles /SILENT "$INSTDIR\resources\payload\.banxuebang\drafts\*.json" "$APPDATA\bxb-homework-electron\.banxuebang\drafts"
   RMDir /r "$INSTDIR"
   CreateDirectory "$INSTDIR"
   SetOutPath "$INSTDIR"

@@ -89,6 +89,13 @@ Conversation requirements:
 
 Chat requirements:
 
+- Pressing `Enter` sends the current message; pressing `Ctrl+Enter` inserts a newline at the current selection or caret position.
+- While an Agent request is running, the send button becomes a stop button. Stopping aborts active model requests, prevents later tool rounds, and persists the turn as canceled.
+- Persist the user message and running assistant placeholder before the first model request so a stalled request or application exit cannot erase the entire turn.
+- Navigating away from the Agent page must preserve the active conversation's in-memory messages, running assistant placeholder, live steps, input draft, and scroll state.
+- Returning to the Agent page during an active request must render that in-memory snapshot immediately and must not replace it with the backend's pre-request persisted snapshot.
+- Final and failed Agent responses must update the matching assistant message by message ID rather than assuming it is the last currently rendered item.
+
 - User messages align right in a restrained accent bubble with no persistent role label.
 - Assistant messages align left as open document-style content, not as full-width bordered cards.
 - Assistant messages render Markdown, tables, code blocks, and inline/display math such as `$...$`, `$$...$$`, `\(...\)`, and `\[...\]`.
@@ -98,7 +105,7 @@ Chat requirements:
 - Opening a conversation scrolls to the latest message once. During generation, auto-follow only while the user remains near the bottom.
 - If the user scrolls upward, preserve that position and show a jump-to-latest control.
 - The composer remains focusable after new-chat, select-chat, rename, and delete flows.
-- The composer uses one bordered input surface, grows up to a bounded height, sends with `Enter`, and inserts a newline with `Shift+Enter`.
+- The composer uses one bordered input surface, grows up to a bounded height, sends with `Enter`, and inserts a newline with `Ctrl+Enter`.
 - Keep manual context compression in the conversation overflow menu and continue supporting `/compact`.
 - `/compact` asks the active chat model to summarize eligible older rounds and keeps the compressed summary plus recent complete rounds.
 - Keep the full visible transcript separate from model context. Compression must never delete or replace visible user/assistant messages.
@@ -107,6 +114,7 @@ Chat requirements:
 - Merge the previous summary with only newly eligible older rounds. Do not resend and summarize recent rounds that will also be kept verbatim.
 - A failed or empty compression response must preserve the original context and surface the failure in Agent progress.
 - Serialize chat and manual compression operations per conversation to prevent duplicate compaction and state overwrites.
+- Return individual tool failures to the model as structured tool results instead of aborting the whole assistant turn, so the model can explain the failure or choose a recovery action.
 
 Agent progress requirements:
 
@@ -183,6 +191,9 @@ Detail panel:
 Purpose:
 
 - Let users create, review, approve, reject, delete, and explicitly deliver local homework drafts to either a homework Task or a teacher private message.
+- Open with the `全部` filter so persisted drafts in completed or rejected states do not appear to disappear after an application restart.
+- Persist draft JSON under the user data draft directory, never under the installation or packaged payload directory.
+- Migrate drafts written by older WinUI builds from the packaged payload `.banxuebang/drafts` directory before an upgrade removes that directory.
 
 Draft states:
 
@@ -335,6 +346,8 @@ Model settings:
   - Model settings should expose browser-style horizontal model-role tabs, starting with `chat` and `image_caption`.
   - The `image_caption` role is labeled `图片转述`, has its own provider list and active provider, and can be enabled or disabled independently from chat.
   - Existing providers belong to the `chat` role; switching to `图片转述` must not show or reuse them automatically.
+  - When image captioning is enabled, PDF page images are sent to the active `image_caption` provider.
+  - When image captioning is disabled, PDF page images are sent to the active `chat` provider, which is treated as multimodal.
   - Users can add more than one provider within each role.
   - Users can select one active provider within each role.
   - Each provider stores its own display name, API Key, Base URL, and model name.
@@ -408,7 +421,7 @@ Software update card:
 ## Default System Prompt
 
 ```text
-你是伴学邦桌面助手。需要真实数据时必须调用工具，不要猜测。需要联网资料时先调用 web_search；需要阅读某个搜索结果时再调用 read_web_page。用户提到工作区文件时，先调用 list_workspace_files 定位文件，再按需调用 read_workspace_file；需要整理文件名时可调用 rename_workspace_file。不要上传、提交、私信或删除任何内容。处理作业草稿时先调用 collect_task_submission_context；信息不足就说明缺什么；信息足够才调用 draft_task_submission 保存草稿等待用户审核。如果作业已过期且可能无法补交，可以在草稿提示字段中建议用户私信老师，但只能保存草稿等待用户审核。给出或保存草稿正文时，draft_text 必须是纯文本正文，不要使用 Markdown 标题、列表、表格、代码块、加粗、引用或其他 Markdown 格式；如果需要给用户说明保存状态，可以在助手回复里用 Markdown，但草稿正文内容本身必须保持纯文本。
+你是伴学邦桌面助手。需要真实数据时必须调用工具，不要猜测。需要联网资料时先调用 web_search；需要阅读某个搜索结果时再调用 read_web_page。用户提到工作区文件时，先调用 list_workspace_files 定位文件，再按需调用 read_workspace_file；需要整理文件名时可调用 rename_workspace_file。读取 PDF 时必须同时检查工具结果中的 visualAnalysis，并说明未分析的页码或视觉分析错误。不要上传、提交、私信或删除任何内容。处理作业草稿时先调用 collect_task_submission_context；信息不足就说明缺什么；信息足够才调用 draft_task_submission 保存草稿等待用户审核。如果作业已过期且可能无法补交，可以在草稿提示字段中建议用户私信老师，但只能保存草稿等待用户审核。给出或保存草稿正文时，draft_text 必须是纯文本正文，不要使用 Markdown 标题、列表、表格、代码块、加粗、引用或其他 Markdown 格式；如果需要给用户说明保存状态，可以在助手回复里用 Markdown，但草稿正文内容本身必须保持纯文本。
 ```
 
 ## Safety Rules
@@ -474,5 +487,7 @@ Manual smoke checklist:
 
 - The renderer uses a narrow IPC facade. New backend capabilities should be added behind `window.bxb`; keep Node integration disabled.
 - Banxuebang tool result shapes vary. Frontend code must tolerate multiple field names.
-- PDF/DOCX text extraction and short Python snippets are available; full document editing and a general code sandbox are not part of the current frontend contract.
+- PDF text extraction includes bounded page-image analysis, DOCX text extraction and short Python snippets are available; full document editing and a general code sandbox are not part of the current frontend contract.
+- PDF vision renders pages as 1280-pixel-wide PNG images, analyzes up to 12 pages by default and 30 at most, supports explicit page-number selection, and reports omitted pages rather than silently claiming full coverage.
+- A visual-model failure must preserve the extracted PDF text and return the visual error separately.
 - The archived Flutter prototype is not the active UI baseline.
