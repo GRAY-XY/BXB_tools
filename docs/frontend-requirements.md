@@ -11,6 +11,8 @@ The active frontend is the WinUI app in `apps/windows/winui/`. The Electron + Re
 - Hide raw tokens, raw API keys, raw session JSON, diagnostic path dumps, and command-line details from normal users.
 - Let the Agent read, summarize, draft, and organize information, but do not let it upload, submit, delete, or send content by itself.
 - Use readable page-specific views instead of raw JSON blocks unless a diagnostic view is explicitly needed.
+- Keep the interactive shell hidden behind a dedicated startup view until the local backend, application/model configuration, and saved session are ready.
+- Show short startup stage names. If initialization fails, keep the shell hidden and provide an in-app retry action with the error summary.
 
 ## Navigation
 
@@ -245,6 +247,7 @@ Review and editing:
 
 - Draft detail shows task, course, status, summary, editable draft body, warnings, missing information, evidence, review history, and delivery history.
 - Saving edits updates only the local draft JSON.
+- Rejected drafts are retained for 24 hours from `rejectedAt`, then deleted automatically. Cleanup runs at startup, periodically while the app is open, and when drafts are read. Legacy rejected drafts fall back to `reviewedAt`, then `updatedAt`.
 - Saving must not upload or submit anything.
 - Editing a rejected draft moves it back to `pending_review`.
 - Delivered drafts (`submitted` or `sent_to_teacher`) are read-only. A later resubmission or re-send should use a new draft and a new review.
@@ -346,6 +349,8 @@ Rules:
 - Automated verification must not send test messages.
 
 ## Settings Page
+
+- Do not show the shared page toolbar on Settings. Model loading, update checking, and opening Releases are already available in their corresponding Settings sections and must not be duplicated above them.
 
 Purpose:
 

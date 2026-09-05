@@ -7,8 +7,20 @@ const defaultDraftDir = () =>
 
 const safeDraftId = (draftId) => String(draftId || "").replace(/[^a-zA-Z0-9._-]/g, "_");
 
+export const REJECTED_DRAFT_RETENTION_MS = 24 * 60 * 60 * 1000;
+
 function draftTimestamp(draft) {
   return Date.parse(draft?.updatedAt || draft?.createdAt || 0) || 0;
+}
+
+function rejectedDraftTimestamp(draft) {
+  return Date.parse(draft?.rejectedAt || draft?.reviewedAt || draft?.updatedAt || draft?.createdAt || 0) || 0;
+}
+
+function isExpiredRejectedDraft(draft, now) {
+  if (String(draft?.status || "") !== "rejected") return false;
+  const rejectedAt = rejectedDraftTimestamp(draft);
+  return rejectedAt > 0 && now >= rejectedAt + REJECTED_DRAFT_RETENTION_MS;
 }
 
 export async function migrateDraftFiles(sourceDirs, targetDir) {
@@ -55,11 +67,34 @@ export async function migrateDraftFiles(sourceDirs, targetDir) {
 }
 
 export class DraftStore {
-  constructor(draftDir = defaultDraftDir()) {
+  constructor(draftDir = defaultDraftDir(), { now = () => Date.now() } = {}) {
     this.draftDir = draftDir;
+    this.now = now;
+  }
+
+  async cleanupExpiredRejectedDrafts({ now = this.now() } = {}) {
+    await mkdir(this.draftDir, { recursive: true });
+    const entries = await readdir(this.draftDir, { withFileTypes: true });
+    const deletedDraftIds = [];
+
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+      const filePath = path.join(this.draftDir, entry.name);
+      try {
+        const draft = JSON.parse(await readFile(filePath, "utf8"));
+        if (!isExpiredRejectedDraft(draft, Number(now))) continue;
+        await rm(filePath, { force: true });
+        deletedDraftIds.push(String(draft.draftId || entry.name.slice(0, -5)));
+      } catch {
+        // Malformed or temporarily locked files must not block cleanup of other drafts.
+      }
+    }
+
+    return { deletedCount: deletedDraftIds.length, deletedDraftIds };
   }
 
   async list() {
+    await this.cleanupExpiredRejectedDrafts();
     await mkdir(this.draftDir, { recursive: true });
     const entries = await readdir(this.draftDir, { withFileTypes: true });
     const drafts = [];
@@ -90,7 +125,12 @@ export class DraftStore {
     const filePath = this._filePath(draftId);
     try {
       const raw = await readFile(filePath, "utf8");
-      return JSON.parse(raw);
+      const draft = JSON.parse(raw);
+      if (isExpiredRejectedDraft(draft, this.now())) {
+        await rm(filePath, { force: true });
+        return null;
+      }
+      return draft;
     } catch (error) {
       if (error && error.code === "ENOENT") {
         return null;

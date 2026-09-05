@@ -131,6 +131,8 @@ Current prototype method groups:
 
 The WinUI shell currently exposes native pages for Home, Agent, Homework, Drafts, Private Messages, Workspace, Updates, and Settings. Agent messages show a live inline `Thinking` row with the current step and an expandable structured timeline; individual step arguments and results are collapsed by default. Complex confirmation flows such as draft submission, private-message sending, and installer launch are available in the backend but should still be surfaced through dedicated confirmation UI before normal use.
 
+On launch, navigation stays hidden behind a startup view until the local Node backend, application/model configuration, and saved session state are ready. Initialization failures remain on that view with an in-app retry action.
+
 Draft JSON is stored in `%APPDATA%\bxb-homework-electron\.banxuebang\drafts`. The installer migrates drafts written by older builds under the packaged payload before replacing the installation directory.
 
 The Agent composer accepts pasted images, saves them to the managed workspace, and shows removable pending attachments. With image captioning disabled, the active chat provider receives those images directly as multimodal content. With image captioning enabled, its provider transcribes them first and only the transcription is passed to chat. Conversation persistence stores file metadata rather than Base64 image data.
