@@ -2399,6 +2399,7 @@ export class BanxuebangClient {
       createdAt: now,
       updatedAt: now,
       reviewedAt: null,
+      rejectedAt: null,
       reviewNote: null,
       taskId: normalizeId(taskId),
       subjectName: subjectName || sessionSummary.currentSubject?.name || null,
@@ -2451,6 +2452,7 @@ export class BanxuebangClient {
         createdAt: draft.createdAt,
         updatedAt: draft.updatedAt,
         reviewedAt: draft.reviewedAt,
+        rejectedAt: draft.rejectedAt,
         submittedAt: draft.submittedAt,
         sentToTeacherAt: draft.sentToTeacherAt,
         deliveryTarget: draft.deliveryTarget || draft.preferredTarget || "task",
@@ -2491,6 +2493,7 @@ export class BanxuebangClient {
         summary: summary === undefined ? draft.summary : String(summary || "").trim(),
         status: draft.status === "rejected" ? "pending_review" : draft.status,
         reviewedAt: draft.status === "rejected" ? null : draft.reviewedAt,
+        rejectedAt: draft.status === "rejected" ? null : draft.rejectedAt,
         reviewNote: draft.status === "rejected" ? null : draft.reviewNote,
         updatedAt: new Date().toISOString(),
       };
@@ -2514,11 +2517,13 @@ export class BanxuebangClient {
         throw new Error("已交付的草稿不能再次审核。请新建草稿后重新审核。");
       }
 
+      const reviewedAt = new Date().toISOString();
       return {
         ...draft,
         status: "approved",
-        reviewedAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+        reviewedAt,
+        rejectedAt: null,
+        updatedAt: reviewedAt,
         reviewNote: String(reviewNote || "").trim() || null,
       };
     });
@@ -2542,11 +2547,13 @@ export class BanxuebangClient {
         throw new Error("已交付的草稿不能再次审核。请新建草稿后重新审核。");
       }
 
+      const rejectedAt = new Date().toISOString();
       return {
         ...draft,
         status: "rejected",
-        reviewedAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+        reviewedAt: rejectedAt,
+        rejectedAt,
+        updatedAt: rejectedAt,
         reviewNote: String(reviewNote || "").trim() || "Rejected in UI review.",
       };
     });
@@ -2559,6 +2566,7 @@ export class BanxuebangClient {
       draftId: updated.draftId,
       status: updated.status,
       reviewedAt: updated.reviewedAt,
+      rejectedAt: updated.rejectedAt,
       reviewNote: updated.reviewNote,
       draft: updated,
     };

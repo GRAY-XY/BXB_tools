@@ -113,6 +113,8 @@ public sealed partial class MainWindow : Window
     private bool _deleteProviderArmed;
     private bool _homeHasSavedCredential;
     private bool _homeLoginRunning;
+    private bool _startupComplete;
+    private bool _startupInitializing;
 
     public MainWindow()
     {
@@ -128,10 +130,9 @@ public sealed partial class MainWindow : Window
         PrivateThreadListView.ItemsSource = _privateThreadMessages;
 
         _backend.LogReceived += (_, message) => DispatcherQueue.TryEnqueue(() => SetStatus(message));
+        _backend.ProgressReceived += OnBackendProgressReceived;
 
-        RootNavigation.SelectedItem = RootNavigation.MenuItems[0];
         LoadSavedLoginCredential();
-        RenderHome();
         _ = InitializeAsync();
     }
 
@@ -157,27 +158,62 @@ public sealed partial class MainWindow : Window
 
     private async Task InitializeAsync()
     {
+        if (_startupInitializing || _startupComplete) return;
+        _startupInitializing = true;
+        StartupTitleText.Text = "BXB Homework";
+        StartupStatusText.Text = "正在启动本地服务...";
+        StartupProgressRing.IsActive = true;
+        StartupProgressRing.Visibility = Visibility.Visible;
+        StartupRetryButton.Visibility = Visibility.Collapsed;
+        BackendStateText.Visibility = Visibility.Collapsed;
         try
         {
-            BackendStateText.Text = "正在连接后端...";
             await _backend.EnsureStartedAsync();
-            _appInfo = await InvokeAsync("app:info");
+
+            StartupStatusText.Text = "正在读取应用配置...";
+            var appInfoTask = InvokeAsync("app:info");
+            var configTask = InvokeAsync("config:model:load");
+            await Task.WhenAll(appInfoTask, configTask);
+            _appInfo = await appInfoTask;
             BackendStateText.Text = $"Node {_appInfo.Value.GetProperty("nodeVersion").GetString()}";
-            var config = await InvokeAsync("config:model:load");
+            var config = await configTask;
             ApplyTheme(GetString(config, "theme", "light"));
+
+            StartupStatusText.Text = "正在恢复登录状态...";
             await RefreshSessionAsync();
+            RootNavigation.SelectedItem = RootNavigation.MenuItems[0];
+            RenderHome();
+            SetHomeSessionList();
+
+            _startupComplete = true;
+            RootNavigation.Visibility = Visibility.Visible;
+            BackendStateText.Visibility = Visibility.Visible;
+            StartupOverlay.Visibility = Visibility.Collapsed;
             SetStatus("Ready");
         }
         catch (Exception error)
         {
-            BackendStateText.Text = "后端连接失败";
-            SetDetail(error.Message);
-            SetStatus(error.Message);
+            StartupTitleText.Text = "启动失败";
+            StartupStatusText.Text = error.Message;
+            StartupProgressRing.IsActive = false;
+            StartupProgressRing.Visibility = Visibility.Collapsed;
+            StartupRetryButton.Visibility = Visibility.Visible;
+            App.LogException(error);
         }
+        finally
+        {
+            _startupInitializing = false;
+        }
+    }
+
+    private void OnStartupRetryClick(object sender, RoutedEventArgs args)
+    {
+        _ = InitializeAsync();
     }
 
     private void OnNavigationSelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
     {
+        if (!_startupComplete) return;
         var tag = args.IsSettingsSelected
             ? "settings"
             : (args.SelectedItem as NavigationViewItem)?.Tag?.ToString();
@@ -319,7 +355,6 @@ public sealed partial class MainWindow : Window
         PrimaryActionButton.Content = "刷新会话";
         SecondaryActionButton.Content = "打开数据目录";
         SecondaryActionButton.Visibility = Visibility.Visible;
-        _backend.ProgressReceived += OnBackendProgressReceived;
         SetHomeSessionBlocks(_session);
     }
 
@@ -433,13 +468,7 @@ public sealed partial class MainWindow : Window
         PageTitleText.Text = "设置";
         PageSubtitleText.Text = "模型配置、软件更新和路径信息按 Electron 设置页组织。";
         SettingsPanel.Visibility = Visibility.Visible;
-        ListTitleText.Text = "设置项";
-        CommandInputBox.Visibility = Visibility.Collapsed;
-        PrimaryActionButton.Content = "读取模型";
-        SecondaryActionButton.Content = "检查更新";
-        SecondaryActionButton.Visibility = Visibility.Visible;
-        ThirdActionButton.Content = "打开 Release";
-        ThirdActionButton.Visibility = Visibility.Visible;
+        ToolbarCard.Visibility = Visibility.Collapsed;
     }
 
     private void SetFilterItems(params (string Key, string Label)[] rows)
@@ -3792,7 +3821,9 @@ public sealed partial class MainWindow : Window
         DetailDocumentWebView.Visibility = Visibility.Collapsed;
         DetailDocumentWebView.Source = new Uri("about:blank");
         EditorTextBox.Text = GetString(draft, "draftText", "");
-        SetStatus($"{FormatDraftStatus(GetString(draft, "status", ""))} · {GetString(draft, "subjectName", "未知课程")}");
+        var status = GetString(draft, "status", "");
+        var retentionNotice = status == "rejected" ? " · 将在驳回 24 小时后自动删除" : "";
+        SetStatus($"{FormatDraftStatus(status)} · {GetString(draft, "subjectName", "未知课程")}{retentionNotice}");
     }
 
     private void ShowPrivateThread(DisplayItem item, JsonElement result)

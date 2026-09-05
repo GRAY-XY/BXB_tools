@@ -682,6 +682,7 @@ type AgentConversationSummary = {
   title: string;
   createdAt: string;
   updatedAt: string;
+  rejectedAt?: string | null;
   messageCount: number;
   context?: AgentContextUsage;
 };

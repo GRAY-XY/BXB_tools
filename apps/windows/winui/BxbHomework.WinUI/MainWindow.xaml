@@ -40,6 +40,7 @@
             IsBackButtonVisible="Collapsed"
             IsSettingsVisible="True"
             PaneDisplayMode="Left"
+            Visibility="Collapsed"
             SelectionChanged="OnNavigationSelectionChanged">
             <NavigationView.MenuItems>
                 <NavigationViewItem Content="主页" Tag="home">
@@ -806,5 +807,58 @@
         <Border Grid.Row="2" BorderThickness="0,1,0,0" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}">
             <TextBlock x:Name="StatusText" Margin="18,0" VerticalAlignment="Center" Text="Ready" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
         </Border>
+
+        <Grid
+            x:Name="StartupOverlay"
+            Grid.Row="1"
+            Grid.RowSpan="2"
+            Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+            <StackPanel
+                Width="360"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                Spacing="14">
+                <Border
+                    Width="56"
+                    Height="56"
+                    HorizontalAlignment="Center"
+                    Background="{ThemeResource AccentFillColorDefaultBrush}"
+                    CornerRadius="8">
+                    <TextBlock
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        FontSize="16"
+                        FontWeight="SemiBold"
+                        Foreground="White"
+                        Text="BXB" />
+                </Border>
+                <TextBlock
+                    x:Name="StartupTitleText"
+                    HorizontalAlignment="Center"
+                    FontSize="24"
+                    FontWeight="SemiBold"
+                    Text="BXB Homework" />
+                <ProgressRing
+                    x:Name="StartupProgressRing"
+                    Width="28"
+                    Height="28"
+                    HorizontalAlignment="Center"
+                    IsActive="True" />
+                <TextBlock
+                    x:Name="StartupStatusText"
+                    HorizontalAlignment="Center"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    Text="正在启动本地服务..."
+                    TextAlignment="Center"
+                    TextWrapping="Wrap" />
+                <Button
+                    x:Name="StartupRetryButton"
+                    HorizontalAlignment="Center"
+                    Click="OnStartupRetryClick"
+                    Content="重试"
+                    Style="{StaticResource AccentButtonStyle}"
+                    Visibility="Collapsed" />
+            </StackPanel>
+        </Grid>
     </Grid>
 </Window>

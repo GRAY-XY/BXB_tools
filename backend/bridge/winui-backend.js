@@ -82,7 +82,14 @@ await migrateDraftFiles(
   draftDir,
 );
 
-const client = new BanxuebangClient(new SessionStore(sessionFile), new DraftStore(draftDir));
+const draftStore = new DraftStore(draftDir);
+await draftStore.cleanupExpiredRejectedDrafts();
+const rejectedDraftCleanupTimer = setInterval(() => {
+  void draftStore.cleanupExpiredRejectedDrafts().catch(() => {});
+}, 5 * 60 * 1000);
+rejectedDraftCleanupTimer.unref?.();
+
+const client = new BanxuebangClient(new SessionStore(sessionFile), draftStore);
 const toolDefinitions = createToolDefinitions(client);
 let conversationStatePromise = null;
 const conversationLocks = new Map();
