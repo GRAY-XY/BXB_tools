@@ -23,9 +23,15 @@ async function startMockModel() {
     request.on("end", () => {
       const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
       requests.push(payload);
-      const content = payload.model === "vision-model" ? "图片中有一张蓝色卡片。" : "已读取图片。";
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ choices: [{ message: { role: "assistant", content } }] }));
+      if (payload.model === "vision-model") {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ choices: [{ message: { role: "assistant", content: "图片中有一张蓝色卡片。" } }] }));
+        return;
+      }
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.write('data: {"choices":[{"delta":{"content":"已读取"}}]}\n\n');
+      response.write('data: {"choices":[{"delta":{"content":"图片。"},"finish_reason":"stop"}]}\n\n');
+      response.end("data: [DONE]\n\n");
     });
   });
   await new Promise((resolve, reject) => {
@@ -62,6 +68,7 @@ async function runImageChat(modelConfig) {
   });
   const stdout = [];
   const stderr = [];
+  const progress = [];
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
   child.stderr.on("data", (chunk) => stderr.push(chunk));
@@ -90,6 +97,9 @@ async function runImageChat(modelConfig) {
       pending = lines.pop() || "";
       for (const line of lines.filter(Boolean)) {
         const response = JSON.parse(line);
+        if (response.id === "image-test" && response.event === "progress") {
+          progress.push(response.result);
+        }
         if (response.id === "image-test" && response.event !== "progress") {
           clearTimeout(timer);
           resolve(response);
@@ -110,7 +120,7 @@ async function runImageChat(modelConfig) {
     assert.equal(final?.ok, true, final?.error?.message || stderr.join(""));
     assert.equal(final.result.message, "已读取图片。");
     const conversationText = await fs.readFile(path.join(userDataRoot, "agent-conversations.json"), "utf8");
-    return { final, imagePath, conversationText };
+    return { final, imagePath, conversationText, progress };
   } finally {
     child.kill();
     await new Promise((resolve) => child.once("close", resolve));
@@ -136,6 +146,7 @@ test("disabled image transcription sends pasted images directly to the chat mode
     });
 
     assert.equal(mock.requests.length, 1);
+    assert.equal(mock.requests[0].stream, true);
     const content = lastUserMessage(mock.requests[0]).content;
     assert.ok(Array.isArray(content));
     assert.match(content.find((item) => item.type === "text").text, /pasted\/sample\.png/);
@@ -144,6 +155,7 @@ test("disabled image transcription sends pasted images directly to the chat mode
     assert.equal(result.final.result.steps[0].title, "附带图片将由主模型直接读取");
     assert.ok(result.final.result.steps.some((step) => step.title === "正在分析请求"));
     assert.equal(result.final.result.steps.at(-1).title, "模型已生成最终回答");
+    assert.ok(result.progress.some((event) => event.type === "agent-text" && event.text === "已读取图片。"));
     assert.doesNotMatch(result.conversationText, /data:image\/png;base64/);
     assert.match(result.conversationText, /sample\.png/);
   } finally {
@@ -170,6 +182,7 @@ test("enabled image transcription captions first and sends only the caption to c
     const chatRequest = mock.requests.find((request) => request.model === "chat-model");
     assert.ok(visionRequest);
     assert.ok(chatRequest);
+    assert.equal(chatRequest.stream, true);
     assert.ok(lastUserMessage(visionRequest).content.some((item) => item.type === "image_url"));
     assert.match(visionRequest.messages[0].content, /忠实提取/);
     assert.equal(typeof lastUserMessage(chatRequest).content, "string");

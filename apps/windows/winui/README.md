@@ -140,3 +140,5 @@ The Agent composer accepts pasted images, saves them to the managed workspace, a
 PDF tools extract the text layer and render bounded page images for visual analysis. PDF page images follow the same model-role selection: the image-caption provider handles them when enabled, otherwise the active chat provider is used as the multimodal visual analyzer.
 
 The Agent always receives a backend-owned core policy. Settings stores only lower-priority custom instructions. Legacy editable system prompts migrate automatically, while context compaction and image/PDF visual transcription keep separate specialized prompts.
+
+Agent replies use SSE streaming and update the active assistant message incrementally. If a stream disconnects before completing, the backend keeps the partial response visible, retries the stream once, and then waits for a complete non-streaming response. Agent-only tool results are compacted before the next model round, while direct UI tool responses are unchanged. The default configurable context window is 200,000 tokens.

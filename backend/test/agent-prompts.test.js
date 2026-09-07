@@ -42,6 +42,8 @@ test("draft policy requires concise natural submission-ready plain text", () => 
   assert.match(CORE_AGENT_SYSTEM_PROMPT, /不得包含 Markdown/);
   assert.match(CORE_AGENT_SYSTEM_PROMPT, /不得包含 HTML 标签或实体/);
   assert.match(CORE_AGENT_SYSTEM_PROMPT, /公式使用普通文本或 Unicode 表达/);
+  assert.match(CORE_AGENT_SYSTEM_PROMPT, /“1A”“2B”“3A”“4C”/);
+  assert.match(CORE_AGENT_SYSTEM_PROMPT, /“a小题内容”/);
   assert.match(CORE_AGENT_SYSTEM_PROMPT, /直接写答案/);
   assert.match(CORE_AGENT_SYSTEM_PROMPT, /不要虚构经历/);
   assert.match(CORE_AGENT_SYSTEM_PROMPT, /update_submission_draft/);

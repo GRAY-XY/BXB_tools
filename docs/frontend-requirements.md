@@ -97,6 +97,9 @@ Chat requirements:
 - Navigating away from the Agent page must preserve the active conversation's in-memory messages, running assistant placeholder, live steps, input draft, and scroll state.
 - Returning to the Agent page during an active request must render that in-memory snapshot immediately and must not replace it with the backend's pre-request persisted snapshot.
 - Final and failed Agent responses must update the matching assistant message by message ID rather than assuming it is the last currently rendered item.
+- Request chat completions as a stream and append cumulative text to the active assistant message while preserving its process steps. Keep a non-streaming response fallback for compatible providers.
+- If an SSE stream ends before `[DONE]` or `finish_reason`, keep the partial text visible, retry the streaming request once, then retry without streaming and wait for the complete response. Do not retry user cancellation, model HTTP errors, or malformed model output.
+- Apply streamed text by updating only the matching message DOM. Do not reload or navigate the whole transcript WebView for each text delta.
 
 - User messages align right in a restrained accent bubble with no persistent role label.
 - Assistant messages align left as open document-style content, not as full-width bordered cards.
@@ -112,15 +115,18 @@ Chat requirements:
 - `/compact` asks the active chat model to summarize eligible older rounds and keeps the compressed summary plus recent complete rounds.
 - Keep the full visible transcript separate from model context. Compression must never delete or replace visible user/assistant messages.
 - When Settings has a positive context length, estimate the complete request budget before every model request, including system prompts, tool schemas, current tool results, and output reserve.
+- The default context length is `200000` tokens unless the user saves a different value.
 - Automatically compress around 75% of the configured context window and target about 50% after compression. Preserve roughly 15% of the latest context as complete rounds.
 - Merge the previous summary with only newly eligible older rounds. Do not resend and summarize recent rounds that will also be kept verbatim.
 - A failed or empty compression response must preserve the original context and surface the failure in Agent progress.
 - Serialize chat and manual compression operations per conversation to prevent duplicate compaction and state overwrites.
 - Return individual tool failures to the model as structured tool results instead of aborting the whole assistant turn, so the model can explain the failure or choose a recovery action.
+- Compact Agent-facing tool results before the next model round: remove credentials, raw duplicate payloads, repeated full session/course context, and embedded Base64 data while retaining identifiers, readable content, paths, counts, and actionable status fields. Direct UI tool responses remain unchanged.
 
 Agent progress requirements:
 
 - Subscribe to `onAgentProgress`.
+- Handle both structured `agent-step` events and cumulative `agent-text` events.
 - Show elapsed time while a request is running.
 - Show an inline `Thinking` process row above the active assistant response, followed by the current user-facing step name.
 - Let the inline process row expand and collapse independently for each assistant message. Do not require a separate side panel to inspect routine progress.
@@ -158,6 +164,8 @@ Default Agent safety:
 - Homework drafts must be saved with `draft_task_submission` only after collecting context. The Agent may read and revise an existing local draft with `list_submission_drafts`, `get_submission_draft`, and `update_submission_draft`.
 - If a task appears expired and may not allow supplement, the Agent may save target hints for private-message fallback, but still must only save a draft for review.
 - Draft body text in `draft_text` must fully satisfy the task while remaining concise, natural, and submission-ready. It must be plain text without Markdown, HTML, LaTeX delimiters, assistant commentary, fabricated personal experience, or template-style opening and closing text.
+- Show each draft's creation time in the draft list and selected-draft details, formatted in the user's local time zone.
+- For answer-only multiple-choice drafts, put one `question number + option` pair on each line, such as `1A`, without punctuation or spaces. Lettered subquestions use `a内容`, not `a.内容`, unless the task explicitly requires another format.
 - Agent edits replace the complete draft body and always return the draft to `pending_review`; previous approval or rejection metadata must be cleared.
 - The Agent must not upload, submit, approve, reject, delete, or send content.
 

@@ -459,12 +459,16 @@ internal static class MarkdownHtmlRenderer
       return `<details class="process ${message.running ? 'running' : 'complete'}" data-process-id="${escapeHtml(message.id || '')}"${message.processExpanded ? ' open' : ''}><summary><span class="process-indicator"></span><span class="process-label">${statusText}</span><span class="process-current">· ${escapeHtml(secondaryText)}</span><span class="process-chevron">›</span></summary><div class="process-timeline">${timeline}</div></details>`;
     }
 
-    function renderMessage(message) {
-      const raw = md.render(message.text || "");
-      const clean = DOMPurify.sanitize(raw, {
+    function renderMarkdown(text) {
+      const raw = md.render(text || "");
+      return DOMPurify.sanitize(raw, {
         ADD_TAGS: ['math', 'semantics', 'annotation', 'mrow', 'mi', 'mn', 'mo', 'msup', 'msub', 'mfrac', 'msqrt', 'mtext', 'eq', 'eqn', 'section'],
         ADD_ATTR: ['display', 'encoding', 'class', 'style', 'aria-hidden']
       });
+    }
+
+    function renderMessage(message) {
+      const clean = renderMarkdown(message.text || "");
       const role = message.role === "user" ? "user" : "assistant";
       const id = escapeHtml(message.id || "");
       if (role === "user") {
@@ -499,6 +503,45 @@ internal static class MarkdownHtmlRenderer
         window.chrome.webview.postMessage({ ...payload, viewVersion: viewState.viewVersion });
       }
     }
+
+    window.bxbUpdateAssistantMessage = (message) => {
+      const target = Array.from(document.querySelectorAll('.message.assistant[data-id]'))
+        .find((element) => element.getAttribute('data-id') === String(message.id || ''));
+      if (!target) return false;
+
+      const shouldFollow = isNearBottom();
+      const body = target.querySelector('.assistant-body');
+      if (!body) return false;
+      const clean = renderMarkdown(message.text || '');
+      let content = Array.from(body.children).find((element) => element.classList.contains('content'));
+      let actions = Array.from(body.children).find((element) => element.classList.contains('message-actions'));
+
+      if (clean) {
+        if (!content) {
+          content = document.createElement('div');
+          content.className = 'content';
+          if (actions) body.insertBefore(content, actions);
+          else body.appendChild(content);
+        }
+        content.innerHTML = clean;
+        if (!actions) {
+          actions = document.createElement('div');
+          actions.className = 'message-actions';
+          actions.innerHTML = '<button class="message-action" type="button" data-action="copy">复制</button>';
+          body.appendChild(actions);
+        }
+      } else {
+        if (content) content.remove();
+        if (actions) actions.remove();
+      }
+
+      target.classList.toggle('running', Boolean(message.running));
+      requestAnimationFrame(() => {
+        if (shouldFollow) window.scrollTo(0, document.documentElement.scrollHeight);
+        updateJumpButton();
+      });
+      return true;
+    };
 
     document.querySelectorAll('details.process[data-process-id]').forEach((details) => {
       details.addEventListener('toggle', () => {
