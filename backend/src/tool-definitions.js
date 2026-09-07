@@ -611,12 +611,14 @@ export function createToolDefinitions(client) {
     {
       name: "draft_task_submission",
       description:
-        "Save an agent-written draft for later human review. This does not upload files or submit the task.",
+        "Save a concise, natural, submission-ready plain-text draft for later human review. This does not upload files or submit the task.",
       inputSchema: {
         task_id: z.union([z.string(), z.number()]).describe("Activity/task id."),
         subject_name: z.string().optional().describe("Course name."),
         task_title: z.string().optional().describe("Task title."),
-        draft_text: z.string().describe("The draft submission text created by the agent."),
+        draft_text: z
+          .string()
+          .describe("Concise, natural draft body that fully answers the task. Plain text only: no Markdown, HTML, LaTeX delimiters, assistant commentary, or template-style opening/closing."),
         summary: z.string().optional().describe("Short summary of what the draft tries to do."),
         evidence: z
           .array(z.any())
@@ -697,10 +699,12 @@ export function createToolDefinitions(client) {
     },
     {
       name: "update_submission_draft",
-      description: "Update a locally saved submission draft after human editing. This does not upload or submit anything.",
+      description: "Replace the content of a locally saved, undelivered submission draft and return it to pending review. This does not upload, submit, approve, delete, or send anything.",
       inputSchema: {
         draft_id: z.string().describe("Draft id returned by draft_task_submission."),
-        draft_text: z.string().describe("Updated draft text."),
+        draft_text: z
+          .string()
+          .describe("Complete replacement draft body. Plain text only: no Markdown, HTML, LaTeX delimiters, assistant commentary, or template-style opening/closing."),
         summary: z.string().optional().describe("Optional updated draft summary."),
       },
       execute: async ({ draft_id: draftId, draft_text: draftText, summary }) =>

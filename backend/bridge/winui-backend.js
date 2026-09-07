@@ -1376,14 +1376,14 @@ function safeToolSchemas() {
     },
     {
       name: "draft_task_submission",
-      description: "保存 AI 写好的提交草稿，等待用户审核；不会上传、提交或私信。",
+      description: "保存简洁、自然、可直接提交的纯文本作业草稿，等待用户审核；不会上传、提交或私信。",
       parameters: {
         type: "object",
         properties: {
           task_id: { type: "string" },
           subject_name: { type: "string" },
           task_title: { type: "string" },
-          draft_text: { type: "string" },
+          draft_text: { type: "string", description: "满足题目要求的简洁自然正文。只能使用纯文本，不得包含 Markdown、HTML、LaTeX 定界符、助手说明或模板化开场结尾。" },
           summary: { type: "string" },
           warnings: { type: "array", items: { type: "string" } },
           missing_info: { type: "array", items: { type: "string" } },
@@ -1404,6 +1404,19 @@ function safeToolSchemas() {
       name: "get_submission_draft",
       description: "读取一个待审核草稿。",
       parameters: { type: "object", properties: { draft_id: { type: "string" } }, required: ["draft_id"] },
+    },
+    {
+      name: "update_submission_draft",
+      description: "修改一个本地草稿并将其重新置为待审核；不会上传、提交、批准、删除或发送私信。",
+      parameters: {
+        type: "object",
+        properties: {
+          draft_id: { type: "string" },
+          draft_text: { type: "string", description: "修改后的完整草稿正文。只能使用纯文本，不得包含 Markdown、HTML、LaTeX 定界符、助手说明或模板化开场结尾。" },
+          summary: { type: "string", description: "可选的简短草稿摘要。" },
+        },
+        required: ["draft_id", "draft_text"],
+      },
     },
   ];
   return tools.map((tool) => ({
@@ -1439,6 +1452,7 @@ const AGENT_TOOL_TITLES = Object.freeze({
   draft_task_submission: "保存作业草稿",
   list_submission_drafts: "读取草稿列表",
   get_submission_draft: "读取草稿详情",
+  update_submission_draft: "修改作业草稿",
 });
 
 function agentToolTitle(name) {

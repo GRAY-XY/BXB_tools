@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { BanxuebangClient } from "../src/banxuebang-client.js";
 import { DraftStore, REJECTED_DRAFT_RETENTION_MS, migrateDraftFiles } from "../src/draft-store.js";
 
 test("drafts remain available after recreating the store", async () => {
@@ -21,6 +22,36 @@ test("drafts remain available after recreating the store", async () => {
     const loaded = await new DraftStore(draftDir).list();
     assert.equal(loaded.length, 1);
     assert.deepEqual(loaded[0], draft);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("editing an approved draft returns it to pending review", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "bxb-draft-edit-"));
+  try {
+    const store = new DraftStore(path.join(root, "drafts"));
+    await store.save({
+      draftId: "draft_edit_test",
+      status: "approved",
+      draftText: "Original text",
+      summary: "Original summary",
+      reviewedAt: "2026-09-07T00:00:00.000Z",
+      reviewNote: "Approved",
+    });
+
+    const client = new BanxuebangClient({}, store);
+    const result = await client.updateSubmissionDraft("draft_edit_test", {
+      draftText: "Revised text",
+      summary: "Revised summary",
+    });
+
+    assert.equal(result.status, "pending_review");
+    assert.equal(result.draft.draftText, "Revised text");
+    assert.equal(result.draft.summary, "Revised summary");
+    assert.equal(result.draft.reviewedAt, null);
+    assert.equal(result.draft.rejectedAt, null);
+    assert.equal(result.draft.reviewNote, null);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
