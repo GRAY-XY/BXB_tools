@@ -155,10 +155,11 @@ Default Agent safety:
 - Need real Banxuebang data: call tools, do not guess.
 - Need web/current information: call `web_search`, then `read_web_page` for selected results.
 - Need workspace files: call `list_workspace_files`, then `read_workspace_file` or `rename_workspace_file`.
-- Homework drafts must be saved with `draft_task_submission` only after collecting context.
+- Homework drafts must be saved with `draft_task_submission` only after collecting context. The Agent may read and revise an existing local draft with `list_submission_drafts`, `get_submission_draft`, and `update_submission_draft`.
 - If a task appears expired and may not allow supplement, the Agent may save target hints for private-message fallback, but still must only save a draft for review.
-- Draft body text in `draft_text` must be plain text, not Markdown.
-- The Agent must not upload, submit, delete, or send content.
+- Draft body text in `draft_text` must fully satisfy the task while remaining concise, natural, and submission-ready. It must be plain text without Markdown, HTML, LaTeX delimiters, assistant commentary, fabricated personal experience, or template-style opening and closing text.
+- Agent edits replace the complete draft body and always return the draft to `pending_review`; previous approval or rejection metadata must be cleared.
+- The Agent must not upload, submit, approve, reject, delete, or send content.
 
 ## Homework Page
 

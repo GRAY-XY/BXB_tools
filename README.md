@@ -107,7 +107,7 @@ The local tool layer includes:
 - Workspace tools: `list_workspace_files`, `read_workspace_file`, `rename_workspace_file`, `write_workspace_text_file`
 - Web tools: `web_search`, `read_web_page`
 - Private message tools: `list_private_message_contacts`, `get_private_message_thread`, `send_private_message_text`
-- Draft review tools: `collect_task_submission_context`, `draft_task_submission`, `list_submission_drafts`, `get_submission_draft`, `approve_submission_draft`, `reject_submission_draft`
+- Draft review tools: `collect_task_submission_context`, `draft_task_submission`, `list_submission_drafts`, `get_submission_draft`, `update_submission_draft`, `approve_submission_draft`, `reject_submission_draft`
 - Submission tools: `upload_submission_file`, `submit_task_result`
 
 `upload_submission_file` and `submit_task_result` affect real Banxuebang account data and must not be exposed as default autonomous assistant actions.

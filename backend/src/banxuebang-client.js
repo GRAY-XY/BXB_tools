@@ -2491,10 +2491,10 @@ export class BanxuebangClient {
         ...draft,
         draftText: normalizedDraftText,
         summary: summary === undefined ? draft.summary : String(summary || "").trim(),
-        status: draft.status === "rejected" ? "pending_review" : draft.status,
-        reviewedAt: draft.status === "rejected" ? null : draft.reviewedAt,
-        rejectedAt: draft.status === "rejected" ? null : draft.rejectedAt,
-        reviewNote: draft.status === "rejected" ? null : draft.reviewNote,
+        status: "pending_review",
+        reviewedAt: null,
+        rejectedAt: null,
+        reviewNote: null,
         updatedAt: new Date().toISOString(),
       };
     });
