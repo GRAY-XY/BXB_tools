@@ -85,6 +85,7 @@ public sealed partial class MainWindow : Window
     private readonly HashSet<string> _expandedAgentProcessIds = new(StringComparer.Ordinal);
     private WebView2? _agentMarkdownWebView;
     private bool _agentMarkdownWebViewUnavailable;
+    private bool _agentMarkdownDocumentReady;
     private int _agentMarkdownRenderVersion;
     private string _selectedAgentMessageId = "";
     private string _activeConversationId = "";
@@ -867,7 +868,7 @@ public sealed partial class MainWindow : Window
                 {
                     Id = GetString(draft, "draftId", ""),
                     Title = GetString(draft, "taskTitle", $"任务 {GetString(draft, "taskId", "")}"),
-                    Subtitle = $"{FormatDraftStatus(GetString(draft, "status", ""))} · {GetString(draft, "subjectName", "未知课程")}",
+                    Subtitle = $"{FormatDraftStatus(GetString(draft, "status", ""))} · {GetString(draft, "subjectName", "未知课程")}\n创建于 {FormatDraftCreatedAt(draft)}",
                     Data = draft.Clone(),
                 });
             }
@@ -3038,9 +3039,39 @@ public sealed partial class MainWindow : Window
     private WebView2 CreateAgentMarkdownWebView()
     {
         var webView = new WebView2();
+        webView.NavigationStarting += (_, _) => _agentMarkdownDocumentReady = false;
+        webView.NavigationCompleted += (sender, args) =>
+        {
+            _agentMarkdownDocumentReady = args.IsSuccess;
+            if (!_agentMarkdownDocumentReady) return;
+            foreach (var message in _agentPreviewMessages.Where(item => item.Role == "assistant" && item.IsRunning))
+            {
+                _ = UpdateAgentMessageTextAsync(message.Id, message.Text, isRunning: true);
+            }
+        };
         webView.WebMessageReceived += (_, args) => OnAgentMarkdownWebMessageReceived(args.WebMessageAsJson);
         AgentMarkdownHost.Children.Insert(0, webView);
         return webView;
+    }
+
+    private async Task UpdateAgentMessageTextAsync(string messageId, string text, bool isRunning)
+    {
+        if (_agentMarkdownWebViewUnavailable)
+        {
+            RenderAgentFallback(_agentPreviewMessages);
+            return;
+        }
+        if (_agentMarkdownWebView?.CoreWebView2 is null || !_agentMarkdownDocumentReady) return;
+
+        try
+        {
+            var payload = JsonSerializer.Serialize(new { id = messageId, text, running = isRunning });
+            await _agentMarkdownWebView.CoreWebView2.ExecuteScriptAsync($"window.bxbUpdateAssistantMessage({payload})");
+        }
+        catch (Exception error)
+        {
+            App.LogException(error);
+        }
     }
 
     private string GetCurrentUiTheme()
@@ -3136,15 +3167,26 @@ public sealed partial class MainWindow : Window
     private void OnBackendProgressReceived(object? sender, BackendProgressEventArgs args)
     {
         var progress = args.Result;
-        if (progress.ValueKind != JsonValueKind.Object || GetString(progress, "type", "") != "agent-step")
+        if (progress.ValueKind != JsonValueKind.Object)
         {
             return;
         }
+        var progressType = GetString(progress, "type", "");
+        if (progressType != "agent-step" && progressType != "agent-text") return;
 
         DispatcherQueue.TryEnqueue(() =>
         {
             var messageId = GetString(progress, "messageId", "");
             if (string.IsNullOrWhiteSpace(messageId)) return;
+            if (progressType == "agent-text")
+            {
+                var updated = SetAgentMessageText(messageId, GetString(progress, "text", ""), isRunning: true);
+                if (updated && _currentPage == "agent")
+                {
+                    _ = UpdateAgentMessageTextAsync(messageId, GetString(progress, "text", ""), isRunning: true);
+                }
+                return;
+            }
             if (progress.TryGetProperty("steps", out var steps))
             {
                 var updated = SetAgentMessageSteps(messageId, steps.Clone(), isRunning: true);
@@ -3203,6 +3245,19 @@ public sealed partial class MainWindow : Window
             if (_agentPreviewMessages[index].Id == messageId)
             {
                 _agentPreviewMessages[index] = _agentPreviewMessages[index] with { Steps = steps.Clone(), IsRunning = isRunning };
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private bool SetAgentMessageText(string messageId, string text, bool isRunning)
+    {
+        for (var index = 0; index < _agentPreviewMessages.Count; index += 1)
+        {
+            if (_agentPreviewMessages[index].Id == messageId)
+            {
+                _agentPreviewMessages[index] = _agentPreviewMessages[index] with { Text = text, IsRunning = isRunning };
                 return true;
             }
         }
@@ -3823,7 +3878,16 @@ public sealed partial class MainWindow : Window
         EditorTextBox.Text = GetString(draft, "draftText", "");
         var status = GetString(draft, "status", "");
         var retentionNotice = status == "rejected" ? " · 将在驳回 24 小时后自动删除" : "";
-        SetStatus($"{FormatDraftStatus(status)} · {GetString(draft, "subjectName", "未知课程")}{retentionNotice}");
+        SetStatus($"{FormatDraftStatus(status)} · {GetString(draft, "subjectName", "未知课程")} · 创建于 {FormatDraftCreatedAt(draft)}{retentionNotice}");
+    }
+
+    private static string FormatDraftCreatedAt(JsonElement draft)
+    {
+        var value = GetString(draft, "createdAt", "");
+        if (string.IsNullOrWhiteSpace(value)) return "未知时间";
+        return DateTimeOffset.TryParse(value, out var timestamp)
+            ? timestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")
+            : value;
     }
 
     private void ShowPrivateThread(DisplayItem item, JsonElement result)

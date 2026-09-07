@@ -7,6 +7,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { fetch as undiciFetch, ProxyAgent } from "undici";
 import { BanxuebangClient } from "../src/banxuebang-client.js";
+import { compactAgentToolResult } from "../src/agent-tool-results.js";
+import { requestChatCompletionWithRecovery } from "../src/chat-completion-stream.js";
 import { DraftStore, migrateDraftFiles } from "../src/draft-store.js";
 import {
   contextBudget,
@@ -43,6 +45,7 @@ const updateDir = path.join(electronUserDataRoot, "updates");
 const pendingUpdatePath = path.join(updateDir, "pending-update.json");
 const modelConfigPath = path.join(electronUserDataRoot, "model-config.json");
 const conversationsPath = path.join(electronUserDataRoot, "agent-conversations.json");
+const DEFAULT_CONTEXT_LENGTH = 200000;
 const sessionFile = path.join(dataRoot, "session.json");
 const RELEASES_API_URL = "https://api.github.com/repos/GRAY-XY/BXB_tools/releases?per_page=30";
 const RELEASES_PAGE_URL = "https://github.com/GRAY-XY/BXB_tools/releases";
@@ -514,7 +517,7 @@ function normalizeModelConfig(rawConfig) {
     baseUrl: getActiveProvider({ providers, activeProviderId: modelRoles.chat.activeProviderId, modelRoles }, "chat").baseUrl,
     modelName: getActiveProvider({ providers, activeProviderId: modelRoles.chat.activeProviderId, modelRoles }, "chat").modelName,
     providerName: getActiveProvider({ providers, activeProviderId: modelRoles.chat.activeProviderId, modelRoles }, "chat").name,
-    contextLength: Number.parseInt(source.contextLength ?? 0, 10) || 0,
+    contextLength: Math.max(1, Number.parseInt(source.contextLength ?? DEFAULT_CONTEXT_LENGTH, 10) || DEFAULT_CONTEXT_LENGTH),
     chatTemperature: normalizeTemperature(source.chatTemperature, 0.2),
     compactTemperature: normalizeTemperature(source.compactTemperature, 0.1),
     longPasteThreshold: normalizeLongPasteThreshold(source.longPasteThreshold, 4000),
@@ -1742,6 +1745,24 @@ async function runAgent({ text, attachments, conversationId, userMessageId, assi
       steps,
     });
   };
+  let lastPublishedText = "";
+  let lastTextPublishedAt = 0;
+  const publishStreamText = (content, force = false) => {
+    const nextText = String(content || "");
+    assistantMessage.text = nextText;
+    const now = Date.now();
+    if (!force && now - lastTextPublishedAt < 100 && nextText.length - lastPublishedText.length < 160) return;
+    if (!force && nextText === lastPublishedText) return;
+    lastPublishedText = nextText;
+    lastTextPublishedAt = now;
+    emitProgress?.({
+      type: "agent-text",
+      conversationId: conversation.id,
+      messageId: assistantId,
+      text: nextText,
+      isRunning: true,
+    });
+  };
   const finishTurn = async (content, status) => {
     assistantMessage.text = content;
     assistantMessage.at = nowIso();
@@ -1787,6 +1808,27 @@ async function runAgent({ text, attachments, conversationId, userMessageId, assi
     const maxToolRounds = Math.max(1, Number.parseInt(config.maxToolRounds || 6, 10));
     let autoCompressionFailed = false;
     let emergencyCompressionUsed = false;
+    const requestModel = (messages) => requestChatCompletionWithRecovery({
+      url: deriveChatUrl(config.baseUrl),
+      headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
+      payload: {
+        model: config.modelName,
+        messages,
+        tools: safeToolSchemas(),
+        tool_choice: "auto",
+        temperature: chatTemperature(config, normalizeTemperature(config.chatTemperature, 0.2)),
+      },
+      signal,
+      onText: (content) => publishStreamText(content),
+      onRecovery: ({ phase, error }) => {
+        const detail = String(error?.message || error || "连接已中断");
+        if (phase === "retry") {
+          pushStep("llm", "流式连接中断，正在重新连接", detail);
+        } else {
+          pushStep("llm", "流式连接仍不稳定，正在等待完整响应", detail);
+        }
+      },
+    });
 
     for (let index = 0; index < maxToolRounds; index += 1) {
       throwIfAgentAborted(signal);
@@ -1812,21 +1854,11 @@ async function runAgent({ text, attachments, conversationId, userMessageId, assi
 
       let messages = buildAgentMessages(config, conversation, runtimeMessages);
       pushStep("llm", index === 0 ? "正在分析请求" : "正在结合工具结果继续分析");
-      let response = await fetch(deriveChatUrl(config.baseUrl), {
-        method: "POST",
-        signal,
-        headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: config.modelName,
-          messages,
-          tools: safeToolSchemas(),
-          tool_choice: "auto",
-          temperature: chatTemperature(config, normalizeTemperature(config.chatTemperature, 0.2)),
-        }),
-      });
-      let raw = await response.text();
+      if (assistantMessage.text) publishStreamText("", true);
+      let completion = await requestModel(messages);
+      let raw = completion.raw;
       throwIfAgentAborted(signal);
-      if (!response.ok && !emergencyCompressionUsed && isContextLimitError(response.status, raw)) {
+      if (!completion.ok && !emergencyCompressionUsed && isContextLimitError(completion.status, raw)) {
         emergencyCompressionUsed = true;
         const compression = await compactConversationContext(config, conversation, {
           force: true,
@@ -1840,32 +1872,22 @@ async function runAgent({ text, attachments, conversationId, userMessageId, assi
           state.activeId = conversation.id;
           await saveConversationState(state);
           messages = buildAgentMessages(config, conversation, runtimeMessages);
-          response = await fetch(deriveChatUrl(config.baseUrl), {
-            method: "POST",
-            signal,
-            headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
-            body: JSON.stringify({
-              model: config.modelName,
-              messages,
-              tools: safeToolSchemas(),
-              tool_choice: "auto",
-              temperature: chatTemperature(config, normalizeTemperature(config.chatTemperature, 0.2)),
-            }),
-          });
-          raw = await response.text();
+          completion = await requestModel(messages);
+          raw = completion.raw;
           throwIfAgentAborted(signal);
         }
       }
-      if (!response.ok) throw new Error(`模型服务返回 HTTP ${response.status}: ${raw.slice(0, 1200)}`);
-      const payload = raw ? JSON.parse(raw) : {};
+      if (!completion.ok) throw new Error(`模型服务返回 HTTP ${completion.status}: ${raw.slice(0, 1200)}`);
+      const payload = completion.payload || {};
       usage = payload.usage || usage;
       conversation.contextState = {
         ...normalizeContextState(conversation.contextState),
-        lastPromptTokens: usagePromptTokens(payload.usage) || conversation.contextState?.lastPromptTokens || 0,
+        lastPromptTokens: usagePromptTokens(payload.usage) || estimateMessagesTokens(messages, safeToolSchemas()),
         contextLength: Math.max(0, Number.parseInt(config.contextLength, 10) || 0),
       };
       const message = payload?.choices?.[0]?.message || {};
       const toolCalls = message.tool_calls || [];
+      publishStreamText(typeof message.content === "string" ? message.content : "", true);
 
       if (!toolCalls.length) {
         const content = typeof message.content === "string" ? message.content : "执行完成。";
@@ -1873,7 +1895,9 @@ async function runAgent({ text, attachments, conversationId, userMessageId, assi
         return finishTurn(content, "completed");
       }
 
-      runtimeMessages.push({ role: "assistant", content: message.content || "", tool_calls: toolCalls });
+      const assistantToolMessage = { role: "assistant", content: message.content || "", tool_calls: toolCalls };
+      runtimeMessages.push(assistantToolMessage);
+      contextRuntimeMessages.push(assistantToolMessage);
       for (const call of toolCalls) {
         throwIfAgentAborted(signal);
         const toolName = call?.function?.name;
@@ -1882,17 +1906,22 @@ async function runAgent({ text, attachments, conversationId, userMessageId, assi
           const args = JSON.parse(call?.function?.arguments || "{}");
           pushStep("tool", `正在${toolTitle}`, JSON.stringify(args, null, 2));
           const result = await callTool(toolName, args, { signal });
-          pushStep("tool", `${toolTitle}完成`, JSON.stringify(result, null, 2).slice(0, 4000));
-          runtimeMessages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) });
+          const compactResult = compactAgentToolResult(toolName, result);
+          pushStep("tool", `${toolTitle}完成`, JSON.stringify(compactResult, null, 2).slice(0, 4000));
+          const toolMessage = { role: "tool", tool_call_id: call.id, content: JSON.stringify(compactResult) };
+          runtimeMessages.push(toolMessage);
+          contextRuntimeMessages.push(toolMessage);
         } catch (error) {
           if (isAgentAbort(error, signal)) throw error;
           const message = String(error?.message || error || "工具调用失败");
           pushStep("tool", `${toolTitle}失败`, message);
-          runtimeMessages.push({
+          const toolErrorMessage = {
             role: "tool",
             tool_call_id: call.id,
             content: JSON.stringify({ ok: false, error: { message } }),
-          });
+          };
+          runtimeMessages.push(toolErrorMessage);
+          contextRuntimeMessages.push(toolErrorMessage);
         }
       }
     }

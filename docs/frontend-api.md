@@ -693,8 +693,18 @@ type AgentConversationSummary = {
 };
 
 type AgentProgressPayload = {
+  type: "agent-step";
   requestId?: string;
+  conversationId?: string;
+  messageId?: string;
   step: AgentStep;
+  steps?: AgentStep[];
+} | {
+  type: "agent-text";
+  conversationId: string;
+  messageId: string;
+  text: string;
+  isRunning: true;
 };
 
 type AgentStep = {
@@ -712,10 +722,13 @@ Recommended flow:
 3. Generate a `requestId`.
 4. Subscribe with `onAgentProgress`.
 5. Call `chat({ text, requestId, conversationId })`.
-6. Render `message` as Markdown.
-7. Show `steps` in a right-side timeline or expandable panel.
-8. Treat user input `/compact` as a call to `compactChat()`.
-9. Use `createConversation()` for a new conversation and `selectConversation()` to enter an old one.
+6. Apply cumulative `agent-text` events to the matching assistant message while rendering `agent-step` events independently.
+7. Replace the running placeholder with the final `message` and render it as Markdown.
+8. Show `steps` in a right-side timeline or expandable panel.
+9. Treat user input `/compact` as a call to `compactChat()`.
+10. Use `createConversation()` for a new conversation and `selectConversation()` to enter an old one.
+
+Chat completion requests use SSE streaming. A stream that closes before `[DONE]` or `finish_reason` keeps its partial text in the UI, reconnects once, and then falls back to a non-streaming request that waits for a complete JSON response. User cancellation, HTTP failures, and invalid payloads are not retried. Providers that ignore streaming and return a regular JSON completion remain supported. Tool responses passed back to the Agent are compacted to remove credentials, repeated session/course structures, raw duplicate payloads, and embedded Base64 content; direct UI tool calls still return their complete documented payloads. The default context length is `200000` tokens and remains user-configurable.
 
 The primary Agent UI renders `steps` inside the associated assistant message. A running message shows `Thinking` plus the latest step title; its disclosure row expands into a structured timeline. Each step keeps its arguments and results in a second disclosure that is collapsed by default. Completed messages retain a compact step-count/duration summary. Process expansion state is frontend-only and must survive real-time rerenders. Expanded tool arguments and results should be summarized into labeled fields rather than displayed as raw JSON.
 
