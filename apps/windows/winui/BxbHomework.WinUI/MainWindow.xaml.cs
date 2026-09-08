@@ -8,6 +8,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Security.Credentials;
@@ -116,6 +117,9 @@ public sealed partial class MainWindow : Window
     private bool _homeLoginRunning;
     private bool _startupComplete;
     private bool _startupInitializing;
+    private bool _modelSetupRunning;
+    private bool _modelSetupTransitioning;
+    private JsonElement? _modelSetupConfig;
 
     public MainWindow()
     {
@@ -166,6 +170,7 @@ public sealed partial class MainWindow : Window
         StartupProgressRing.IsActive = true;
         StartupProgressRing.Visibility = Visibility.Visible;
         StartupRetryButton.Visibility = Visibility.Collapsed;
+        ModelSetupOverlay.Visibility = Visibility.Collapsed;
         BackendStateText.Visibility = Visibility.Collapsed;
         try
         {
@@ -178,7 +183,7 @@ public sealed partial class MainWindow : Window
             _appInfo = await appInfoTask;
             BackendStateText.Text = $"Node {_appInfo.Value.GetProperty("nodeVersion").GetString()}";
             var config = await configTask;
-            ApplyTheme(GetString(config, "theme", "light"));
+            ApplyTheme(GetString(config, "theme", "system"));
 
             StartupStatusText.Text = "正在恢复登录状态...";
             await RefreshSessionAsync();
@@ -186,11 +191,14 @@ public sealed partial class MainWindow : Window
             RenderHome();
             SetHomeSessionList();
 
-            _startupComplete = true;
-            RootNavigation.Visibility = Visibility.Visible;
-            BackendStateText.Visibility = Visibility.Visible;
             StartupOverlay.Visibility = Visibility.Collapsed;
-            SetStatus("Ready");
+            if (GetString(config, "hasApiKey", "false") != "true")
+            {
+                ShowModelSetup(config);
+                return;
+            }
+
+            CompleteStartup();
         }
         catch (Exception error)
         {
@@ -210,6 +218,252 @@ public sealed partial class MainWindow : Window
     private void OnStartupRetryClick(object sender, RoutedEventArgs args)
     {
         _ = InitializeAsync();
+    }
+
+    private void ShowModelSetup(JsonElement config)
+    {
+        _modelSetupConfig = config.Clone();
+        ModelSetupBaseUrlBox.Text = GetString(config, "baseUrl", "");
+        ModelSetupApiKeyBox.Password = "";
+        ModelSetupModelComboBox.Items.Clear();
+        ModelSetupStatusText.Text = "";
+        SetModelSetupStep(showModelSelection: false);
+        SetModelSetupBusy(false);
+        ModelSetupOverlay.Visibility = Visibility.Visible;
+        ModelSetupNextButton.Focus(FocusState.Programmatic);
+    }
+
+    private void SetModelSetupStep(bool showModelSelection)
+    {
+        ModelSetupCredentialsPanel.Visibility = showModelSelection ? Visibility.Collapsed : Visibility.Visible;
+        ModelSetupModelPanel.Visibility = showModelSelection ? Visibility.Visible : Visibility.Collapsed;
+        ModelSetupCredentialsPanel.Opacity = showModelSelection ? 0 : 1;
+        ModelSetupModelPanel.Opacity = showModelSelection ? 1 : 0;
+        ModelSetupCredentialsTransform.X = 0;
+        ModelSetupModelTransform.X = 0;
+        ModelSetupFinishButton.IsEnabled = true;
+    }
+
+    private async Task AnimateModelSetupStepAsync(bool showModelSelection)
+    {
+        var alreadyShowingTarget = showModelSelection
+            ? ModelSetupModelPanel.Visibility == Visibility.Visible
+            : ModelSetupCredentialsPanel.Visibility == Visibility.Visible;
+        if (_modelSetupTransitioning || alreadyShowingTarget) return;
+
+        _modelSetupTransitioning = true;
+        ModelSetupCredentialsPanel.IsHitTestVisible = false;
+        ModelSetupModelPanel.IsHitTestVisible = false;
+        ModelSetupSkipButton.IsEnabled = false;
+
+        var outgoing = showModelSelection ? ModelSetupCredentialsPanel : ModelSetupModelPanel;
+        var incoming = showModelSelection ? ModelSetupModelPanel : ModelSetupCredentialsPanel;
+        var outgoingTransform = showModelSelection ? ModelSetupCredentialsTransform : ModelSetupModelTransform;
+        var incomingTransform = showModelSelection ? ModelSetupModelTransform : ModelSetupCredentialsTransform;
+        var direction = showModelSelection ? 1d : -1d;
+        var distance = Math.Max(360, ModelSetupPageViewport.ActualWidth + 64);
+        var finalOpacity = _modelSetupRunning ? 0.65 : 1;
+
+        incoming.Visibility = Visibility.Visible;
+        incoming.Opacity = 0;
+        incomingTransform.X = direction * distance;
+        outgoing.Opacity = finalOpacity;
+        outgoingTransform.X = 0;
+        ModelSetupFinishButton.IsEnabled = true;
+
+        var storyboard = new Storyboard();
+        AddModelSetupAnimation(storyboard, outgoingTransform, "X", 0, -direction * distance);
+        AddModelSetupAnimation(storyboard, outgoing, "Opacity", finalOpacity, 0);
+        AddModelSetupAnimation(storyboard, incomingTransform, "X", direction * distance, 0);
+        AddModelSetupAnimation(storyboard, incoming, "Opacity", 0, finalOpacity);
+
+        var completed = new TaskCompletionSource<object?>();
+        storyboard.Completed += (_, _) => completed.TrySetResult(null);
+        storyboard.Begin();
+        await completed.Task;
+
+        outgoing.Visibility = Visibility.Collapsed;
+        outgoing.Opacity = 0;
+        outgoingTransform.X = 0;
+        incoming.Opacity = finalOpacity;
+        incomingTransform.X = 0;
+        _modelSetupTransitioning = false;
+
+        var interactive = !_modelSetupRunning;
+        ModelSetupCredentialsPanel.IsHitTestVisible = interactive;
+        ModelSetupModelPanel.IsHitTestVisible = interactive;
+        ModelSetupSkipButton.IsEnabled = interactive;
+    }
+
+    private static void AddModelSetupAnimation(
+        Storyboard storyboard,
+        DependencyObject target,
+        string property,
+        double from,
+        double to)
+    {
+        var animation = new DoubleAnimation
+        {
+            From = from,
+            To = to,
+            Duration = TimeSpan.FromMilliseconds(280),
+            EnableDependentAnimation = true,
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+        };
+        Storyboard.SetTarget(animation, target);
+        Storyboard.SetTargetProperty(animation, property);
+        storyboard.Children.Add(animation);
+    }
+
+    private void SetModelSetupBusy(bool busy)
+    {
+        _modelSetupRunning = busy;
+        ModelSetupCredentialsPanel.IsHitTestVisible = !busy && !_modelSetupTransitioning;
+        ModelSetupCredentialsPanel.Opacity = busy ? 0.65 : 1;
+        ModelSetupModelPanel.IsHitTestVisible = !busy && !_modelSetupTransitioning;
+        ModelSetupModelPanel.Opacity = busy ? 0.65 : 1;
+        ModelSetupSkipButton.IsEnabled = !busy && !_modelSetupTransitioning;
+        ModelSetupProgressRing.IsActive = busy;
+        ModelSetupProgressRing.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
+        ModelSetupNextButton.Content = busy && ModelSetupCredentialsPanel.Visibility == Visibility.Visible ? "正在测试..." : "下一页";
+        ModelSetupFinishButton.Content = busy && ModelSetupModelPanel.Visibility == Visibility.Visible ? "正在保存..." : "完成配置";
+    }
+
+    private Dictionary<string, object> BuildModelSetupConfig(string? modelName = null)
+    {
+        var config = _modelSetupConfig;
+        var providerId = config.HasValue ? GetString(config.Value, "activeProviderId", "default") : "default";
+        var providerName = config.HasValue ? GetString(config.Value, "providerName", "默认提供商") : "默认提供商";
+        return new Dictionary<string, object>
+        {
+            ["modelRole"] = "chat",
+            ["activeProviderId"] = providerId,
+            ["providerName"] = providerName,
+            ["baseUrl"] = ModelSetupBaseUrlBox.Text.Trim(),
+            ["apiKey"] = ModelSetupApiKeyBox.Password.Trim(),
+            ["modelName"] = modelName ?? (config.HasValue ? GetString(config.Value, "modelName", "") : ""),
+        };
+    }
+
+    private async void OnModelSetupNextClick(object sender, RoutedEventArgs args)
+    {
+        if (_modelSetupRunning) return;
+        if (string.IsNullOrWhiteSpace(ModelSetupBaseUrlBox.Text))
+        {
+            ModelSetupStatusText.Text = "请输入调用链接。";
+            ModelSetupBaseUrlBox.Focus(FocusState.Programmatic);
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(ModelSetupApiKeyBox.Password))
+        {
+            ModelSetupStatusText.Text = "请输入 API Key。";
+            ModelSetupApiKeyBox.Focus(FocusState.Programmatic);
+            return;
+        }
+
+        SetModelSetupBusy(true);
+        ModelSetupStatusText.Text = "正在测试连接并读取模型...";
+        try
+        {
+            var result = await InvokeAsync("config:model:list", BuildModelSetupConfig());
+            var models = ReadModelIds(result).ToList();
+            if (models.Count == 0)
+            {
+                ModelSetupStatusText.Text = "连接成功，但服务没有返回可选择的模型。请检查调用链接。";
+                return;
+            }
+
+            ModelSetupModelComboBox.Items.Clear();
+            foreach (var model in models)
+            {
+                ModelSetupModelComboBox.Items.Add(new ComboBoxItem { Content = model, Tag = model });
+            }
+
+            var currentModel = _modelSetupConfig.HasValue ? GetString(_modelSetupConfig.Value, "modelName", "") : "";
+            ModelSetupModelComboBox.SelectedIndex = 0;
+            foreach (var item in ModelSetupModelComboBox.Items.OfType<ComboBoxItem>())
+            {
+                if (!string.Equals(item.Tag?.ToString(), currentModel, StringComparison.OrdinalIgnoreCase)) continue;
+                ModelSetupModelComboBox.SelectedItem = item;
+                break;
+            }
+
+            ModelSetupStatusText.Text = $"连接成功，已读取 {models.Count} 个模型。";
+            await AnimateModelSetupStepAsync(showModelSelection: true);
+            ModelSetupModelComboBox.Focus(FocusState.Programmatic);
+        }
+        catch (Exception error)
+        {
+            ModelSetupStatusText.Text = CleanErrorMessage(error.Message);
+            App.LogException(error);
+        }
+        finally
+        {
+            SetModelSetupBusy(false);
+        }
+    }
+
+    private async void OnModelSetupBackClick(object sender, RoutedEventArgs args)
+    {
+        if (_modelSetupRunning || _modelSetupTransitioning) return;
+        ModelSetupStatusText.Text = "";
+        await AnimateModelSetupStepAsync(showModelSelection: false);
+        ModelSetupBaseUrlBox.Focus(FocusState.Programmatic);
+    }
+
+    private async void OnModelSetupFinishClick(object sender, RoutedEventArgs args)
+    {
+        if (_modelSetupRunning || _modelSetupTransitioning) return;
+        if (ModelSetupModelComboBox.SelectedItem is not ComboBoxItem selectedModel)
+        {
+            ModelSetupStatusText.Text = "请选择模型。";
+            return;
+        }
+
+        var modelName = (selectedModel.Tag?.ToString() ?? selectedModel.Content?.ToString() ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(modelName))
+        {
+            ModelSetupStatusText.Text = "请选择模型。";
+            return;
+        }
+
+        SetModelSetupBusy(true);
+        ModelSetupStatusText.Text = "正在保存模型配置...";
+        try
+        {
+            var saved = await InvokeAsync("config:model:save", BuildModelSetupConfig(modelName));
+            _modelSetupConfig = saved.Clone();
+            ModelSetupApiKeyBox.Password = "";
+            CompleteStartup();
+            SetStatus($"模型 {modelName} 已配置");
+        }
+        catch (Exception error)
+        {
+            ModelSetupStatusText.Text = CleanErrorMessage(error.Message);
+            App.LogException(error);
+        }
+        finally
+        {
+            SetModelSetupBusy(false);
+        }
+    }
+
+    private void OnModelSetupSkipClick(object sender, RoutedEventArgs args)
+    {
+        if (_modelSetupRunning || _modelSetupTransitioning) return;
+        ModelSetupApiKeyBox.Password = "";
+        CompleteStartup();
+        SetStatus("已跳过模型配置，可稍后在设置中完成");
+    }
+
+    private void CompleteStartup()
+    {
+        _startupComplete = true;
+        RootNavigation.Visibility = Visibility.Visible;
+        BackendStateText.Visibility = Visibility.Visible;
+        StartupOverlay.Visibility = Visibility.Collapsed;
+        ModelSetupOverlay.Visibility = Visibility.Collapsed;
+        SetStatus("Ready");
     }
 
     private void OnNavigationSelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
@@ -1077,7 +1331,7 @@ public sealed partial class MainWindow : Window
         SettingsMaxToolRoundsBox.Text = GetString(config, "maxToolRounds", "6");
         SettingsLongPasteThresholdBox.Text = GetString(config, "longPasteThreshold", "4000");
         SettingsCustomInstructionsBox.Text = GetString(config, "customInstructions", "");
-        SelectSettingsTheme(GetString(config, "theme", "light"));
+        SelectSettingsTheme(GetString(config, "theme", "system"));
         SettingsModelStatusText.Text = _settingsHasApiKey ? "API Key 已保存。留空保存不会覆盖已保存 Key。" : "API Key 未配置。";
 
         if (SettingsModelComboBox.Visibility == Visibility.Visible)
@@ -1362,15 +1616,15 @@ public sealed partial class MainWindow : Window
         if (SettingsThemeComboBox.SelectedItem is ComboBoxItem item)
         {
             var value = (item.Tag?.ToString() ?? item.Content?.ToString() ?? "").Trim().ToLowerInvariant();
-            return value == "dark" ? "dark" : "light";
+            return value is "dark" or "light" ? value : "system";
         }
 
-        return "light";
+        return "system";
     }
 
     private void SelectSettingsTheme(string theme)
     {
-        var normalized = string.Equals(theme, "dark", StringComparison.OrdinalIgnoreCase) ? "dark" : "light";
+        var normalized = theme.Trim().ToLowerInvariant() is "dark" or "light" ? theme.Trim().ToLowerInvariant() : "system";
         _suppressSettingsThemeCombo = true;
         try
         {
@@ -1392,10 +1646,21 @@ public sealed partial class MainWindow : Window
 
     private void ApplyTheme(string theme)
     {
-        RootGrid.RequestedTheme = string.Equals(theme, "dark", StringComparison.OrdinalIgnoreCase)
-            ? ElementTheme.Dark
-            : ElementTheme.Light;
+        RootGrid.RequestedTheme = theme.Trim().ToLowerInvariant() switch
+        {
+            "dark" => ElementTheme.Dark,
+            "light" => ElementTheme.Light,
+            _ => ElementTheme.Default,
+        };
         if (AgentPanel.Visibility == Visibility.Visible)
+        {
+            RenderAgentMessages(_agentPreviewMessages);
+        }
+    }
+
+    private void OnRootGridActualThemeChanged(FrameworkElement sender, object args)
+    {
+        if (RootGrid.RequestedTheme == ElementTheme.Default && AgentPanel.Visibility == Visibility.Visible)
         {
             RenderAgentMessages(_agentPreviewMessages);
         }
@@ -3076,7 +3341,7 @@ public sealed partial class MainWindow : Window
 
     private string GetCurrentUiTheme()
     {
-        return RootGrid.RequestedTheme == ElementTheme.Dark ? "dark" : "light";
+        return RootGrid.ActualTheme == ElementTheme.Dark ? "dark" : "light";
     }
 
     private void RenderAgentFallback(IReadOnlyList<AgentChatMessage> messages)

@@ -7,7 +7,10 @@
     mc:Ignorable="d"
     Title="BXB Homework">
 
-    <Grid x:Name="RootGrid" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+    <Grid
+        x:Name="RootGrid"
+        ActualThemeChanged="OnRootGridActualThemeChanged"
+        Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
         <Grid.RowDefinitions>
             <RowDefinition Height="48" />
             <RowDefinition Height="*" />
@@ -755,6 +758,7 @@
                             <StackPanel Spacing="10">
                                 <TextBlock Text="界面与 Agent" FontSize="18" FontWeight="SemiBold" />
                                 <ComboBox x:Name="SettingsThemeComboBox" Header="主题" SelectionChanged="OnSettingsThemeSelectionChanged">
+                                    <ComboBoxItem Content="跟随系统" Tag="system" />
                                     <ComboBoxItem Content="浅色" Tag="light" />
                                     <ComboBoxItem Content="深色" Tag="dark" />
                                 </ComboBox>
@@ -859,6 +863,142 @@
                     Style="{StaticResource AccentButtonStyle}"
                     Visibility="Collapsed" />
             </StackPanel>
+        </Grid>
+
+        <Grid
+            x:Name="ModelSetupOverlay"
+            Grid.Row="1"
+            Grid.RowSpan="2"
+            Background="{ThemeResource ApplicationPageBackgroundThemeBrush}"
+            Visibility="Collapsed">
+            <Border
+                Width="560"
+                Margin="24"
+                Padding="32"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                BorderThickness="1"
+                CornerRadius="8">
+                <Grid RowSpacing="20">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <Grid x:Name="ModelSetupPageViewport" MinHeight="356">
+                        <StackPanel x:Name="ModelSetupCredentialsPanel" Spacing="20">
+                            <StackPanel Spacing="8">
+                                <Border
+                                    Width="44"
+                                    Height="44"
+                                    HorizontalAlignment="Left"
+                                    Background="{ThemeResource AccentFillColorDefaultBrush}"
+                                    CornerRadius="8">
+                                    <TextBlock
+                                        HorizontalAlignment="Center"
+                                        VerticalAlignment="Center"
+                                        FontSize="13"
+                                        FontWeight="SemiBold"
+                                        Foreground="White"
+                                        Text="BXB" />
+                                </Border>
+                                <TextBlock FontSize="24" FontWeight="SemiBold" Text="配置对话模型" />
+                                <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="第 1 步，共 2 步" />
+                            </StackPanel>
+                            <StackPanel Spacing="14">
+                                <TextBox
+                                    x:Name="ModelSetupBaseUrlBox"
+                                    Header="调用链接"
+                                    PlaceholderText="https://api.example.com/v1" />
+                                <PasswordBox
+                                    x:Name="ModelSetupApiKeyBox"
+                                    Header="API Key"
+                                    PasswordRevealMode="Peek"
+                                    PlaceholderText="输入 API Key" />
+                                <Button
+                                    x:Name="ModelSetupNextButton"
+                                    HorizontalAlignment="Right"
+                                    Click="OnModelSetupNextClick"
+                                    Content="下一页"
+                                    Style="{StaticResource AccentButtonStyle}" />
+                            </StackPanel>
+                            <StackPanel.RenderTransform>
+                                <TranslateTransform x:Name="ModelSetupCredentialsTransform" />
+                            </StackPanel.RenderTransform>
+                        </StackPanel>
+
+                        <StackPanel
+                            x:Name="ModelSetupModelPanel"
+                            Opacity="0"
+                            Spacing="20"
+                            Visibility="Collapsed">
+                            <StackPanel Spacing="8">
+                                <Border
+                                    Width="44"
+                                    Height="44"
+                                    HorizontalAlignment="Left"
+                                    Background="{ThemeResource AccentFillColorDefaultBrush}"
+                                    CornerRadius="8">
+                                    <TextBlock
+                                        HorizontalAlignment="Center"
+                                        VerticalAlignment="Center"
+                                        FontSize="13"
+                                        FontWeight="SemiBold"
+                                        Foreground="White"
+                                        Text="BXB" />
+                                </Border>
+                                <TextBlock FontSize="24" FontWeight="SemiBold" Text="选择对话模型" />
+                                <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="第 2 步，共 2 步" />
+                            </StackPanel>
+                            <ComboBox
+                                x:Name="ModelSetupModelComboBox"
+                                Header="选择模型"
+                                HorizontalAlignment="Stretch"
+                                PlaceholderText="选择用于助手对话的模型" />
+                            <StackPanel HorizontalAlignment="Right" Orientation="Horizontal" Spacing="8">
+                                <Button Click="OnModelSetupBackClick" Content="上一步" />
+                                <Button
+                                    x:Name="ModelSetupFinishButton"
+                                    Click="OnModelSetupFinishClick"
+                                    Content="完成配置"
+                                    Style="{StaticResource AccentButtonStyle}" />
+                            </StackPanel>
+                            <StackPanel.RenderTransform>
+                                <TranslateTransform x:Name="ModelSetupModelTransform" />
+                            </StackPanel.RenderTransform>
+                        </StackPanel>
+                    </Grid>
+
+                    <Grid Grid.Row="1" ColumnSpacing="10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <ProgressRing
+                            x:Name="ModelSetupProgressRing"
+                            Width="18"
+                            Height="18"
+                            IsActive="False"
+                            Visibility="Collapsed" />
+                        <TextBlock
+                            x:Name="ModelSetupStatusText"
+                            Grid.Column="1"
+                            VerticalAlignment="Center"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            TextWrapping="Wrap" />
+                    </Grid>
+
+                    <HyperlinkButton
+                        x:Name="ModelSetupSkipButton"
+                        Grid.Row="2"
+                        HorizontalAlignment="Center"
+                        Click="OnModelSetupSkipClick"
+                        Content="跳过指引" />
+                </Grid>
+            </Border>
         </Grid>
     </Grid>
 </Window>

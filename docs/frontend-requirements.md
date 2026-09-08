@@ -13,6 +13,16 @@ The active frontend is the WinUI app in `apps/windows/winui/`. The Electron + Re
 - Use readable page-specific views instead of raw JSON blocks unless a diagnostic view is explicitly needed.
 - Keep the interactive shell hidden behind a dedicated startup view until the local backend, application/model configuration, and saved session are ready.
 - Show short startup stage names. If initialization fails, keep the shell hidden and provide an in-app retry action with the error summary.
+- After startup loading, show a centered first-run model setup flow whenever the active chat provider has no saved API Key. Keep the main navigation hidden until setup finishes or the user skips it.
+
+## First-Run Model Setup
+
+- Step 1 asks only for the API Base URL and API Key.
+- `下一页` validates both fields, calls the OpenAI-compatible models endpoint to test connectivity and authentication, and reads the available model IDs.
+- Step 2 shows the returned model IDs in a single dropdown and saves the selected model together with the Base URL and API Key.
+- Moving forward slides the complete first-step content out to the left while the second-step content enters from the right; moving back uses the reverse transition. Keep the card frame, status area, and skip action stationary during the animation.
+- Show connection, loading, empty-list, and save errors inside the setup view without exposing the API Key.
+- Provide a low-emphasis `跳过指引` link below the form. Skipping opens the app without saving credentials or suppressing the guide on a later launch.
 
 ## Navigation
 
@@ -165,6 +175,8 @@ Default Agent safety:
 - If a task appears expired and may not allow supplement, the Agent may save target hints for private-message fallback, but still must only save a draft for review.
 - Draft body text in `draft_text` must fully satisfy the task while remaining concise, natural, and submission-ready. It must be plain text without Markdown, HTML, LaTeX delimiters, assistant commentary, fabricated personal experience, or template-style opening and closing text.
 - Show each draft's creation time in the draft list and selected-draft details, formatted in the user's local time zone.
+- Draft solutions keep only the key formula or basis, a few necessary steps, and the conclusion, including when a task asks for detailed workings; they should read like ordinary student work rather than a tutorial or model answer.
+- Convert Roman numerals used as question or section numbering to Arabic numerals while preserving Roman numerals that carry meaning in the answer itself.
 - For answer-only multiple-choice drafts, put one `question number + option` pair on each line, such as `1A`, without punctuation or spaces. Lettered subquestions use `a内容`, not `a.内容`, unless the task explicitly requires another format.
 - Agent edits replace the complete draft body and always return the draft to `pending_review`; previous approval or rejection metadata must be cleared.
 - The Agent must not upload, submit, approve, reject, delete, or send content.
@@ -402,7 +414,7 @@ Security:
 
 Interface and Agent controls:
 
-- Theme: light/dark.
+- Theme: follow system/light/dark. New configurations default to follow system, while an explicitly saved light or dark preference remains unchanged.
 - Max tool rounds.
 - Agent custom-instructions textarea.
 - Clear custom instructions.

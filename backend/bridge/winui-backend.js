@@ -365,7 +365,8 @@ function normalizeLongPasteThreshold(value, fallback = 4000) {
 }
 
 function normalizeTheme(value) {
-  return String(value || "").trim().toLowerCase() === "dark" ? "dark" : "light";
+  const theme = String(value || "").trim().toLowerCase();
+  return theme === "dark" || theme === "light" ? theme : "system";
 }
 
 function chatTemperature(config, fallback) {

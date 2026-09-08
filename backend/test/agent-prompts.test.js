@@ -37,8 +37,11 @@ test("custom instructions are appended without replacing the core policy", () =>
 });
 
 test("draft policy requires concise natural submission-ready plain text", () => {
-  assert.match(CORE_AGENT_SYSTEM_PROMPT, /先完整满足题目、评分标准和用户明确要求/);
-  assert.match(CORE_AGENT_SYSTEM_PROMPT, /在此基础上保持简洁/);
+  assert.match(CORE_AGENT_SYSTEM_PROMPT, /覆盖全部题目、必要结论和能支撑答案的关键依据/);
+  assert.match(CORE_AGENT_SYSTEM_PROMPT, /只写简略但可辨认的过程/);
+  assert.match(CORE_AGENT_SYSTEM_PROMPT, /即使题目或老师要求“详细过程”/);
+  assert.match(CORE_AGENT_SYSTEM_PROMPT, /“Ⅰ、Ⅱ、Ⅲ”改为“1、2、3”/);
+  assert.match(CORE_AGENT_SYSTEM_PROMPT, /像学生独立完成的日常作业/);
   assert.match(CORE_AGENT_SYSTEM_PROMPT, /不得包含 Markdown/);
   assert.match(CORE_AGENT_SYSTEM_PROMPT, /不得包含 HTML 标签或实体/);
   assert.match(CORE_AGENT_SYSTEM_PROMPT, /公式使用普通文本或 Unicode 表达/);
