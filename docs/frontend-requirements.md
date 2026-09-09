@@ -175,6 +175,7 @@ Default Agent safety:
 - If a task appears expired and may not allow supplement, the Agent may save target hints for private-message fallback, but still must only save a draft for review.
 - Draft body text in `draft_text` must fully satisfy the task while remaining concise, natural, and submission-ready. It must be plain text without Markdown, HTML, LaTeX delimiters, assistant commentary, fabricated personal experience, or template-style opening and closing text.
 - Show each draft's creation time in the draft list and selected-draft details, formatted in the user's local time zone.
+- Keep draft filtering, refresh, and creation in the top toolbar. Place save, approve, reject, prepare submission/private message, and delete actions together below the selected draft; hide edit actions while a confirmation preview is active.
 - Draft solutions keep only the key formula or basis, a few necessary steps, and the conclusion, including when a task asks for detailed workings; they should read like ordinary student work rather than a tutorial or model answer.
 - Convert Roman numerals used as question or section numbering to Arabic numerals while preserving Roman numerals that carry meaning in the answer itself.
 - For answer-only multiple-choice drafts, put one `question number + option` pair on each line, such as `1A`, without punctuation or spaces. Lettered subquestions use `a内容`, not `a.内容`, unless the task explicitly requires another format.
@@ -277,6 +278,7 @@ Review and editing:
 Delivery target flow:
 
 - Only `approved` drafts may show delivery controls.
+- Clicking `准备提交/私信` replaces the draft editor in the right pane with a structured delivery view; do not render the preview as raw JSON or as one undifferentiated text block.
 - Show a target selector with `提交到作业 Task` and `私信老师`.
 - Default target is `提交到作业 Task`, unless the draft's preferred target is `teacher_private_message`.
 - If there are unsaved edits, block delivery preparation and ask the user to save first.
@@ -308,6 +310,7 @@ Teacher private-message flow:
 - Matching is only a suggestion; do not send automatically.
 - If no contact is selected, show the full contact dropdown and keep send disabled.
 - Selecting a contact calls `prepare_draft_private_message({ draft_id, contact })` again so the confirmation token covers the chosen contact.
+- Keep the contact selector, destination metadata, full outgoing text, and chunk preview visible in the right-side delivery view, with a clear action to return to the draft editor.
 - Preview must show contact, course, task title, task ID, and every chunk labeled `第 1/N 条`.
 - Default preview text includes course, homework title, Task ID, a request asking the teacher to open/handle supplement, and the full draft body.
 - The confirmation screen does not edit the body; users return to the draft editor to change text.

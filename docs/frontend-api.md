@@ -423,6 +423,7 @@ Frontend rule:
 - Never call them without explicit user confirmation in the same interaction.
 - Never expose them to autonomous Agent execution by default.
 - The draft page must call `prepare_draft_submission` first and show the target task, course, submit/resubmit/supplement mode, retained files, full text, and destination.
+- Render this information as labeled controls and sections in the right-side delivery view; never append the raw preview JSON to user-visible content.
 - Only call `submit_approved_draft` after a second explicit user click on the confirmation screen.
 - Pass the `confirmationToken` returned by `prepare_draft_submission`; submission is rejected if the task state or draft content changed after preview.
 - `submit_approved_draft` repeats validation server-side, submits to the task's own class, and marks the local draft `submitted` only after Banxuebang reports success.
