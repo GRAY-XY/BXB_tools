@@ -500,6 +500,54 @@
                                 TextWrapping="Wrap"
                                 Visibility="Collapsed" />
                             <ScrollViewer
+                                x:Name="DraftDeliveryScrollViewer"
+                                Grid.Row="1"
+                                HorizontalScrollBarVisibility="Disabled"
+                                VerticalScrollBarVisibility="Auto"
+                                Visibility="Collapsed">
+                                <StackPanel x:Name="DraftDeliveryPanel" Spacing="14">
+                                    <TextBlock Text="提交目标" FontSize="18" FontWeight="SemiBold" />
+                                    <ComboBox
+                                        x:Name="DraftDeliveryTargetComboBox"
+                                        Header="发送到"
+                                        HorizontalAlignment="Stretch"
+                                        SelectionChanged="OnDraftDeliveryTargetChanged">
+                                        <ComboBoxItem Content="提交到作业 Task" Tag="task" />
+                                        <ComboBoxItem Content="私信老师" Tag="teacher_private_message" />
+                                    </ComboBox>
+                                    <StackPanel x:Name="DraftDeliveryContactPanel" Spacing="8" Visibility="Collapsed">
+                                        <ComboBox
+                                            x:Name="DraftDeliveryContactComboBox"
+                                            Header="私信给谁"
+                                            HorizontalAlignment="Stretch"
+                                            PlaceholderText="选择已有私信联系人"
+                                            SelectionChanged="OnDraftDeliveryContactChanged" />
+                                        <TextBlock
+                                            x:Name="DraftDeliveryContactHintText"
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <Rectangle Height="1" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                                    <TextBlock Text="提交信息" FontSize="16" FontWeight="SemiBold" />
+                                    <TextBlock
+                                        x:Name="DraftDeliverySummaryText"
+                                        TextWrapping="WrapWholeWords" />
+                                    <TextBlock
+                                        x:Name="DraftDeliveryStatusText"
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                        TextWrapping="Wrap" />
+                                    <Rectangle Height="1" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                                    <TextBlock Text="即将提交的内容" FontSize="16" FontWeight="SemiBold" />
+                                    <TextBox
+                                        x:Name="DraftDeliveryContentTextBox"
+                                        AcceptsReturn="True"
+                                        IsReadOnly="True"
+                                        MinHeight="220"
+                                        TextWrapping="Wrap" />
+                                    <StackPanel x:Name="DraftDeliveryChunksPanel" Spacing="8" />
+                                </StackPanel>
+                            </ScrollViewer>
+                            <ScrollViewer
                                 x:Name="HomeworkDetailScrollViewer"
                                 Grid.Row="1"
                                 HorizontalScrollBarVisibility="Disabled"
@@ -570,9 +618,16 @@
                                     <Button Content="发送" Click="OnPrivateMessageSendClick" />
                                 </StackPanel>
                             </StackPanel>
-                            <StackPanel x:Name="DetailActionPanel" Grid.Row="2" Orientation="Horizontal" Spacing="8">
-                                <Button x:Name="DetailPrimaryButton" Content="确认" Click="OnDetailPrimaryClick" Visibility="Collapsed" />
-                                <Button x:Name="DetailSecondaryButton" Content="取消" Click="OnDetailSecondaryClick" Visibility="Collapsed" />
+                            <StackPanel x:Name="DetailActionPanel" Grid.Row="2" Spacing="8">
+                                <StackPanel x:Name="DraftManagementActionPanel" Orientation="Horizontal" Spacing="8" Visibility="Collapsed">
+                                    <Button x:Name="DraftSaveButton" Content="保存正文" Click="OnSecondaryActionClick" />
+                                    <Button x:Name="DraftApproveButton" Content="通过审核" Click="OnThirdActionClick" />
+                                    <Button x:Name="DraftDeleteButton" Content="删除草稿" Click="OnDangerActionClick" />
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Button x:Name="DetailPrimaryButton" Content="确认" Click="OnDetailPrimaryClick" Visibility="Collapsed" />
+                                    <Button x:Name="DetailSecondaryButton" Content="取消" Click="OnDetailSecondaryClick" Visibility="Collapsed" />
+                                </StackPanel>
                             </StackPanel>
                         </Grid>
                     </Border>

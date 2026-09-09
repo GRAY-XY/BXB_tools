@@ -82,6 +82,9 @@ public sealed partial class MainWindow : Window
     private JsonElement? _selectedDraft;
     private JsonElement? _draftSubmitPreview;
     private JsonElement? _draftMessagePreview;
+    private bool _draftDeliveryMode;
+    private bool _suppressDraftDeliverySelection;
+    private int _draftDeliveryPreviewVersion;
     private readonly List<AgentChatMessage> _agentPreviewMessages = new();
     private readonly HashSet<string> _expandedAgentProcessIds = new(StringComparer.Ordinal);
     private WebView2? _agentMarkdownWebView;
@@ -538,6 +541,15 @@ public sealed partial class MainWindow : Window
         DetailTextBox.Visibility = Visibility.Visible;
         EditorTextBox.Text = "";
         EditorTextBox.Visibility = Visibility.Collapsed;
+        DraftDeliveryScrollViewer.Visibility = Visibility.Collapsed;
+        DraftDeliveryTargetComboBox.IsEnabled = true;
+        DraftDeliveryContactComboBox.IsEnabled = true;
+        DraftDeliveryContactComboBox.Items.Clear();
+        DraftDeliveryContactHintText.Text = "";
+        DraftDeliverySummaryText.Text = "";
+        DraftDeliveryStatusText.Text = "";
+        DraftDeliveryContentTextBox.Text = "";
+        DraftDeliveryChunksPanel.Children.Clear();
         HomeworkDetailScrollViewer.Visibility = Visibility.Collapsed;
         HomeworkDetailStackPanel.Children.Clear();
         PrivateThreadListView.Visibility = Visibility.Collapsed;
@@ -568,6 +580,7 @@ public sealed partial class MainWindow : Window
         DangerActionButton.IsEnabled = true;
         DetailPrimaryButton.Visibility = Visibility.Collapsed;
         DetailSecondaryButton.Visibility = Visibility.Collapsed;
+        DraftManagementActionPanel.Visibility = Visibility.Collapsed;
         SetAgentStepsMessage("");
         AgentStepsDrawer.Visibility = Visibility.Collapsed;
         _settingsProviderItems.Clear();
@@ -592,6 +605,9 @@ public sealed partial class MainWindow : Window
         _selectedDraft = null;
         _draftSubmitPreview = null;
         _draftMessagePreview = null;
+        _draftDeliveryMode = false;
+        _suppressDraftDeliverySelection = false;
+        _draftDeliveryPreviewVersion++;
         _deleteDraftArmed = false;
         _deleteConversationArmed = false;
         _draftCreateMode = false;
@@ -702,14 +718,8 @@ public sealed partial class MainWindow : Window
             ("submitted", "已提交"),
             ("sent_to_teacher", "已私信老师"));
         PrimaryActionButton.Content = "刷新草稿";
-        SecondaryActionButton.Content = "保存正文";
-        SecondaryActionButton.Visibility = Visibility.Visible;
-        ThirdActionButton.Content = "通过审核";
-        ThirdActionButton.Visibility = Visibility.Visible;
         FourthActionButton.Content = "创建草稿";
         FourthActionButton.Visibility = Visibility.Visible;
-        DangerActionButton.Content = "删除草稿";
-        DangerActionButton.Visibility = Visibility.Visible;
         DetailPrimaryButton.Content = "准备提交/私信";
         DetailPrimaryButton.Visibility = Visibility.Collapsed;
         DetailSecondaryButton.Content = "驳回";
@@ -1128,7 +1138,7 @@ public sealed partial class MainWindow : Window
             }
         }
         SetDetail(_items.Count == 0 ? "当前筛选下暂无草稿。" : "选择左侧草稿查看和编辑。");
-        SetDraftActionButtons(_items.Count > 0);
+        SetDraftActionButtons(false);
     }
 
     private async Task OpenDraftCreatorAsync()
@@ -1137,6 +1147,7 @@ public sealed partial class MainWindow : Window
         _selectedDraft = null;
         _draftSubmitPreview = null;
         _draftMessagePreview = null;
+        _draftDeliveryMode = false;
         _items.Clear();
         ListTitleText.Text = "创建草稿";
         PrimaryComboBox.Visibility = Visibility.Visible;
@@ -1150,7 +1161,9 @@ public sealed partial class MainWindow : Window
         DetailTitleText.Text = "草稿正文";
         PrimaryActionButton.Content = "创建草稿";
         SecondaryActionButton.Content = "取消";
+        SecondaryActionButton.Visibility = Visibility.Visible;
         ThirdActionButton.Content = "刷新课程";
+        ThirdActionButton.Visibility = Visibility.Visible;
         FourthActionButton.Visibility = Visibility.Collapsed;
         DangerActionButton.Visibility = Visibility.Collapsed;
         DetailPrimaryButton.Visibility = Visibility.Collapsed;
@@ -1865,25 +1878,20 @@ public sealed partial class MainWindow : Window
         await RunUiAsync(async () =>
         {
             if (_currentPage != "drafts" || !_selectedDraft.HasValue) return;
-            if (_draftSubmitPreview.HasValue)
+            if (!_draftDeliveryMode)
+            {
+                await OpenDraftDeliveryAsync();
+                return;
+            }
+            if (GetCurrentDraftDeliveryTarget() == "task" && _draftSubmitPreview.HasValue)
             {
                 await ConfirmDraftSubmitAsync();
                 return;
             }
-            if (_draftMessagePreview.HasValue)
+            if (GetCurrentDraftDeliveryTarget() == "teacher_private_message" && _draftMessagePreview.HasValue)
             {
                 await ConfirmDraftPrivateMessageAsync();
                 return;
-            }
-
-            var target = GetString(_selectedDraft.Value, "deliveryTarget", GetString(_selectedDraft.Value, "preferredTarget", "task"));
-            if (target == "teacher_private_message")
-            {
-                await PrepareDraftPrivateMessageAsync();
-            }
-            else
-            {
-                await PrepareDraftSubmitAsync();
             }
         });
     }
@@ -1893,10 +1901,12 @@ public sealed partial class MainWindow : Window
         await RunUiAsync(async () =>
         {
             if (_currentPage != "drafts" || !_selectedDraft.HasValue) return;
-            if (_draftSubmitPreview.HasValue || _draftMessagePreview.HasValue)
+            if (_draftDeliveryMode)
             {
                 _draftSubmitPreview = null;
                 _draftMessagePreview = null;
+                _draftDeliveryMode = false;
+                _draftDeliveryPreviewVersion++;
                 ShowDraft(_selectedDraft.Value);
                 return;
             }
@@ -2328,6 +2338,7 @@ public sealed partial class MainWindow : Window
                     _selectedDraft = draft.Clone();
                     _draftSubmitPreview = null;
                     _draftMessagePreview = null;
+                    _draftDeliveryMode = false;
                     ShowDraft(draft);
                     break;
             }
@@ -2610,43 +2621,319 @@ public sealed partial class MainWindow : Window
         await LoadDraftsAsync((FilterComboBox.SelectedItem as ComboItem)?.Key ?? "all");
     }
 
+    private async Task OpenDraftDeliveryAsync()
+    {
+        if (!_selectedDraft.HasValue) return;
+        var draft = _selectedDraft.Value;
+        if (GetString(draft, "status", "") != "approved")
+        {
+            SetStatus("只有已通过的草稿可以提交或私信老师。");
+            return;
+        }
+        if (!string.Equals(EditorTextBox.Text.Trim(), GetString(draft, "draftText", "").Trim(), StringComparison.Ordinal))
+        {
+            SetStatus("草稿正文有未保存的修改，请先保存正文。");
+            return;
+        }
+
+        _draftDeliveryMode = true;
+        _draftSubmitPreview = null;
+        _draftMessagePreview = null;
+        DraftManagementActionPanel.Visibility = Visibility.Collapsed;
+        DetailTextBox.Visibility = Visibility.Collapsed;
+        EditorTextBox.Visibility = Visibility.Collapsed;
+        HomeworkDetailScrollViewer.Visibility = Visibility.Collapsed;
+        PrivateThreadListView.Visibility = Visibility.Collapsed;
+        DetailImageScrollViewer.Visibility = Visibility.Collapsed;
+        DetailDocumentWebView.Visibility = Visibility.Collapsed;
+        DraftDeliveryScrollViewer.Visibility = Visibility.Visible;
+        DetailTitleText.Text = "提交草稿";
+        DetailPrimaryButton.Visibility = Visibility.Visible;
+        DetailSecondaryButton.Visibility = Visibility.Visible;
+        DetailSecondaryButton.Content = "返回草稿";
+
+        var preferredTarget = GetString(draft, "deliveryTarget", GetString(draft, "preferredTarget", "task"));
+        SelectDraftDeliveryTarget(preferredTarget == "teacher_private_message" ? preferredTarget : "task");
+        await LoadDraftDeliveryPreviewAsync();
+    }
+
+    private void SelectDraftDeliveryTarget(string target)
+    {
+        _suppressDraftDeliverySelection = true;
+        try
+        {
+            foreach (var item in DraftDeliveryTargetComboBox.Items.OfType<ComboBoxItem>())
+            {
+                if (!string.Equals(item.Tag?.ToString(), target, StringComparison.Ordinal)) continue;
+                DraftDeliveryTargetComboBox.SelectedItem = item;
+                break;
+            }
+        }
+        finally
+        {
+            _suppressDraftDeliverySelection = false;
+        }
+    }
+
+    private string GetCurrentDraftDeliveryTarget()
+    {
+        return DraftDeliveryTargetComboBox.SelectedItem is ComboBoxItem item
+            && string.Equals(item.Tag?.ToString(), "teacher_private_message", StringComparison.Ordinal)
+                ? "teacher_private_message"
+                : "task";
+    }
+
+    private async void OnDraftDeliveryTargetChanged(object sender, SelectionChangedEventArgs args)
+    {
+        if (_suppressDraftDeliverySelection || !_draftDeliveryMode) return;
+        await LoadDraftDeliveryPreviewAsync();
+    }
+
+    private async void OnDraftDeliveryContactChanged(object sender, SelectionChangedEventArgs args)
+    {
+        if (_suppressDraftDeliverySelection || !_draftDeliveryMode || GetCurrentDraftDeliveryTarget() != "teacher_private_message") return;
+        await LoadDraftDeliveryPreviewAsync();
+    }
+
+    private async Task LoadDraftDeliveryPreviewAsync()
+    {
+        if (!_draftDeliveryMode || !_selectedDraft.HasValue) return;
+        var requestVersion = ++_draftDeliveryPreviewVersion;
+        var target = GetCurrentDraftDeliveryTarget();
+        DraftDeliveryTargetComboBox.IsEnabled = false;
+        DraftDeliveryContactComboBox.IsEnabled = false;
+        DraftDeliveryContactPanel.Visibility = target == "teacher_private_message" ? Visibility.Visible : Visibility.Collapsed;
+        DraftDeliverySummaryText.Text = "";
+        DraftDeliveryContentTextBox.Text = "";
+        DraftDeliveryChunksPanel.Children.Clear();
+        DraftDeliveryStatusText.Text = target == "teacher_private_message"
+            ? "正在读取联系人并生成私信预览..."
+            : "正在读取作业状态并生成提交预览...";
+        DetailPrimaryButton.IsEnabled = false;
+        DetailPrimaryButton.Content = target == "teacher_private_message" ? "确认并分条发送" : "确认并提交";
+
+        try
+        {
+            if (target == "teacher_private_message")
+            {
+                JsonElement? contact = DraftDeliveryContactComboBox.SelectedItem is ComboBoxItem { Tag: JsonElement selectedContact }
+                    ? selectedContact
+                    : null;
+                await PrepareDraftPrivateMessageAsync(contact);
+            }
+            else
+            {
+                await PrepareDraftSubmitAsync();
+            }
+        }
+        catch (Exception error)
+        {
+            if (requestVersion != _draftDeliveryPreviewVersion) return;
+            _draftSubmitPreview = null;
+            _draftMessagePreview = null;
+            DraftDeliverySummaryText.Text = "无法生成预览。";
+            DraftDeliveryContentTextBox.Text = GetString(_selectedDraft.Value, "draftText", "");
+            DraftDeliveryChunksPanel.Children.Clear();
+            DraftDeliveryStatusText.Text = CleanErrorMessage(error.Message);
+            App.LogException(error);
+        }
+        finally
+        {
+            if (requestVersion == _draftDeliveryPreviewVersion)
+            {
+                DraftDeliveryTargetComboBox.IsEnabled = true;
+                DraftDeliveryContactComboBox.IsEnabled = true;
+            }
+        }
+    }
+
     private async Task PrepareDraftSubmitAsync()
     {
         if (!_selectedDraft.HasValue) return;
         var preview = await ToolAsync("prepare_draft_submission", new { draft_id = GetString(_selectedDraft.Value, "draftId", "") });
         _draftSubmitPreview = preview.Clone();
-        DetailPrimaryButton.Content = "确认提交";
-        DetailSecondaryButton.Content = "取消";
-        SetDetail(FormatDraftSubmitPreview(preview));
-        EditorTextBox.Visibility = Visibility.Collapsed;
-        DetailTextBox.Visibility = Visibility.Visible;
+        _draftMessagePreview = null;
+        RenderDraftDeliveryPreview(preview, "task");
     }
 
     private async Task ConfirmDraftSubmitAsync()
     {
         if (!_selectedDraft.HasValue || !_draftSubmitPreview.HasValue) return;
-        var result = await ToolAsync("submit_approved_draft", new
+        DetailPrimaryButton.IsEnabled = false;
+        DraftDeliveryTargetComboBox.IsEnabled = false;
+        DraftDeliveryStatusText.Text = "正在提交到作业...";
+        try
         {
-            draft_id = GetString(_selectedDraft.Value, "draftId", ""),
-            confirmation_token = GetString(_draftSubmitPreview.Value, "confirmationToken", ""),
-        });
-        _draftSubmitPreview = null;
-        var draft = result.TryGetProperty("draft", out var inner) ? inner : result;
-        _selectedDraft = draft.Clone();
-        ShowDraft(draft);
-        await LoadDraftsAsync("all");
+            var result = await ToolAsync("submit_approved_draft", new
+            {
+                draft_id = GetString(_selectedDraft.Value, "draftId", ""),
+                confirmation_token = GetString(_draftSubmitPreview.Value, "confirmationToken", ""),
+            });
+            _draftSubmitPreview = null;
+            var draft = result.TryGetProperty("draft", out var inner) ? inner : result;
+            _selectedDraft = draft.Clone();
+            ShowDraft(draft);
+            await LoadDraftsAsync("all");
+        }
+        catch (Exception error)
+        {
+            DraftDeliveryStatusText.Text = $"提交失败：{CleanErrorMessage(error.Message)}\n可以切换为“私信老师”继续处理。";
+            DetailPrimaryButton.IsEnabled = true;
+            DraftDeliveryTargetComboBox.IsEnabled = true;
+            App.LogException(error);
+        }
     }
 
-    private async Task PrepareDraftPrivateMessageAsync()
+    private async Task PrepareDraftPrivateMessageAsync(JsonElement? contact)
     {
         if (!_selectedDraft.HasValue) return;
-        var preview = await ToolAsync("prepare_draft_private_message", new { draft_id = GetString(_selectedDraft.Value, "draftId", "") });
+        object parameters = contact.HasValue
+            ? new { draft_id = GetString(_selectedDraft.Value, "draftId", ""), contact = contact.Value }
+            : new { draft_id = GetString(_selectedDraft.Value, "draftId", "") };
+        var preview = await ToolAsync("prepare_draft_private_message", parameters);
         _draftMessagePreview = preview.Clone();
-        DetailPrimaryButton.Content = "确认私信";
-        DetailSecondaryButton.Content = "取消";
-        SetDetail(FormatDraftPrivatePreview(preview));
-        EditorTextBox.Visibility = Visibility.Collapsed;
-        DetailTextBox.Visibility = Visibility.Visible;
+        _draftSubmitPreview = null;
+        PopulateDraftDeliveryContacts(preview);
+        RenderDraftDeliveryPreview(preview, "teacher_private_message");
+    }
+
+    private void PopulateDraftDeliveryContacts(JsonElement preview)
+    {
+        var selectedKey = preview.TryGetProperty("selectedContact", out var selectedContact)
+            && selectedContact.ValueKind == JsonValueKind.Object
+                ? PrivateContactKey(selectedContact)
+                : "";
+        var contacts = ReadArray(preview, "contacts");
+        var recommendedCount = contacts.Count(contact => GetString(contact, "recommended", "false") == "true");
+
+        _suppressDraftDeliverySelection = true;
+        try
+        {
+            DraftDeliveryContactComboBox.Items.Clear();
+            ComboBoxItem? selectedItem = null;
+            foreach (var contact in contacts)
+            {
+                var label = PrivateContactLabel(contact);
+                if (string.IsNullOrWhiteSpace(label)) label = "未命名联系人";
+                var recommended = GetString(contact, "recommended", "false") == "true";
+                var item = new ComboBoxItem
+                {
+                    Content = recommended ? $"{label}（推荐）" : label,
+                    Tag = contact.Clone(),
+                };
+                DraftDeliveryContactComboBox.Items.Add(item);
+                if (!string.IsNullOrWhiteSpace(selectedKey)
+                    && string.Equals(PrivateContactKey(contact), selectedKey, StringComparison.Ordinal))
+                {
+                    selectedItem = item;
+                }
+            }
+            DraftDeliveryContactComboBox.SelectedItem = selectedItem;
+        }
+        finally
+        {
+            _suppressDraftDeliverySelection = false;
+        }
+
+        DraftDeliveryContactHintText.Text = contacts.Count == 0
+            ? "没有找到已有私信联系人，当前无法通过私信发送。"
+            : recommendedCount > 0
+                ? $"共 {contacts.Count} 个联系人，其中 {recommendedCount} 个与课程或老师信息匹配；仍需由你确认收件人。"
+                : $"共 {contacts.Count} 个联系人，未找到明确匹配项，请手动选择老师。";
+    }
+
+    private void RenderDraftDeliveryPreview(JsonElement preview, string target)
+    {
+        var subject = GetString(preview, "subjectName", "未知课程");
+        var taskTitle = GetString(preview, "taskTitle", "未知作业");
+        var taskId = GetString(preview, "taskId", "-");
+        var destination = GetString(preview, "destination", target == "task" ? "伴学邦作业提交" : "伴学邦私信老师");
+        var summaryLines = new List<string>
+        {
+            $"课程：{subject}",
+            $"作业：{taskTitle}",
+            $"Task ID：{taskId}",
+            $"目标：{destination}",
+        };
+
+        if (target == "task")
+        {
+            summaryLines.Add($"提交方式：{GetString(preview, "modeLabel", "提交")}");
+            var attachmentNames = ReadArray(preview, "retainedAttachments")
+                .Select(attachment => FirstString(attachment, "fileName", "name"))
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .ToList();
+            if (attachmentNames.Count > 0)
+            {
+                summaryLines.Add($"保留已有附件：{string.Join("、", attachmentNames)}");
+            }
+        }
+        else
+        {
+            var contactLabel = preview.TryGetProperty("selectedContact", out var contact)
+                && contact.ValueKind == JsonValueKind.Object
+                    ? PrivateContactLabel(contact)
+                    : "尚未选择";
+            summaryLines.Add($"联系人：{contactLabel}");
+            summaryLines.Add($"分条数量：{GetString(preview, "chunkCount", "0")}");
+        }
+
+        DraftDeliverySummaryText.Text = string.Join(Environment.NewLine, summaryLines);
+        DraftDeliveryContentTextBox.Text = target == "task"
+            ? GetString(preview, "draftText", "")
+            : GetString(preview, "messageText", "");
+
+        var notices = new[] { GetString(preview, "reason", ""), GetString(preview, "note", "") }
+            .Where(value => !string.IsNullOrWhiteSpace(value));
+        DraftDeliveryStatusText.Text = string.Join(Environment.NewLine, notices);
+        DraftDeliveryChunksPanel.Children.Clear();
+
+        if (target == "teacher_private_message" && preview.TryGetProperty("chunks", out var chunks) && chunks.ValueKind == JsonValueKind.Array)
+        {
+            var rows = chunks.EnumerateArray().ToList();
+            if (rows.Count > 0)
+            {
+                DraftDeliveryChunksPanel.Children.Add(new TextBlock
+                {
+                    Text = "分条发送预览",
+                    FontSize = 16,
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                });
+            }
+            foreach (var chunk in rows)
+            {
+                var item = new StackPanel { Spacing = 5 };
+                item.Children.Add(new TextBlock
+                {
+                    Text = $"第 {GetString(chunk, "index", "-")}/{GetString(chunk, "total", rows.Count.ToString())} 条",
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                });
+                item.Children.Add(new TextBlock
+                {
+                    Text = GetString(chunk, "text", ""),
+                    TextWrapping = TextWrapping.WrapWholeWords,
+                    IsTextSelectionEnabled = true,
+                });
+                DraftDeliveryChunksPanel.Children.Add(new Border
+                {
+                    Padding = new Thickness(10),
+                    CornerRadius = new CornerRadius(6),
+                    BorderThickness = new Thickness(1),
+                    BorderBrush = ThemeBrush("CardStrokeColorDefaultBrush"),
+                    Child = item,
+                });
+            }
+        }
+
+        var canConfirm = target == "task"
+            ? GetString(preview, "canSubmit", "false") == "true"
+            : GetString(preview, "canSend", "false") == "true";
+        DetailPrimaryButton.Content = target == "task" ? "确认并提交" : "确认并分条发送";
+        DetailPrimaryButton.IsEnabled = canConfirm;
+        DraftDeliveryStatusText.Text = string.IsNullOrWhiteSpace(DraftDeliveryStatusText.Text) && canConfirm
+            ? "请核对以上信息，确认后将执行实际发送。"
+            : DraftDeliveryStatusText.Text;
+        DraftDeliveryScrollViewer.ChangeView(null, 0, null, disableAnimation: true);
     }
 
     private async Task ConfirmDraftPrivateMessageAsync()
@@ -2654,20 +2941,35 @@ public sealed partial class MainWindow : Window
         if (!_selectedDraft.HasValue || !_draftMessagePreview.HasValue) return;
         if (!_draftMessagePreview.Value.TryGetProperty("selectedContact", out var contact))
         {
-            SetStatus("没有选中私信联系人。第一版 WinUI 先使用自动匹配联系人。");
+            DraftDeliveryStatusText.Text = "请先选择私信联系人。";
             return;
         }
-        var result = await ToolAsync("send_approved_draft_private_message", new
+        DetailPrimaryButton.IsEnabled = false;
+        DraftDeliveryTargetComboBox.IsEnabled = false;
+        DraftDeliveryContactComboBox.IsEnabled = false;
+        DraftDeliveryStatusText.Text = "正在分条发送私信...";
+        try
         {
-            draft_id = GetString(_selectedDraft.Value, "draftId", ""),
-            contact,
-            confirmation_token = GetString(_draftMessagePreview.Value, "confirmationToken", ""),
-        });
-        _draftMessagePreview = null;
-        var draft = result.TryGetProperty("draft", out var inner) ? inner : result;
-        _selectedDraft = draft.Clone();
-        ShowDraft(draft);
-        await LoadDraftsAsync("all");
+            var result = await ToolAsync("send_approved_draft_private_message", new
+            {
+                draft_id = GetString(_selectedDraft.Value, "draftId", ""),
+                contact,
+                confirmation_token = GetString(_draftMessagePreview.Value, "confirmationToken", ""),
+            });
+            _draftMessagePreview = null;
+            var draft = result.TryGetProperty("draft", out var inner) ? inner : result;
+            _selectedDraft = draft.Clone();
+            ShowDraft(draft);
+            await LoadDraftsAsync("all");
+        }
+        catch (Exception error)
+        {
+            DraftDeliveryStatusText.Text = $"私信发送失败：{CleanErrorMessage(error.Message)}";
+            DetailPrimaryButton.IsEnabled = true;
+            DraftDeliveryTargetComboBox.IsEnabled = true;
+            DraftDeliveryContactComboBox.IsEnabled = true;
+            App.LogException(error);
+        }
     }
 
     private async Task LoadModelOptionsAsync()
@@ -4129,19 +4431,22 @@ public sealed partial class MainWindow : Window
 
     private void ShowDraft(JsonElement draft)
     {
+        _draftDeliveryMode = false;
+        var status = GetString(draft, "status", "");
         DetailTitleText.Text = GetString(draft, "taskTitle", $"任务 {GetString(draft, "taskId", "")}");
         DetailPrimaryButton.Content = "准备提交/私信";
+        DetailPrimaryButton.IsEnabled = status == "approved";
         DetailSecondaryButton.Content = "驳回";
         SetDraftActionButtons(true);
         DetailTextBox.Visibility = Visibility.Collapsed;
         EditorTextBox.Visibility = Visibility.Visible;
+        DraftDeliveryScrollViewer.Visibility = Visibility.Collapsed;
         HomeworkDetailScrollViewer.Visibility = Visibility.Collapsed;
         PrivateThreadListView.Visibility = Visibility.Collapsed;
         DetailImageScrollViewer.Visibility = Visibility.Collapsed;
         DetailDocumentWebView.Visibility = Visibility.Collapsed;
         DetailDocumentWebView.Source = new Uri("about:blank");
         EditorTextBox.Text = GetString(draft, "draftText", "");
-        var status = GetString(draft, "status", "");
         var retentionNotice = status == "rejected" ? " · 将在驳回 24 小时后自动删除" : "";
         SetStatus($"{FormatDraftStatus(status)} · {GetString(draft, "subjectName", "未知课程")} · 创建于 {FormatDraftCreatedAt(draft)}{retentionNotice}");
     }
@@ -4400,6 +4705,7 @@ public sealed partial class MainWindow : Window
     {
         DetailTextBox.Visibility = Visibility.Visible;
         EditorTextBox.Visibility = Visibility.Collapsed;
+        DraftDeliveryScrollViewer.Visibility = Visibility.Collapsed;
         HomeworkDetailScrollViewer.Visibility = Visibility.Collapsed;
         HomeworkDetailStackPanel.Children.Clear();
         PrivateThreadListView.Visibility = Visibility.Collapsed;
@@ -4414,6 +4720,7 @@ public sealed partial class MainWindow : Window
     private void SetDraftActionButtons(bool visible)
     {
         if (_currentPage != "drafts") return;
+        DraftManagementActionPanel.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
         DetailPrimaryButton.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
         DetailSecondaryButton.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
     }
@@ -4548,22 +4855,9 @@ public sealed partial class MainWindow : Window
         _ => string.IsNullOrWhiteSpace(status) ? "未知" : status,
     };
 
-    private static string FormatDraftSubmitPreview(JsonElement preview)
-    {
-        return $"提交预览\n目标：{FirstString(preview, "modeLabel", "targetLabel")}\n可提交：{GetString(preview, "canSubmit", "false")}\n\n{FirstString(preview, "text", "draftText", "submissionText")}\n\n{FormatJson(preview)}";
-    }
-
-    private static string FormatDraftPrivatePreview(JsonElement preview)
-    {
-        var chunks = preview.TryGetProperty("chunks", out var value) && value.ValueKind == JsonValueKind.Array
-            ? string.Join("\n\n", value.EnumerateArray().Select((chunk, index) => $"第 {index + 1} 条\n{chunk}"))
-            : "";
-        return $"私信预览\n联系人：{(preview.TryGetProperty("selectedContact", out var contact) ? PrivateContactLabel(contact) : "未选择")}\n可发送：{GetString(preview, "canSend", "false")}\n\n{chunks}\n\n{FormatJson(preview)}";
-    }
-
     private static string PrivateContactKey(JsonElement contact)
     {
-        return FirstString(contact, "id", "peerId", "userId", "teacherId", "contactId", "roomId", "conversationId", "peerName", "name", "userName");
+        return FirstString(contact, "contactKey", "id", "peerId", "userId", "teacherId", "contactId", "roomId", "conversationId", "peerName", "name", "userName");
     }
 
     private static string PrivateContactLabel(JsonElement contact)
