@@ -22,6 +22,7 @@ The active frontend is the WinUI app in `apps/windows/winui/`. The Electron + Re
 - Step 2 shows the returned model IDs in a single dropdown and saves the selected model together with the Base URL and API Key.
 - Moving forward slides the complete first-step content out to the left while the second-step content enters from the right; moving back uses the reverse transition. Keep the card frame, status area, and skip action stationary during the animation.
 - Show connection, loading, empty-list, and save errors inside the setup view without exposing the API Key.
+- Provide a low-emphasis `还没有 API Key？查看获取教程` link above the skip action. It opens the published DeepSeek API Key tutorial in the system browser and is disabled while setup is busy or transitioning.
 - Provide a low-emphasis `跳过指引` link below the form. Skipping opens the app without saving credentials or suppressing the guide on a later launch.
 
 ## Navigation

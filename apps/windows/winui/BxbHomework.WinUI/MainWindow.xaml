@@ -1046,12 +1046,21 @@
                             TextWrapping="Wrap" />
                     </Grid>
 
-                    <HyperlinkButton
-                        x:Name="ModelSetupSkipButton"
+                    <StackPanel
                         Grid.Row="2"
                         HorizontalAlignment="Center"
-                        Click="OnModelSetupSkipClick"
-                        Content="跳过指引" />
+                        Spacing="2">
+                        <HyperlinkButton
+                            x:Name="ModelSetupApiKeyHelpButton"
+                            HorizontalAlignment="Center"
+                            Click="OnModelSetupApiKeyHelpClick"
+                            Content="还没有 API Key？查看获取教程" />
+                        <HyperlinkButton
+                            x:Name="ModelSetupSkipButton"
+                            HorizontalAlignment="Center"
+                            Click="OnModelSetupSkipClick"
+                            Content="跳过指引" />
+                    </StackPanel>
                 </Grid>
             </Border>
         </Grid>

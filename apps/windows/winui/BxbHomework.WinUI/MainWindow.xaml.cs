@@ -53,6 +53,7 @@ internal sealed record ModelProviderPreset(string Type, string Name, string Base
 public sealed partial class MainWindow : Window
 {
     private const string BanxuebangCredentialResource = "com.grayxy.bxbhomework.banxuebang";
+    private const string ApiKeyTutorialUrl = "https://www.bilibili.com/opus/1248657725804511251";
     private const int MaxAgentInputImages = 8;
     private const long MaxAgentInputImageBytes = 25L * 1024 * 1024;
     private static readonly JsonSerializerOptions PrettyJsonOptions = new() { WriteIndented = true };
@@ -257,6 +258,7 @@ public sealed partial class MainWindow : Window
         _modelSetupTransitioning = true;
         ModelSetupCredentialsPanel.IsHitTestVisible = false;
         ModelSetupModelPanel.IsHitTestVisible = false;
+        ModelSetupApiKeyHelpButton.IsEnabled = false;
         ModelSetupSkipButton.IsEnabled = false;
 
         var outgoing = showModelSelection ? ModelSetupCredentialsPanel : ModelSetupModelPanel;
@@ -295,6 +297,7 @@ public sealed partial class MainWindow : Window
         var interactive = !_modelSetupRunning;
         ModelSetupCredentialsPanel.IsHitTestVisible = interactive;
         ModelSetupModelPanel.IsHitTestVisible = interactive;
+        ModelSetupApiKeyHelpButton.IsEnabled = interactive;
         ModelSetupSkipButton.IsEnabled = interactive;
     }
 
@@ -325,6 +328,7 @@ public sealed partial class MainWindow : Window
         ModelSetupCredentialsPanel.Opacity = busy ? 0.65 : 1;
         ModelSetupModelPanel.IsHitTestVisible = !busy && !_modelSetupTransitioning;
         ModelSetupModelPanel.Opacity = busy ? 0.65 : 1;
+        ModelSetupApiKeyHelpButton.IsEnabled = !busy && !_modelSetupTransitioning;
         ModelSetupSkipButton.IsEnabled = !busy && !_modelSetupTransitioning;
         ModelSetupProgressRing.IsActive = busy;
         ModelSetupProgressRing.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
@@ -457,6 +461,25 @@ public sealed partial class MainWindow : Window
         ModelSetupApiKeyBox.Password = "";
         CompleteStartup();
         SetStatus("已跳过模型配置，可稍后在设置中完成");
+    }
+
+    private async void OnModelSetupApiKeyHelpClick(object sender, RoutedEventArgs args)
+    {
+        if (_modelSetupRunning || _modelSetupTransitioning) return;
+
+        try
+        {
+            var launched = await Launcher.LaunchUriAsync(new Uri(ApiKeyTutorialUrl));
+            if (!launched)
+            {
+                ModelSetupStatusText.Text = "无法打开 API Key 获取教程，请稍后重试。";
+            }
+        }
+        catch (Exception error)
+        {
+            ModelSetupStatusText.Text = "无法打开 API Key 获取教程，请稍后重试。";
+            App.LogException(error);
+        }
     }
 
     private void CompleteStartup()
