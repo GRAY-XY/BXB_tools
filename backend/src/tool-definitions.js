@@ -618,7 +618,7 @@ export function createToolDefinitions(client) {
         task_title: z.string().optional().describe("Task title."),
         draft_text: z
           .string()
-          .describe("Concise, natural draft body that fully answers the task. Plain text only: no Markdown, HTML, LaTeX delimiters, assistant commentary, or template-style opening/closing."),
+          .describe("Concise, natural draft body that fully answers the task in its original order and format. Match length to the requested action, match classifications to definitions in the task, and retain full numerical precision until final rounding. Plain text only: no Markdown, HTML, LaTeX delimiters, assistant commentary, template-style opening/closing, or typeset math symbols. Use keyboard notation such as x^2, sqrt(x), *, /, <=, theta, and 21.8 degrees."),
         summary: z.string().optional().describe("Short summary of what the draft tries to do."),
         evidence: z
           .array(z.any())
@@ -704,7 +704,7 @@ export function createToolDefinitions(client) {
         draft_id: z.string().describe("Draft id returned by draft_task_submission."),
         draft_text: z
           .string()
-          .describe("Complete replacement draft body. Plain text only: no Markdown, HTML, LaTeX delimiters, assistant commentary, or template-style opening/closing."),
+          .describe("Complete replacement draft body in the task's original order and format. Match length to the requested action, match classifications to definitions in the task, and retain full numerical precision until final rounding. Plain text only: no Markdown, HTML, LaTeX delimiters, assistant commentary, template-style opening/closing, or typeset math symbols. Use keyboard notation such as x^2, sqrt(x), *, /, <=, theta, and 21.8 degrees."),
         summary: z.string().optional().describe("Optional updated draft summary."),
       },
       execute: async ({ draft_id: draftId, draft_text: draftText, summary }) =>
