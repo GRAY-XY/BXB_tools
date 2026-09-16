@@ -469,7 +469,7 @@ The desktop Agent currently receives the safe read/draft helper subset:
 
 `run_python_snippet` is time-limited and output-limited, but it is not a full security sandbox. It should be used for short calculations or small deterministic transformations only.
 
-Agent draft edits must supply the complete replacement `draft_text`. Editing any undelivered draft returns it to `pending_review` and clears prior review metadata. Submission, private-message sending, approval, rejection, and deletion tools remain unavailable to the Agent.
+Agent draft edits must supply the complete replacement `draft_text`. The Generation 08 G8A draft policy preserves original task order and formatting, matches answer length to command verbs, resolves classifications against definitions provided by the task, and retains full numerical precision until final rounding. Draft creation and editing schemas reinforce ordinary keyboard math notation such as `x^2`, `sqrt(x)`, `*`, `/`, `<=`, `theta`, `x1`, and `21.8 degrees`; typeset mathematical glyphs should not be generated unless explicitly required by the task. Editing any undelivered draft returns it to `pending_review` and clears prior review metadata. Submission, private-message sending, approval, rejection, and deletion tools remain unavailable to the Agent.
 
 `web_search` runs through the local Playwright browser, defaults to Bing, and does not require the user to configure a search API key. `read_web_page` should be used only for a selected result when the Agent needs page-level detail.
 

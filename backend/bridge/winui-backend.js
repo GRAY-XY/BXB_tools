@@ -1387,7 +1387,7 @@ function safeToolSchemas() {
           task_id: { type: "string" },
           subject_name: { type: "string" },
           task_title: { type: "string" },
-          draft_text: { type: "string", description: "满足题目要求的简洁自然正文。只能使用纯文本，不得包含 Markdown、HTML、LaTeX 定界符、助手说明或模板化开场结尾。" },
+          draft_text: { type: "string", description: "按原题顺序和格式完成的简洁自然正文。篇幅与题目要求的动作匹配，分类以题目材料定义为准，计算保留完整精度到最后一步再舍入。只能使用纯文本，不得包含 Markdown、HTML、LaTeX 定界符、助手说明、模板化开场结尾或特殊排版数学符号；使用 x^2、sqrt(x)、*、/、<=、theta、21.8 度等普通键盘写法。" },
           summary: { type: "string" },
           warnings: { type: "array", items: { type: "string" } },
           missing_info: { type: "array", items: { type: "string" } },
@@ -1416,7 +1416,7 @@ function safeToolSchemas() {
         type: "object",
         properties: {
           draft_id: { type: "string" },
-          draft_text: { type: "string", description: "修改后的完整草稿正文。只能使用纯文本，不得包含 Markdown、HTML、LaTeX 定界符、助手说明或模板化开场结尾。" },
+          draft_text: { type: "string", description: "按原题顺序和格式提供修改后的完整草稿正文。篇幅与题目要求的动作匹配，分类以题目材料定义为准，计算保留完整精度到最后一步再舍入。只能使用纯文本，不得包含 Markdown、HTML、LaTeX 定界符、助手说明、模板化开场结尾或特殊排版数学符号；使用 x^2、sqrt(x)、*、/、<=、theta、21.8 度等普通键盘写法。" },
           summary: { type: "string", description: "可选的简短草稿摘要。" },
         },
         required: ["draft_id", "draft_text"],
