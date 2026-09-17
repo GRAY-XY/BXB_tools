@@ -119,6 +119,9 @@ public sealed partial class MainWindow : Window
     private bool _deleteProviderArmed;
     private bool _homeHasSavedCredential;
     private bool _homeLoginRunning;
+    private string _homePendingTaskTermId = "";
+    private int? _homePendingTaskCount;
+    private int _homePendingTaskRequestVersion;
     private bool _startupComplete;
     private bool _startupInitializing;
     private bool _modelSetupRunning;
@@ -490,6 +493,7 @@ public sealed partial class MainWindow : Window
         StartupOverlay.Visibility = Visibility.Collapsed;
         ModelSetupOverlay.Visibility = Visibility.Collapsed;
         SetStatus("Ready");
+        if (_currentPage == "home") _ = RefreshHomePendingTaskCountAsync(_pageLoadVersion);
     }
 
     private void OnNavigationSelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
@@ -536,6 +540,7 @@ public sealed partial class MainWindow : Window
                 default:
                     RenderHome();
                     await RefreshSessionAsync();
+                    await RefreshHomePendingTaskCountAsync(loadVersion);
                     break;
             }
         }
@@ -834,19 +839,82 @@ public sealed partial class MainWindow : Window
         }
 
         var value = session.Value;
-        var ready = GetString(value, "ready", "false") == "true" ? "已登录" : "未登录";
+        var sessionReady = GetString(value, "ready", "false") == "true";
+        var ready = sessionReady ? "已登录" : "未登录";
         var user = GetString(value, "user.name", "未知用户");
         var className = GetString(value, "currentClass.name", "未知班级");
         var subject = GetString(value, "currentSubject.name", "未知课程");
         var term = CurrentTermLabel(value);
-        var pending = GetString(value, "currentSubject.unSubmitCount", "0");
+        var termId = GetString(value, "currentTermId", "");
         HomeSessionStatusText.Text = ready;
         HomeUserText.Text = user;
         HomeScopeText.Text = $"{className} · {subject}";
-        HomePendingTaskText.Text = pending;
+        HomePendingTaskText.Text = !sessionReady
+            ? "-"
+            : _homePendingTaskCount.HasValue && _homePendingTaskTermId == termId
+                ? _homePendingTaskCount.Value.ToString()
+                : "读取中";
         HomeTermText.Text = string.IsNullOrWhiteSpace(term) ? "未知学期" : term;
         UpdateHomeCredentialStatus();
         PopulateHomeTermCombo(value);
+    }
+
+    private void InvalidateHomePendingTaskCount()
+    {
+        _homePendingTaskRequestVersion++;
+        _homePendingTaskTermId = "";
+        _homePendingTaskCount = null;
+        if (_currentPage == "home") HomePendingTaskText.Text = "读取中";
+    }
+
+    private async Task RefreshHomePendingTaskCountAsync(int loadVersion = 0)
+    {
+        loadVersion = loadVersion == 0 ? _pageLoadVersion : loadVersion;
+        if (!IsCurrentPageLoad("home", loadVersion)) return;
+        if (!_session.HasValue || GetString(_session.Value, "ready", "false") != "true")
+        {
+            InvalidateHomePendingTaskCount();
+            HomePendingTaskText.Text = "-";
+            return;
+        }
+
+        var expectedTermId = GetString(_session.Value, "currentTermId", "");
+        if (string.IsNullOrWhiteSpace(expectedTermId))
+        {
+            InvalidateHomePendingTaskCount();
+            HomePendingTaskText.Text = "-";
+            return;
+        }
+
+        var requestVersion = ++_homePendingTaskRequestVersion;
+        HomePendingTaskText.Text = "读取中";
+        try
+        {
+            var result = await InvokeAsync("home:pending-count");
+            if (!IsCurrentPageLoad("home", loadVersion) || requestVersion != _homePendingTaskRequestVersion) return;
+
+            var resultTermId = GetString(result, "currentTermId", "");
+            if (!string.Equals(resultTermId, expectedTermId, StringComparison.Ordinal)) return;
+            if (!int.TryParse(GetString(result, "pendingTaskCount", ""), out var count) || count < 0)
+            {
+                throw new InvalidOperationException("待处理作业接口没有返回有效数量。");
+            }
+
+            _homePendingTaskTermId = resultTermId;
+            _homePendingTaskCount = count;
+            HomePendingTaskText.Text = count.ToString();
+        }
+        catch (Exception error)
+        {
+            if (IsCurrentPageLoad("home", loadVersion) && requestVersion == _homePendingTaskRequestVersion)
+            {
+                _homePendingTaskTermId = "";
+                _homePendingTaskCount = null;
+                HomePendingTaskText.Text = "读取失败";
+                SetStatus("待处理作业数量读取失败");
+            }
+            App.LogException(error);
+        }
     }
 
     private void PopulateHomeTermCombo(JsonElement session)
@@ -1764,6 +1832,7 @@ public sealed partial class MainWindow : Window
             {
                 case "home":
                     await RefreshSessionAsync();
+                    await RefreshHomePendingTaskCountAsync();
                     break;
                 case "agent":
                     await SendAgentAsync();
@@ -3288,8 +3357,10 @@ public sealed partial class MainWindow : Window
         await RunUiAsync(async () =>
         {
             if (_currentPage != "home" || HomeTermComboBox.SelectedItem is not ComboItem item) return;
+            InvalidateHomePendingTaskCount();
             await ToolAsync("set_current_term", new { term_id = item.Key });
             await RefreshSessionAsync();
+            await RefreshHomePendingTaskCountAsync();
             SetStatus($"已切换学期：{item.Label}");
         });
     }
@@ -3339,6 +3410,7 @@ public sealed partial class MainWindow : Window
             }
 
             await RefreshSessionAsync();
+            await RefreshHomePendingTaskCountAsync();
             var credentialMessage = "";
             if (HomeRememberCredentialCheckBox.IsChecked == true)
             {
@@ -3477,8 +3549,10 @@ public sealed partial class MainWindow : Window
         await RunUiAsync(async () =>
         {
             if (_currentPage != "home") return;
+            InvalidateHomePendingTaskCount();
             await ToolAsync("refresh_context");
             await RefreshSessionAsync();
+            await RefreshHomePendingTaskCountAsync();
             SetStatus("学期列表已刷新");
         });
     }

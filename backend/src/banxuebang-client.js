@@ -1809,6 +1809,75 @@ export class BanxuebangClient {
     };
   }
 
+  async getPendingHomeworkSummary({ pageSize = 100 } = {}) {
+    const session = await this.requireSession();
+    await this.refreshContext(session);
+
+    const { currTermId, subjectList } = session.context;
+    if (!currTermId) {
+      throw new Error("Current session does not have a term selected.");
+    }
+
+    const subjects = toArray(subjectList).filter((subject) => subject?.id && subject?.classId);
+    const normalizedPageSize = Math.min(Math.max(Number(pageSize) || 100, 1), 100);
+    const pendingTasks = [];
+    let reportedTotalRecords = 0;
+
+    const readSubject = async (subject) => {
+      const rows = [];
+      const readPage = async (page) => this.queryHomeworkForSubject(session, subject, {
+        listType: "pending",
+        page,
+        size: normalizedPageSize,
+      });
+      const firstPage = await readPage(1);
+      rows.push(...toArray(firstPage.pendingHomeworkList));
+
+      const totalRecords = Number(firstPage.totalRecords);
+      const normalizedTotal = Number.isFinite(totalRecords) && totalRecords >= 0
+        ? totalRecords
+        : rows.length;
+      const pageCount = Math.ceil(normalizedTotal / normalizedPageSize);
+      for (let page = 2; page <= pageCount; page += 1) {
+        const nextPage = await readPage(page);
+        const nextRows = toArray(nextPage.pendingHomeworkList);
+        rows.push(...nextRows);
+        if (nextRows.length === 0) break;
+      }
+      return { rows, totalRecords: normalizedTotal };
+    };
+
+    const maxConcurrentCourses = 4;
+    for (let offset = 0; offset < subjects.length; offset += maxConcurrentCourses) {
+      const batch = await Promise.all(
+        subjects.slice(offset, offset + maxConcurrentCourses).map(readSubject),
+      );
+      for (const result of batch) {
+        pendingTasks.push(...result.rows);
+        reportedTotalRecords += result.totalRecords;
+      }
+    }
+
+    const uniqueTaskIds = new Set();
+    let tasksWithoutId = 0;
+    for (const task of pendingTasks) {
+      const taskId = normalizeId(task?.id || task?.activityId || task?.taskId);
+      if (taskId) {
+        uniqueTaskIds.add(taskId);
+      } else {
+        tasksWithoutId += 1;
+      }
+    }
+
+    return {
+      pendingTaskCount: uniqueTaskIds.size + tasksWithoutId,
+      reportedTotalRecords,
+      courseCount: subjects.length,
+      currentTermId: normalizeId(currTermId),
+      countedAt: new Date().toISOString(),
+    };
+  }
+
   async listTasks(options = {}) {
     const {
       termId,

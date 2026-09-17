@@ -222,7 +222,21 @@ Recommended summary fields:
 - Class name: `session.currentClass.name`
 - Current term: active term by `session.currentTermId`
 - Number of courses: `session.availableSubjects.length`
-- Pending count: sum `unSubmitCount` from `session.availableSubjects` when available.
+- Pending count: call the WinUI bridge method `home:pending-count`. It refreshes the current-term course list, paginates each course's `pending` homework, and deduplicates the result by Task ID.
+
+```ts
+type HomePendingCount = {
+  pendingTaskCount: number;
+  reportedTotalRecords: number;
+  courseCount: number;
+  currentTermId: string;
+  countedAt: string;
+};
+
+const summary = await invoke<HomePendingCount>("home:pending-count");
+```
+
+The home page should display `读取中` while this call is running and `读取失败` if it cannot produce a valid count. A per-course `currentSubject.unSubmitCount` is not a valid all-course fallback.
 
 ## Generic Tool Call
 

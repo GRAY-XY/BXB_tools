@@ -70,6 +70,7 @@ Required content:
 Rules:
 
 - Do not show the current course on the home page.
+- Resolve the pending homework count independently of `currentSubject`: refresh the current-term course list, page through every course's `pending` homework, deduplicate records by Task ID, and show the resulting total. Use explicit loading and failure states instead of falling back to a stale per-course `unSubmitCount`.
 - Do not render raw `session_status` JSON in normal UI.
 - Never persist the Banxuebang account or password in JSON configuration, app data files, project files, backend logs, or diagnostics.
 - Only write saved credentials after a successful login. A failed credential save must not turn an otherwise successful login into a failed session.
