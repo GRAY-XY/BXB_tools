@@ -2430,6 +2430,7 @@ async function handleRequest(request, emitProgress) {
   }
   if (method === "tool.call" || method === "bxb:tool") return callTool(String(params.name || ""), params.args || {});
   if (method === "session.status" || method === "bxb:session") return callTool("session_status", {});
+  if (method === "home.pendingCount" || method === "home:pending-count") return client.getPendingHomeworkSummary();
   if (method === "modelConfig.load" || method === "config:model:load") return loadModelConfig();
   if (method === "modelConfig.save" || method === "config:model:save") return saveModelConfig(params.config || params);
   if (method === "modelConfig.providerCreate" || method === "config:model:provider:create") return createModelProvider(params.config || params);
