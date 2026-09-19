@@ -1,0 +1,425 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		B10000000000000000000001 /* BXBHomeworkApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80000000000000000000001 /* BXBHomeworkApp.swift */; };
+		B10000000000000000000002 /* AppSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80000000000000000000002 /* AppSection.swift */; };
+		B10000000000000000000003 /* AppShellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80000000000000000000003 /* AppShellView.swift */; };
+		B10000000000000000000004 /* FeaturePlaceholderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80000000000000000000004 /* FeaturePlaceholderView.swift */; };
+		B10000000000000000000005 /* OverviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80000000000000000000005 /* OverviewView.swift */; };
+		B10000000000000000000006 /* JSONValue.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80000000000000000000006 /* JSONValue.swift */; };
+		B10000000000000000000007 /* NodeBackendClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80000000000000000000007 /* NodeBackendClient.swift */; };
+		B10000000000000000000008 /* BackendModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80000000000000000000008 /* BackendModels.swift */; };
+		B10000000000000000000009 /* BackendConnectionModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80000000000000000000009 /* BackendConnectionModel.swift */; };
+		B1000000000000000000000A /* KeychainCredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8000000000000000000000C /* KeychainCredentialStore.swift */; };
+		B1000000000000000000000B /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8000000000000000000000D /* LoginView.swift */; };
+		B1000000000000000000000C /* HomeworkModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8000000000000000000000E /* HomeworkModels.swift */; };
+		B1000000000000000000000D /* HomeworkViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8000000000000000000000F /* HomeworkViewModel.swift */; };
+		B1000000000000000000000E /* HomeworkView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80000000000000000000010 /* HomeworkView.swift */; };
+		B1000000000000000000000F /* WorkspaceModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80000000000000000000012 /* WorkspaceModels.swift */; };
+		B10000000000000000000010 /* WorkspaceViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80000000000000000000013 /* WorkspaceViewModel.swift */; };
+		B10000000000000000000011 /* WorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80000000000000000000014 /* WorkspaceView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		A40000000000000000000001 /* BXB Homework.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "BXB Homework.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		A80000000000000000000001 /* BXBHomeworkApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BXBHomeworkApp.swift; sourceTree = "<group>"; };
+		A80000000000000000000002 /* AppSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSection.swift; sourceTree = "<group>"; };
+		A80000000000000000000003 /* AppShellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppShellView.swift; sourceTree = "<group>"; };
+		A80000000000000000000004 /* FeaturePlaceholderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeaturePlaceholderView.swift; sourceTree = "<group>"; };
+		A80000000000000000000005 /* OverviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverviewView.swift; sourceTree = "<group>"; };
+		A80000000000000000000006 /* JSONValue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONValue.swift; sourceTree = "<group>"; };
+		A80000000000000000000007 /* NodeBackendClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NodeBackendClient.swift; sourceTree = "<group>"; };
+		A80000000000000000000008 /* BackendModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendModels.swift; sourceTree = "<group>"; };
+		A80000000000000000000009 /* BackendConnectionModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendConnectionModel.swift; sourceTree = "<group>"; };
+		A8000000000000000000000A /* macos-backend.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "macos-backend.js"; sourceTree = "<group>"; };
+		A8000000000000000000000B /* BackendBridgeSmoke.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendBridgeSmoke.swift; sourceTree = "<group>"; };
+		A8000000000000000000000C /* KeychainCredentialStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainCredentialStore.swift; sourceTree = "<group>"; };
+		A8000000000000000000000D /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
+		A8000000000000000000000E /* HomeworkModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeworkModels.swift; sourceTree = "<group>"; };
+		A8000000000000000000000F /* HomeworkViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeworkViewModel.swift; sourceTree = "<group>"; };
+		A80000000000000000000010 /* HomeworkView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeworkView.swift; sourceTree = "<group>"; };
+		A80000000000000000000011 /* HomeworkParsingSmoke.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeworkParsingSmoke.swift; sourceTree = "<group>"; };
+		A80000000000000000000012 /* WorkspaceModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceModels.swift; sourceTree = "<group>"; };
+		A80000000000000000000013 /* WorkspaceViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceViewModel.swift; sourceTree = "<group>"; };
+		A80000000000000000000014 /* WorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceView.swift; sourceTree = "<group>"; };
+		A80000000000000000000015 /* WorkspaceParsingSmoke.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceParsingSmoke.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		D20000000000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A20000000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				A50000000000000000000001 /* BXBHomework */,
+				A50000000000000000000005 /* Runtime */,
+				A30000000000000000000001 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A30000000000000000000001 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A40000000000000000000001 /* BXB Homework.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		A50000000000000000000001 /* BXBHomework */ = {
+			isa = PBXGroup;
+			children = (
+				A50000000000000000000002 /* App */,
+				A50000000000000000000003 /* Features */,
+				A50000000000000000000004 /* Shared */,
+			);
+			path = BXBHomework;
+			sourceTree = "<group>";
+		};
+		A50000000000000000000002 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				A80000000000000000000001 /* BXBHomeworkApp.swift */,
+				A80000000000000000000002 /* AppSection.swift */,
+				A80000000000000000000003 /* AppShellView.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		A50000000000000000000003 /* Features */ = {
+			isa = PBXGroup;
+			children = (
+				A80000000000000000000004 /* FeaturePlaceholderView.swift */,
+				A80000000000000000000005 /* OverviewView.swift */,
+				A8000000000000000000000D /* LoginView.swift */,
+				A8000000000000000000000E /* HomeworkModels.swift */,
+				A8000000000000000000000F /* HomeworkViewModel.swift */,
+				A80000000000000000000010 /* HomeworkView.swift */,
+				A80000000000000000000012 /* WorkspaceModels.swift */,
+				A80000000000000000000013 /* WorkspaceViewModel.swift */,
+				A80000000000000000000014 /* WorkspaceView.swift */,
+			);
+			path = Features;
+			sourceTree = "<group>";
+		};
+		A50000000000000000000004 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				A80000000000000000000006 /* JSONValue.swift */,
+				A80000000000000000000007 /* NodeBackendClient.swift */,
+				A80000000000000000000008 /* BackendModels.swift */,
+				A80000000000000000000009 /* BackendConnectionModel.swift */,
+				A8000000000000000000000C /* KeychainCredentialStore.swift */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		A50000000000000000000005 /* Runtime */ = {
+			isa = PBXGroup;
+			children = (
+				A8000000000000000000000A /* macos-backend.js */,
+				A8000000000000000000000B /* BackendBridgeSmoke.swift */,
+				A80000000000000000000011 /* HomeworkParsingSmoke.swift */,
+				A80000000000000000000015 /* WorkspaceParsingSmoke.swift */,
+			);
+			path = Runtime;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		C10000000000000000000001 /* BXBHomework */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F30000000000000000000001 /* Build configuration list for PBXNativeTarget "BXBHomework" */;
+			buildPhases = (
+				D10000000000000000000001 /* Sources */,
+				D20000000000000000000001 /* Frameworks */,
+				D30000000000000000000001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = BXBHomework;
+			productName = "BXB Homework";
+			productReference = A40000000000000000000001 /* BXB Homework.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A10000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2700;
+				LastUpgradeCheck = 2700;
+				TargetAttributes = {
+					C10000000000000000000001 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+				};
+			};
+			buildConfigurationList = E30000000000000000000001 /* Build configuration list for PBXProject "BXBHomework" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A20000000000000000000001;
+			productRefGroup = A30000000000000000000001 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				C10000000000000000000001 /* BXBHomework */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		D30000000000000000000001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		D10000000000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B10000000000000000000001 /* BXBHomeworkApp.swift in Sources */,
+				B10000000000000000000002 /* AppSection.swift in Sources */,
+				B10000000000000000000003 /* AppShellView.swift in Sources */,
+				B10000000000000000000004 /* FeaturePlaceholderView.swift in Sources */,
+				B10000000000000000000005 /* OverviewView.swift in Sources */,
+				B10000000000000000000006 /* JSONValue.swift in Sources */,
+				B10000000000000000000007 /* NodeBackendClient.swift in Sources */,
+				B10000000000000000000008 /* BackendModels.swift in Sources */,
+				B10000000000000000000009 /* BackendConnectionModel.swift in Sources */,
+				B1000000000000000000000A /* KeychainCredentialStore.swift in Sources */,
+				B1000000000000000000000B /* LoginView.swift in Sources */,
+				B1000000000000000000000C /* HomeworkModels.swift in Sources */,
+				B1000000000000000000000D /* HomeworkViewModel.swift in Sources */,
+				B1000000000000000000000E /* HomeworkView.swift in Sources */,
+				B1000000000000000000000F /* WorkspaceModels.swift in Sources */,
+				B10000000000000000000010 /* WorkspaceViewModel.swift in Sources */,
+				B10000000000000000000011 /* WorkspaceView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		E10000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		E20000000000000000000001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		F10000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "BXB Homework";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.education";
+				INFOPLIST_KEY_NSHighResolutionCapable = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.grayxy.bxbhomework.macos;
+				PRODUCT_NAME = "BXB Homework";
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		F20000000000000000000001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "BXB Homework";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.education";
+				INFOPLIST_KEY_NSHighResolutionCapable = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.grayxy.bxbhomework.macos;
+				PRODUCT_NAME = "BXB Homework";
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		E30000000000000000000001 /* Build configuration list for PBXProject "BXBHomework" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E10000000000000000000001 /* Debug */,
+				E20000000000000000000001 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		F30000000000000000000001 /* Build configuration list for PBXNativeTarget "BXBHomework" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F10000000000000000000001 /* Debug */,
+				F20000000000000000000001 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A10000000000000000000001 /* Project object */;
+}
