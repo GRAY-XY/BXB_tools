@@ -35,6 +35,18 @@ without a Banxuebang login. Text files use the bounded backend reader; images,
 PDF, DOCX, audio, video, and other supported local formats use macOS Quick Look.
 Import, rename, and delete actions are not connected yet.
 
+The native draft review center works without a Banxuebang login. It lists and
+filters local submission drafts, shows review warnings and missing information,
+and supports local plain-text edits plus explicit approve/reject confirmations.
+Approving a draft never submits an assignment or sends a private message; all
+delivery actions remain disconnected.
+
+The native assistant page reads local conversations and model configuration,
+supports creating and selecting conversations, and can send text prompts through
+the shared agent backend. This first increment displays the completed response
+and saved execution steps; live token streaming and image attachments are not
+connected yet.
+
 ## Bridge smoke test
 
 Compile and run the bridge smoke test from the repository root:
@@ -70,4 +82,27 @@ xcrun swiftc -parse-as-library \
   apps/macos/swiftui/Runtime/WorkspaceParsingSmoke.swift \
   -o /tmp/bxb-workspace-parsing-smoke
 /tmp/bxb-workspace-parsing-smoke
+```
+
+Draft list and detail parsing has an account-free smoke test as well:
+
+```sh
+xcrun swiftc -parse-as-library \
+  apps/macos/swiftui/BXBHomework/Shared/JSONValue.swift \
+  apps/macos/swiftui/BXBHomework/Features/DraftModels.swift \
+  apps/macos/swiftui/Runtime/DraftParsingSmoke.swift \
+  -o /tmp/bxb-draft-parsing-smoke
+/tmp/bxb-draft-parsing-smoke
+```
+
+Assistant conversation and model-summary parsing can be verified without a
+configured model:
+
+```sh
+xcrun swiftc -parse-as-library \
+  apps/macos/swiftui/BXBHomework/Shared/JSONValue.swift \
+  apps/macos/swiftui/BXBHomework/Features/AssistantModels.swift \
+  apps/macos/swiftui/Runtime/AssistantParsingSmoke.swift \
+  -o /tmp/bxb-assistant-parsing-smoke
+/tmp/bxb-assistant-parsing-smoke
 ```

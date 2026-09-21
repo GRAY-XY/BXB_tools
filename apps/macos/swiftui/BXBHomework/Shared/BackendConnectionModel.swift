@@ -115,4 +115,11 @@ final class BackendConnectionModel {
             ]
         )
     }
+
+    func invoke(
+        _ method: String,
+        params: [String: JSONValue] = [:]
+    ) async throws -> JSONValue {
+        try await client.invoke(method, params: params)
+    }
 }
