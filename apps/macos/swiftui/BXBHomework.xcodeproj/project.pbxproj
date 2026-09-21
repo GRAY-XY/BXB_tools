@@ -24,6 +24,12 @@
 		B1000000000000000000000F /* WorkspaceModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80000000000000000000012 /* WorkspaceModels.swift */; };
 		B10000000000000000000010 /* WorkspaceViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80000000000000000000013 /* WorkspaceViewModel.swift */; };
 		B10000000000000000000011 /* WorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80000000000000000000014 /* WorkspaceView.swift */; };
+		B10000000000000000000012 /* DraftModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80000000000000000000016 /* DraftModels.swift */; };
+		B10000000000000000000013 /* DraftViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80000000000000000000017 /* DraftViewModel.swift */; };
+		B10000000000000000000014 /* DraftReviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80000000000000000000018 /* DraftReviewView.swift */; };
+		B10000000000000000000015 /* AssistantModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8000000000000000000001A /* AssistantModels.swift */; };
+		B10000000000000000000016 /* AssistantViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8000000000000000000001B /* AssistantViewModel.swift */; };
+		B10000000000000000000017 /* AssistantView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8000000000000000000001C /* AssistantView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -49,6 +55,14 @@
 		A80000000000000000000013 /* WorkspaceViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceViewModel.swift; sourceTree = "<group>"; };
 		A80000000000000000000014 /* WorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceView.swift; sourceTree = "<group>"; };
 		A80000000000000000000015 /* WorkspaceParsingSmoke.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceParsingSmoke.swift; sourceTree = "<group>"; };
+		A80000000000000000000016 /* DraftModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DraftModels.swift; sourceTree = "<group>"; };
+		A80000000000000000000017 /* DraftViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DraftViewModel.swift; sourceTree = "<group>"; };
+		A80000000000000000000018 /* DraftReviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DraftReviewView.swift; sourceTree = "<group>"; };
+		A80000000000000000000019 /* DraftParsingSmoke.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DraftParsingSmoke.swift; sourceTree = "<group>"; };
+		A8000000000000000000001A /* AssistantModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantModels.swift; sourceTree = "<group>"; };
+		A8000000000000000000001B /* AssistantViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantViewModel.swift; sourceTree = "<group>"; };
+		A8000000000000000000001C /* AssistantView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantView.swift; sourceTree = "<group>"; };
+		A8000000000000000000001D /* AssistantParsingSmoke.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantParsingSmoke.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -111,6 +125,12 @@
 				A80000000000000000000012 /* WorkspaceModels.swift */,
 				A80000000000000000000013 /* WorkspaceViewModel.swift */,
 				A80000000000000000000014 /* WorkspaceView.swift */,
+				A80000000000000000000016 /* DraftModels.swift */,
+				A80000000000000000000017 /* DraftViewModel.swift */,
+				A80000000000000000000018 /* DraftReviewView.swift */,
+				A8000000000000000000001A /* AssistantModels.swift */,
+				A8000000000000000000001B /* AssistantViewModel.swift */,
+				A8000000000000000000001C /* AssistantView.swift */,
 			);
 			path = Features;
 			sourceTree = "<group>";
@@ -134,6 +154,8 @@
 				A8000000000000000000000B /* BackendBridgeSmoke.swift */,
 				A80000000000000000000011 /* HomeworkParsingSmoke.swift */,
 				A80000000000000000000015 /* WorkspaceParsingSmoke.swift */,
+				A80000000000000000000019 /* DraftParsingSmoke.swift */,
+				A8000000000000000000001D /* AssistantParsingSmoke.swift */,
 			);
 			path = Runtime;
 			sourceTree = "<group>";
@@ -222,6 +244,12 @@
 				B1000000000000000000000F /* WorkspaceModels.swift in Sources */,
 				B10000000000000000000010 /* WorkspaceViewModel.swift in Sources */,
 				B10000000000000000000011 /* WorkspaceView.swift in Sources */,
+				B10000000000000000000012 /* DraftModels.swift in Sources */,
+				B10000000000000000000013 /* DraftViewModel.swift in Sources */,
+				B10000000000000000000014 /* DraftReviewView.swift in Sources */,
+				B10000000000000000000015 /* AssistantModels.swift in Sources */,
+				B10000000000000000000016 /* AssistantViewModel.swift in Sources */,
+				B10000000000000000000017 /* AssistantView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

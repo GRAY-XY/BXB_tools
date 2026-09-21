@@ -18,8 +18,12 @@ struct AppShellView: View {
                 OverviewView()
             case .homework:
                 HomeworkView()
+            case .assistant:
+                AssistantView()
             case .workspace:
                 WorkspaceView()
+            case .review:
+                DraftReviewView()
             case .some(let selection):
                 FeaturePlaceholderView(section: selection)
             case .none:
