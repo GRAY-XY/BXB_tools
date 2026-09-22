@@ -176,6 +176,49 @@ test("folders can be renamed but never onto an existing name", async (context) =
   assert.equal(await fs.readFile(path.join(workspace, "draft-v2", "a.txt"), "utf8"), "a");
 });
 
+test("renaming a folder never appends an extension while files keep theirs", async (context) => {
+  const { workspace, client } = await createClient(context, "workspace-rename-extension");
+  await fs.mkdir(path.join(workspace, "My.Notes"));
+  await fs.writeFile(path.join(workspace, "draft.md"), "draft", "utf8");
+
+  const folder = await client.renameWorkspaceFile({ file: "My.Notes", newName: "notes" });
+  assert.equal(folder.file.relativePath, "notes");
+  assert.equal(folder.file.isDirectory, true);
+
+  const file = await client.renameWorkspaceFile({ file: "draft.md", newName: "final" });
+  assert.equal(file.file.relativePath, "final.md");
+  assert.equal(await fs.readFile(path.join(workspace, "final.md"), "utf8"), "draft");
+});
+
+test("search reaches matches beyond the max_files window", async (context) => {
+  const { workspace, client } = await createClient(context, "workspace-search-window");
+  await fs.mkdir(path.join(workspace, "deep", "nested"), { recursive: true });
+  for (let index = 0; index < 6; index += 1) {
+    await fs.writeFile(path.join(workspace, `noise-${index}.txt`), "noise", "utf8");
+  }
+  await fs.writeFile(path.join(workspace, "deep", "nested", "needle.md"), "found", "utf8");
+
+  // The limit applies to matches, not to the entries that happen to be scanned
+  // first, so a small window must still find a deeply nested match.
+  const limited = await client.listWorkspaceFiles({ query: "needle", maxFiles: 2 });
+  assert.deepEqual(limited.files.map((file) => file.relativePath), ["deep/nested/needle.md"]);
+
+  await fs.writeFile(path.join(workspace, "needle-2.md"), "second", "utf8");
+  await fs.writeFile(path.join(workspace, "needle-3.md"), "third", "utf8");
+  const capped = await client.listWorkspaceFiles({ query: "needle", maxFiles: 2 });
+  assert.equal(capped.files.length, 2);
+
+  const folders = await client.listWorkspaceFiles({
+    query: "deep",
+    maxFiles: 10,
+    includeDirectories: true,
+  });
+  assert.deepEqual(
+    folders.files.map((file) => file.relativePath).sort(),
+    ["deep", "deep/nested", "deep/nested/needle.md"],
+  );
+});
+
 test("workspace paths cannot escape through parent or absolute references", async (context) => {
   const { root, workspace, client } = await createClient(context, "workspace-escape");
   await fs.writeFile(path.join(root, "outside.txt"), "outside", "utf8");

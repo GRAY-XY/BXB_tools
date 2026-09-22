@@ -94,6 +94,8 @@ struct WorkspaceParsingSmoke {
             WorkspaceNameValidator.extensionHint(for: "draft", originalExtension: ".md")?.contains("draft.md") == true
         )
         precondition(WorkspaceNameValidator.extensionHint(for: "draft.txt", originalExtension: ".md") == nil)
+        // Folders pass an empty extension, so they never advertise a kept one.
+        precondition(WorkspaceNameValidator.extensionHint(for: "notes", originalExtension: "") == nil)
 
         let restored = WorkspaceSelection.restoredID(for: files[0], in: files)
         precondition(restored == files[0].id)

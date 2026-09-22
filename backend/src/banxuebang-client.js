@@ -989,7 +989,7 @@ function parseBingRssResults(xml, maxResults) {
 
 async function listWorkspaceEntries(
   rootDir,
-  { maxEntries = 200, includeDirectories = false, currentDir = rootDir } = {},
+  { maxEntries = 200, includeDirectories = false, query = "", currentDir = rootDir } = {},
 ) {
   let entries;
   try {
@@ -1009,18 +1009,29 @@ async function listWorkspaceEntries(
     }
 
     const entryPath = path.join(currentDir, entry.name);
+    const relativePath = path.relative(rootDir, entryPath).replaceAll("\\", "/");
+    const matchesQuery =
+      !query ||
+      entry.name.toLowerCase().includes(query) ||
+      relativePath.toLowerCase().includes(query);
+
     if (entry.isDirectory()) {
-      if (includeDirectories) {
+      if (includeDirectories && matchesQuery) {
         results.push({ path: entryPath, isDirectory: true });
       }
-      const nested = await listWorkspaceEntries(rootDir, {
-        maxEntries: maxEntries - results.length,
-        includeDirectories,
-        currentDir: entryPath,
-      });
-      results.push(...nested);
+      if (results.length < maxEntries) {
+        const nested = await listWorkspaceEntries(rootDir, {
+          maxEntries: maxEntries - results.length,
+          includeDirectories,
+          query,
+          currentDir: entryPath,
+        });
+        results.push(...nested);
+      }
     } else if (entry.isFile()) {
-      results.push({ path: entryPath, isDirectory: false });
+      if (matchesQuery) {
+        results.push({ path: entryPath, isDirectory: false });
+      }
     }
   }
 
@@ -1293,6 +1304,7 @@ export class BanxuebangClient {
     const entries = await listWorkspaceEntries(workspaceDir, {
       maxEntries: limit,
       includeDirectories: includeDirectories === true,
+      query: normalizedQuery,
     });
     const files = [];
 
@@ -1305,13 +1317,6 @@ export class BanxuebangClient {
         continue;
       }
       const summary = summarizeLocalFile(entry.path, workspaceDir, fileStat);
-      if (
-        normalizedQuery &&
-        !summary.name.toLowerCase().includes(normalizedQuery) &&
-        !summary.relativePath.toLowerCase().includes(normalizedQuery)
-      ) {
-        continue;
-      }
       files.push(summary);
     }
 
@@ -1340,7 +1345,11 @@ export class BanxuebangClient {
     const entry = await this.resolveWorkspaceEntry(file);
     const oldPath = entry.path;
     const safeName = validateWorkspaceFileName(newName);
-    const nextName = path.extname(safeName) ? safeName : `${safeName}${path.extname(oldPath)}`;
+    // Only files inherit the previous extension; a folder keeps the typed name
+    // even when it contains a dot.
+    const nextName = path.extname(safeName) || entry.fileStat.isDirectory()
+      ? safeName
+      : `${safeName}${path.extname(oldPath)}`;
     const nextPath = path.join(path.dirname(oldPath), nextName);
     await this.assertWorkspaceTargetPath(nextPath);
 
