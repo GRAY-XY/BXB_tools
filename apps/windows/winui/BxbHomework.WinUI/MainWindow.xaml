@@ -802,8 +802,22 @@
                                     </StackPanel>
                                 </Grid>
                                 <TextBlock x:Name="SettingsUpdateNotesText" TextWrapping="WrapWholeWords" />
+                                <StackPanel x:Name="SettingsUpdateProgressPanel" Spacing="6" Visibility="Collapsed">
+                                    <Grid ColumnSpacing="8">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock x:Name="SettingsUpdateProgressMessageText" Text="正在下载安装包..." TextWrapping="Wrap" />
+                                        <TextBlock x:Name="SettingsUpdateProgressPercentText" Grid.Column="1" FontWeight="SemiBold" />
+                                    </Grid>
+                                    <ProgressBar x:Name="SettingsUpdateProgressBar" Minimum="0" Maximum="100" Value="0" />
+                                    <TextBlock x:Name="SettingsUpdateProgressBytesText" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                </StackPanel>
+                                <TextBlock x:Name="SettingsUpdateErrorText" TextWrapping="Wrap" Visibility="Collapsed" />
                                 <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <Button Content="检查更新" Click="OnSettingsCheckUpdatesClick" />
+                                    <Button x:Name="SettingsCheckUpdatesButton" Content="检查更新" Click="OnSettingsCheckUpdatesClick" />
+                                    <Button x:Name="SettingsUpdateActionButton" Content="下载并安装" Click="OnSettingsUpdateActionClick" Style="{StaticResource AccentButtonStyle}" Visibility="Collapsed" />
                                     <Button Content="打开 Release 页面" Click="OnSettingsOpenReleaseClick" />
                                 </StackPanel>
                             </StackPanel>

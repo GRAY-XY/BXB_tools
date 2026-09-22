@@ -117,6 +117,11 @@ public sealed partial class MainWindow : Window
     private bool _suppressSettingsThemeCombo;
     private bool _suppressSettingsImageCaptionEnabled;
     private bool _deleteProviderArmed;
+    private bool _settingsUpdateActionRunning;
+    private bool _settingsUpdateCanDownload;
+    private string _settingsUpdateStatus = "idle";
+    private string _settingsUpdateReleaseUrl = "";
+    private JsonElement? _settingsUpdateSnapshot;
     private bool _homeHasSavedCredential;
     private bool _homeLoginRunning;
     private string _homePendingTaskTermId = "";
@@ -1599,6 +1604,7 @@ public sealed partial class MainWindow : Window
 
     private void ApplyUpdateStatus(JsonElement update)
     {
+        _settingsUpdateSnapshot = update.Clone();
         var updateDetail = update;
         if (update.TryGetProperty("update", out var nested) && nested.ValueKind == JsonValueKind.Object)
         {
@@ -1607,7 +1613,15 @@ public sealed partial class MainWindow : Window
 
         var currentVersion = _appInfo.HasValue ? GetString(_appInfo.Value, "version", "unknown") : "unknown";
         var latestVersion = FirstString(updateDetail, "latestVersion", "version", "tagName", "tag_name");
-        var status = FirstString(update, "status", "message");
+        var hasUpdate = GetString(updateDetail, "hasUpdate", "false") == "true";
+        var isSuccessful = GetString(update, "ok", "") != "false";
+        var status = FirstString(update, "status");
+        if (string.IsNullOrWhiteSpace(status))
+        {
+            status = hasUpdate ? "available" : isSuccessful ? "idle" : "error";
+        }
+        _settingsUpdateStatus = status;
+        _settingsUpdateReleaseUrl = FirstString(updateDetail, "latestUrl", "releasesUrl");
         SettingsVersionBadgeText.Text = $"v{currentVersion}";
         SettingsCurrentVersionText.Text = currentVersion;
         SettingsLatestVersionText.Text = string.IsNullOrWhiteSpace(latestVersion) ? "-" : latestVersion;
@@ -1616,14 +1630,49 @@ public sealed partial class MainWindow : Window
         var title = FirstString(updateDetail, "latestTitle", "name", "title");
         var publishedAt = FirstString(updateDetail, "publishedAt", "published_at");
         var assetName = FirstString(updateDetail, "installerAsset.name", "assetName");
-        var assetSize = FirstString(updateDetail, "installerAsset.size", "assetSize", "size");
+        var assetSize = ParseLong(updateDetail, "installerAsset.size", "assetSize", "size");
         var notes = FirstString(updateDetail, "latestNotes", "body", "message");
         SettingsUpdateNotesText.Text = string.Join("\n", new[] {
             title,
             string.IsNullOrWhiteSpace(publishedAt) ? "" : $"发布时间：{publishedAt}",
-            string.IsNullOrWhiteSpace(assetName) ? "" : $"安装包：{assetName}{(string.IsNullOrWhiteSpace(assetSize) ? "" : $" · {assetSize}")}",
+            string.IsNullOrWhiteSpace(assetName) ? "" : $"安装包：{assetName}{(assetSize <= 0 ? "" : $" · {FormatByteCount(assetSize)}")}",
             notes,
         }.Where(value => !string.IsNullOrWhiteSpace(value)));
+
+        var downloadedBytes = ParseLong(update, "downloadedBytes");
+        var totalBytes = ParseLong(update, "totalBytes");
+        var percent = Math.Clamp(ParseDouble(update, "percent"), 0, 100);
+        var message = FirstString(update, "message");
+        var showProgress = status is "downloading" or "verifying" or "ready_to_install" or "installing";
+        SettingsUpdateProgressPanel.Visibility = showProgress ? Visibility.Visible : Visibility.Collapsed;
+        SettingsUpdateProgressMessageText.Text = string.IsNullOrWhiteSpace(message)
+            ? status == "verifying" ? "正在校验安装包..." : status == "ready_to_install" ? "更新已下载并通过校验。" : "正在下载安装包..."
+            : message;
+        SettingsUpdateProgressBar.IsIndeterminate = status is "verifying" or "installing" || (status == "downloading" && totalBytes <= 0);
+        SettingsUpdateProgressBar.Value = status == "ready_to_install" ? 100 : percent;
+        SettingsUpdateProgressPercentText.Text = SettingsUpdateProgressBar.IsIndeterminate ? "" : $"{Math.Round(SettingsUpdateProgressBar.Value):0}%";
+        SettingsUpdateProgressBytesText.Text = downloadedBytes > 0 || totalBytes > 0
+            ? totalBytes > 0 ? $"{FormatByteCount(downloadedBytes)} / {FormatByteCount(totalBytes)}" : FormatByteCount(downloadedBytes)
+            : "";
+
+        var hasInstaller = !string.IsNullOrWhiteSpace(FirstString(updateDetail, "installerAsset.downloadUrl"));
+        var hasChecksum = !string.IsNullOrWhiteSpace(FirstString(updateDetail, "sha256Asset.downloadUrl"));
+        _settingsUpdateCanDownload = hasUpdate && hasInstaller && hasChecksum;
+        var updateError = status == "error"
+            ? message
+            : hasUpdate && !_settingsUpdateCanDownload
+                ? "当前 Release 缺少安装包或 SHA256 校验文件，请打开 Release 页面手动更新。"
+                : "";
+        SettingsUpdateErrorText.Text = updateError;
+        SettingsUpdateErrorText.Visibility = string.IsNullOrWhiteSpace(updateError) ? Visibility.Collapsed : Visibility.Visible;
+        var canRetryDownload = status == "error" && _settingsUpdateCanDownload;
+        var showAction = status == "ready_to_install" || (status == "available" && _settingsUpdateCanDownload) || canRetryDownload;
+        SettingsUpdateActionButton.Visibility = showAction ? Visibility.Visible : Visibility.Collapsed;
+        SettingsUpdateActionButton.Content = status == "ready_to_install"
+            ? "现在重启安装"
+            : canRetryDownload ? "重新下载" : "下载并安装";
+        SettingsUpdateActionButton.IsEnabled = !_settingsUpdateActionRunning && showAction;
+        SettingsCheckUpdatesButton.IsEnabled = !_settingsUpdateActionRunning && status is not "downloading" and not "verifying" and not "installing";
     }
 
     private void RenderSettingsPaths()
@@ -3100,9 +3149,84 @@ public sealed partial class MainWindow : Window
 
     private async Task CheckUpdatesAsync()
     {
-        var result = await InvokeAsync("update:check");
-        ApplyUpdateStatus(result);
-        SetStatus("更新检查完成");
+        if (_settingsUpdateActionRunning) return;
+        _settingsUpdateActionRunning = true;
+        SettingsCheckUpdatesButton.IsEnabled = false;
+        SettingsUpdateActionButton.IsEnabled = false;
+        SettingsUpdateStatusText.Text = "检查中";
+        try
+        {
+            var result = await InvokeAsync("update:check");
+            ApplyUpdateStatus(result);
+            SetStatus(GetString(result, "ok", "false") == "true" ? "更新检查完成" : FirstString(result, "message"));
+        }
+        finally
+        {
+            _settingsUpdateActionRunning = false;
+            if (_settingsUpdateSnapshot.HasValue) ApplyUpdateStatus(_settingsUpdateSnapshot.Value);
+        }
+    }
+
+    private async Task DownloadUpdateAsync()
+    {
+        if (_settingsUpdateActionRunning) return;
+        _settingsUpdateActionRunning = true;
+        SettingsCheckUpdatesButton.IsEnabled = false;
+        SettingsUpdateActionButton.IsEnabled = false;
+        try
+        {
+            var downloadTask = InvokeAsync("update:download");
+            while (!downloadTask.IsCompleted)
+            {
+                await Task.WhenAny(downloadTask, Task.Delay(250));
+                if (downloadTask.IsCompleted) break;
+                var progress = await InvokeAsync("update:status");
+                ApplyUpdateStatus(progress);
+            }
+
+            var result = await downloadTask;
+            ApplyUpdateStatus(result);
+            SetStatus(FirstString(result, "message"));
+        }
+        finally
+        {
+            _settingsUpdateActionRunning = false;
+            if (_settingsUpdateSnapshot.HasValue) ApplyUpdateStatus(_settingsUpdateSnapshot.Value);
+        }
+    }
+
+    private async Task InstallUpdateAsync()
+    {
+        if (_settingsUpdateActionRunning || !await ConfirmUpdateInstallAsync()) return;
+        _settingsUpdateActionRunning = true;
+        SettingsCheckUpdatesButton.IsEnabled = false;
+        SettingsUpdateActionButton.IsEnabled = false;
+        try
+        {
+            var result = await InvokeAsync("update:install");
+            ApplyUpdateStatus(result);
+            SetStatus(FirstString(result, "message"));
+            await Task.Delay(100);
+            Application.Current.Exit();
+        }
+        finally
+        {
+            _settingsUpdateActionRunning = false;
+        }
+    }
+
+    private async Task<bool> ConfirmUpdateInstallAsync()
+    {
+        var dialog = new ContentDialog
+        {
+            XamlRoot = RootNavigation.XamlRoot,
+            Title = "重启并安装更新",
+            Content = "BXB Homework 将关闭并启动安装器。安装器会覆盖当前版本，完成后自动重新打开新版本。",
+            PrimaryButtonText = "重启安装",
+            CloseButtonText = "稍后",
+            DefaultButton = ContentDialogButton.Close,
+        };
+        return await dialog.ShowAsync() == ContentDialogResult.Primary;
     }
 
     private void OnSettingsPathSelectionChanged(object sender, SelectionChangedEventArgs args)
@@ -3183,9 +3307,22 @@ public sealed partial class MainWindow : Window
         await RunUiAsync(CheckUpdatesAsync);
     }
 
+    private async void OnSettingsUpdateActionClick(object sender, RoutedEventArgs args)
+    {
+        if (_settingsUpdateStatus == "ready_to_install")
+        {
+            await RunUiAsync(InstallUpdateAsync);
+            return;
+        }
+        if ((_settingsUpdateStatus is "available" or "error") && _settingsUpdateCanDownload)
+        {
+            await RunUiAsync(DownloadUpdateAsync);
+        }
+    }
+
     private async void OnSettingsOpenReleaseClick(object sender, RoutedEventArgs args)
     {
-        await RunUiAsync(async () => await InvokeAsync("update:open-url"));
+        await RunUiAsync(async () => await InvokeAsync("update:open-url", new { url = _settingsUpdateReleaseUrl }));
     }
 
     private void OnSettingsModelSelectionChanged(object sender, SelectionChangedEventArgs args)
@@ -4674,6 +4811,42 @@ public sealed partial class MainWindow : Window
     private static string GetString(JsonElement? root, string path, string fallback)
     {
         return root.HasValue ? GetString(root.Value, path, fallback) : fallback;
+    }
+
+    private static long ParseLong(JsonElement root, params string[] paths)
+    {
+        foreach (var path in paths)
+        {
+            if (long.TryParse(GetString(root, path, ""), out var value)) return value;
+        }
+        return 0;
+    }
+
+    private static double ParseDouble(JsonElement root, params string[] paths)
+    {
+        foreach (var path in paths)
+        {
+            if (double.TryParse(
+                GetString(root, path, ""),
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out var value)) return value;
+        }
+        return 0;
+    }
+
+    private static string FormatByteCount(long bytes)
+    {
+        if (bytes <= 0) return "0 B";
+        string[] units = ["B", "KB", "MB", "GB"];
+        var value = (double)bytes;
+        var unitIndex = 0;
+        while (value >= 1024 && unitIndex < units.Length - 1)
+        {
+            value /= 1024;
+            unitIndex += 1;
+        }
+        return $"{value:0.##} {units[unitIndex]}";
     }
 
     private static string NewAgentMessageId() => Guid.NewGuid().ToString("N");

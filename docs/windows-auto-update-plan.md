@@ -1,6 +1,6 @@
 # Windows Auto Update Plan
 
-This document records the Windows in-app updater design and baseline implementation. The release page remains the manual fallback.
+This document records the implemented Windows in-app updater. The release page remains the manual fallback.
 
 ## Target User Flow
 
@@ -10,7 +10,7 @@ This document records the Windows in-app updater design and baseline implementat
 4. The user clicks `下载并安装`.
 5. The app downloads the `.exe` installer into the local update cache.
 6. The app verifies file size and SHA256.
-7. The app shows `现在重启安装` and `稍后`.
+7. The app shows `现在重启安装`; closing Settings or leaving it untouched is equivalent to choosing later.
 8. If the user confirms, the app starts the installer and quits.
 9. The installer overwrites the current version.
 10. After installation, the installer starts the new version.
@@ -66,11 +66,11 @@ updates/
 
 Always download to `.download` first. Rename to `.exe` only after verification succeeds.
 
-## Main Process IPC
+## Desktop Backend Methods
 
-Implement update work in Electron main process, not the renderer.
+Update work runs in the trusted desktop backend, not in the WinUI page. WinUI calls the backend through `NodeBackendClient`.
 
-Suggested IPC handlers:
+Backend methods:
 
 ```text
 update:check
@@ -80,7 +80,7 @@ update:cancel
 update:status
 ```
 
-Suggested preload API:
+The legacy Electron client exposes equivalent preload methods:
 
 ```js
 window.bxb.checkForUpdates()
@@ -117,7 +117,7 @@ type UpdateState = {
 
 1. `checkForUpdates()` finds the matching installer asset and SHA256 asset.
 2. `downloadUpdate()` downloads the installer to `.download`.
-3. Progress is pushed to the renderer.
+3. WinUI polls `update:status` while the download request is active and renders the returned bytes and percentage in a progress bar. The legacy Electron client receives equivalent progress events.
 4. Verify actual bytes match GitHub asset size.
 5. Verify SHA256 matches the `.sha256` asset.
 6. Rename `.download` to `.exe`.
@@ -128,24 +128,13 @@ If verification fails, delete the downloaded file and require a fresh download.
 
 ## Install And Restart
 
-When the user clicks `现在重启安装`:
+When the user clicks `现在重启安装`, WinUI asks for confirmation and calls `update:install`. The backend starts a detached hidden PowerShell helper that waits briefly before launching the verified installer. WinUI then exits, so the installer can replace files that were in use.
 
-```js
-const { spawn } = require("node:child_process");
+The installer runs in normal interactive mode. After a successful copy, it removes `pending-update.json` and starts `BXBHomework.exe`. Silent `/S` installs skip automatic launch so local packaging and deployment scripts remain deterministic.
 
-const child = spawn(installerPath, [], {
-  detached: true,
-  stdio: "ignore",
-});
-child.unref();
-app.quit();
-```
+## Installer Configuration
 
-Start with normal installer mode. Only add silent mode after real installation tests confirm it is reliable.
-
-## NSIS Configuration
-
-To make the app launch after installation, add or verify this in `apps/legacy/electron/package.json` for the legacy Electron package:
+The current WinUI installer is defined in `apps/windows/winui/installer/winui-installer.nsi`. Its install section performs the restart for normal installs. The legacy Electron package still uses this NSIS setting:
 
 ```json
 "nsis": {
@@ -158,7 +147,7 @@ To make the app launch after installation, add or verify this in `apps/legacy/el
 }
 ```
 
-This must be tested with a real installed old version. If `runAfterFinish` does not restart the app for one-click installs, use a helper process or NSIS custom script later.
+Every release still needs a real old-version-to-new-version installation test because file locking, antivirus and installer elevation can affect replacement behavior.
 
 ## Safety Rules
 
@@ -169,12 +158,6 @@ This must be tested with a real installed old version. If `runAfterFinish` does 
 - Do not execute arbitrary user-provided URLs.
 - Keep `打开 Release 页面` as a fallback.
 
-## Implementation Order
+## Implemented Baseline
 
-1. Add update cache directory and persisted state.
-2. Add in-app download with progress.
-3. Add size verification.
-4. Add SHA256 asset generation and verification.
-5. Add `现在重启安装`.
-6. Add `runAfterFinish`.
-7. Test old-version-to-new-version replacement on a real installed copy.
+The WinUI client now includes the update cache, persisted pending state, in-app progress, size and SHA256 verification, restart confirmation, delayed installer launch and post-install relaunch. A real released old-version-to-new-version test remains required for each release candidate.

@@ -109,7 +109,7 @@ window.bxb.onUpdateProgress(callback: (payload: UpdateState) => void): () => voi
 window.bxb.openUpdateUrl(url: string): Promise<{ ok: true; url: string }>
 ```
 
-The Windows updater checks GitHub Releases, downloads the matched installer into the local update cache, verifies file size and SHA256, then lets the user restart into the installer from inside the app. Keep the release page link as a manual fallback.
+The Windows updater checks GitHub Releases, downloads the matched installer into the local update cache, verifies file size and SHA256, then lets the user restart into the installer from inside the app. WinUI invokes the equivalent `update:check`, `update:status`, `update:download`, and `update:install` backend methods and polls status while downloading. Keep the release page link as a manual fallback.
 
 Windows stable releases are identified by release title, not tag name:
 
@@ -164,7 +164,7 @@ type UpdateState = {
 };
 ```
 
-Application-internal installation requires the release to include a SHA256 asset named like the installer plus `.sha256`, for example `BXB Homework Setup 1.1.7.exe.sha256`.
+Application-internal installation requires the release to include a SHA256 asset named like the installer plus `.sha256`, for example `BXB Homework Setup 1.1.7.exe.sha256`. WinUI must show an in-app confirmation before `update:install`, then exit after the backend has scheduled the verified installer. Normal NSIS installs reopen the app; silent installs do not.
 
 ## Session
 

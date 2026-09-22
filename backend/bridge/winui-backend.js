@@ -106,6 +106,7 @@ let updateState = {
   filePath: null,
   message: "",
 };
+let updateDownloadPromise = null;
 const updateProxyAgents = new Map();
 
 function writeResponse(response) {
@@ -2296,6 +2297,29 @@ function setUpdateState(patch) {
   return publicUpdateState();
 }
 
+function resetUpdateProgress(patch = {}) {
+  return setUpdateState({
+    downloadedBytes: 0,
+    totalBytes: 0,
+    percent: 0,
+    filePath: null,
+    message: "",
+    ...patch,
+  });
+}
+
+function assertUpdateCacheFile(filePath) {
+  const resolved = path.resolve(String(filePath || ""));
+  const root = path.resolve(updateDir);
+  if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) {
+    throw new Error("更新文件不在应用更新缓存目录中。");
+  }
+  if (path.extname(resolved).toLowerCase() !== ".exe") {
+    throw new Error("更新安装器必须是 .exe 文件。");
+  }
+  return resolved;
+}
+
 async function sha256File(filePath) {
   const hash = crypto.createHash("sha256");
   const stream = createReadStream(filePath);
@@ -2310,49 +2334,204 @@ async function downloadText(url) {
   return text;
 }
 
-async function downloadUpdate() {
+async function readSha256Asset(downloadUrl) {
+  const text = await downloadText(downloadUrl);
+  const match = text.match(/[a-fA-F0-9]{64}/);
+  if (!match) throw new Error("SHA256 校验文件格式无效。");
+  return match[0].toLowerCase();
+}
+
+async function writeResponseBodyToFile(response, filePath, totalBytes) {
+  if (!response.body) throw new Error("安装包下载响应没有文件内容。");
+  const output = createWriteStream(filePath);
+  let downloadedBytes = 0;
+  try {
+    for await (const value of response.body) {
+      const chunk = Buffer.from(value);
+      downloadedBytes += chunk.byteLength;
+      if (!output.write(chunk)) {
+        await new Promise((resolve, reject) => {
+          output.once("drain", resolve);
+          output.once("error", reject);
+        });
+      }
+      setUpdateState({
+        downloadedBytes,
+        totalBytes,
+        percent: totalBytes ? Math.min(100, Math.round((downloadedBytes / totalBytes) * 100)) : 0,
+      });
+    }
+  } finally {
+    await new Promise((resolve, reject) => output.end((error) => (error ? reject(error) : resolve())));
+  }
+  return downloadedBytes;
+}
+
+async function checkForUpdatesWithState() {
+  resetUpdateProgress({ status: "checking", update: null, message: "正在检查更新..." });
+  try {
+    const result = await checkForUpdates();
+    setUpdateState({
+      status: result.hasUpdate ? "available" : "idle",
+      update: result.hasUpdate ? result : null,
+      totalBytes: result.installerAsset?.size || 0,
+      message: result.message,
+    });
+    return result;
+  } catch (error) {
+    const currentVersion = await readPackageVersion();
+    const result = {
+      ok: false,
+      currentVersion,
+      currentChannel: "Windows stable",
+      hasUpdate: false,
+      message: error?.message || String(error),
+      releasesUrl: RELEASES_PAGE_URL,
+    };
+    setUpdateState({ status: "error", update: null, message: result.message });
+    return result;
+  }
+}
+
+async function performUpdateDownload() {
   let update = updateState.update;
-  if (!update?.hasUpdate) update = await checkForUpdates();
-  if (!update?.hasUpdate) return setUpdateState({ status: "idle", update: null, message: update.message });
-  if (!update.installerAsset?.downloadUrl || !update.sha256Asset?.downloadUrl) throw new Error("Release 缺少安装包或 SHA256 文件。");
+  if (!update?.hasUpdate) {
+    const checked = await checkForUpdatesWithState();
+    if (!checked?.hasUpdate) return publicUpdateState();
+    update = checked;
+  }
+  if (!update.installerAsset?.downloadUrl || !update.installerAsset?.name) {
+    return setUpdateState({ status: "error", message: "Release 中没有可下载的 Windows 安装包。" });
+  }
+  if (!update.sha256Asset?.downloadUrl) {
+    return setUpdateState({ status: "error", message: "Release 缺少 SHA256 校验文件，不能执行应用内安装。" });
+  }
+
   await fs.mkdir(updateDir, { recursive: true });
   const finalPath = path.join(updateDir, path.basename(update.installerAsset.name).replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_"));
   const tempPath = `${finalPath}.download`;
-  setUpdateState({ status: "downloading", update, filePath: finalPath, totalBytes: update.installerAsset.size || 0, downloadedBytes: 0, percent: 0, message: "正在下载安装包..." });
-  const response = await fetchUpdateUrl(update.installerAsset.downloadUrl, { headers: { "User-Agent": "BXB-Homework-WinUI" } });
-  if (!response.ok) throw new Error(`安装包下载失败 HTTP ${response.status}`);
-  const file = createWriteStream(tempPath);
-  let downloaded = 0;
-  for await (const chunk of response.body) {
-    downloaded += chunk.byteLength;
-    file.write(chunk);
-    setUpdateState({ downloadedBytes: downloaded, percent: update.installerAsset.size ? Math.round((downloaded / update.installerAsset.size) * 100) : 0 });
+  const totalBytes = Number(update.installerAsset.size || 0);
+
+  try {
+    await fs.rm(tempPath, { force: true });
+    resetUpdateProgress({
+      status: "downloading",
+      update,
+      filePath: finalPath,
+      totalBytes,
+      message: "正在下载安装包...",
+    });
+    const response = await fetchUpdateUrl(update.installerAsset.downloadUrl, { headers: { "User-Agent": "BXB-Homework-WinUI" } });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`安装包下载失败 HTTP ${response.status}: ${text.slice(0, 300)}`);
+    }
+
+    const downloadedBytes = await writeResponseBodyToFile(response, tempPath, totalBytes);
+    if (totalBytes && downloadedBytes !== totalBytes) {
+      throw new Error(`安装包大小不匹配：已下载 ${downloadedBytes} 字节，预期 ${totalBytes} 字节。`);
+    }
+
+    setUpdateState({ status: "verifying", message: "正在校验安装包..." });
+    const [expectedSha, actualSha] = await Promise.all([
+      readSha256Asset(update.sha256Asset.downloadUrl),
+      sha256File(tempPath),
+    ]);
+    if (expectedSha !== actualSha) throw new Error("安装包 SHA256 校验失败。");
+
+    await fs.rm(finalPath, { force: true });
+    await fs.rename(tempPath, finalPath);
+    const pending = {
+      version: update.latestVersion,
+      releaseTitle: update.latestTitle,
+      releaseTag: update.latestTag,
+      update,
+      assetName: update.installerAsset.name,
+      size: totalBytes || downloadedBytes,
+      sha256: actualSha,
+      downloadedAt: nowIso(),
+      filePath: finalPath,
+    };
+    await writeJson(pendingUpdatePath, pending);
+    return setUpdateState({
+      status: "ready_to_install",
+      update,
+      downloadedBytes,
+      totalBytes: totalBytes || downloadedBytes,
+      percent: 100,
+      filePath: finalPath,
+      message: "更新已下载并通过校验。",
+    });
+  } catch (error) {
+    await fs.rm(tempPath, { force: true }).catch(() => {});
+    return setUpdateState({ status: "error", message: error?.message || String(error) });
   }
-  await new Promise((resolve, reject) => file.end((error) => (error ? reject(error) : resolve())));
-  const expectedSha = String(await downloadText(update.sha256Asset.downloadUrl)).match(/[a-fA-F0-9]{64}/)?.[0]?.toLowerCase();
-  const actualSha = await sha256File(tempPath);
-  if (expectedSha && expectedSha !== actualSha) throw new Error("安装包 SHA256 校验失败。");
-  await fs.rm(finalPath, { force: true });
-  await fs.rename(tempPath, finalPath);
-  const pending = { version: update.latestVersion, update, size: downloaded, sha256: actualSha, downloadedAt: nowIso(), filePath: finalPath };
-  await writeJson(pendingUpdatePath, pending);
-  return setUpdateState({ status: "ready_to_install", update, downloadedBytes: downloaded, totalBytes: downloaded, percent: 100, filePath: finalPath, message: "更新已下载并通过校验。" });
+}
+
+async function downloadUpdate() {
+  if (!updateDownloadPromise) {
+    updateDownloadPromise = performUpdateDownload().finally(() => {
+      updateDownloadPromise = null;
+    });
+  }
+  return updateDownloadPromise;
 }
 
 async function loadPendingUpdateState() {
-  const pending = await readJson(pendingUpdatePath, null);
-  if (pending?.filePath && existsSync(pending.filePath)) {
-    return setUpdateState({ status: "ready_to_install", update: pending.update || null, downloadedBytes: pending.size || 0, totalBytes: pending.size || 0, percent: 100, filePath: pending.filePath, message: "更新已下载并通过校验。" });
+  if (["checking", "downloading", "verifying", "installing"].includes(updateState.status)) {
+    return publicUpdateState();
   }
-  return publicUpdateState();
+  if (updateState.status === "ready_to_install" && updateState.filePath && existsSync(updateState.filePath)) {
+    return publicUpdateState();
+  }
+
+  const pending = await readJson(pendingUpdatePath, null);
+  if (!pending?.filePath) return publicUpdateState();
+
+  let installerPath;
+  try {
+    installerPath = assertUpdateCacheFile(pending.filePath);
+  } catch (error) {
+    await fs.rm(pendingUpdatePath, { force: true });
+    return resetUpdateProgress({ status: "error", update: null, message: error.message });
+  }
+  if (!existsSync(installerPath)) {
+    await fs.rm(pendingUpdatePath, { force: true });
+    return resetUpdateProgress({ status: "idle", update: null });
+  }
+
+  const currentVersion = await readPackageVersion();
+  if (pending.version && compareAppVersions(pending.version, currentVersion) <= 0) {
+    await fs.rm(pendingUpdatePath, { force: true });
+    return resetUpdateProgress({ status: "idle", update: null, message: "当前已是已下载更新版本。" });
+  }
+
+  return setUpdateState({
+    status: "ready_to_install",
+    update: pending.update || null,
+    downloadedBytes: pending.size || 0,
+    totalBytes: pending.size || 0,
+    percent: 100,
+    filePath: installerPath,
+    message: "更新已下载并通过校验。",
+  });
 }
 
 async function installUpdate() {
   const state = await loadPendingUpdateState();
   if (state.status !== "ready_to_install" || !state.filePath) throw new Error("没有已下载并通过校验的更新安装包。");
-  const child = spawn(state.filePath, [], { detached: true, stdio: "ignore", windowsHide: false });
+  const installerPath = assertUpdateCacheFile(state.filePath);
+  if (!existsSync(installerPath)) throw new Error("更新安装包不存在，请重新下载。");
+
+  const escapedInstallerPath = installerPath.replaceAll("'", "''");
+  const command = `Start-Sleep -Milliseconds 1500; Start-Process -FilePath '${escapedInstallerPath}'`;
+  const child = spawn(
+    "powershell.exe",
+    ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", command],
+    { detached: true, stdio: "ignore", windowsHide: true },
+  );
   child.unref();
-  return setUpdateState({ status: "installing", message: "安装器已启动。" });
+  return setUpdateState({ status: "installing", message: "应用即将退出并启动安装器..." });
 }
 
 async function appPathTargets() {
@@ -2497,9 +2676,7 @@ async function handleRequest(request, emitProgress) {
   if (method === "workspace.imageDataUrl" || method === "workspace:image-data-url") return getWorkspaceImageDataUrl(params.filePath);
   if (method === "workspace.docxPreview" || method === "workspace:docx-preview") return getWorkspaceDocxPreview(params.filePath);
   if (method === "update.check" || method === "update:check") {
-    const result = await checkForUpdates();
-    setUpdateState({ status: result.ok && result.hasUpdate ? "available" : result.ok ? "idle" : "error", update: result.ok && result.hasUpdate ? result : null, message: result.message, totalBytes: result.installerAsset?.size || 0 });
-    return result;
+    return checkForUpdatesWithState();
   }
   if (method === "update.status" || method === "update:status") return loadPendingUpdateState();
   if (method === "update.download" || method === "update:download") return downloadUpdate();
