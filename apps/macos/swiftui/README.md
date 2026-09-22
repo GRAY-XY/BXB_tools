@@ -35,11 +35,12 @@ without a Banxuebang login. Text files use the bounded backend reader; images,
 PDF, DOCX, audio, video, and other supported local formats use macOS Quick Look.
 It also manages the workspace through the shared user-action bridge methods:
 importing files and folders with a native open panel, saving clipboard text as a
-new file, renaming with inline validation, deleting a single confirmed file, and
+new file, renaming with inline validation, deleting a single confirmed item, and
 revealing workspace items in Finder. Import and rename never overwrite an
 existing workspace file; the page reports each conflicting or blocked item
-instead. Deleting always names the target and cannot be undone, and there is no
-batch, wildcard, or recursive delete action.
+instead. The list shows files and folders, and deleting always names the target
+and cannot be undone. A folder is only deletable while it is empty, because the
+app never deletes recursively, and there is no batch or wildcard delete action.
 
 The workspace guard lives in `backend/src/banxuebang-client.js` so the page and
 the assistant share one boundary: every target must resolve inside the

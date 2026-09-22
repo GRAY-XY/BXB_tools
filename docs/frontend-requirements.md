@@ -365,9 +365,10 @@ Native clients (WinUI and macOS) additionally provide:
   validation as rename and the same no-overwrite guarantee.
 - Inline rename with live validation of empty names, path separators, `.`/`..`,
   reserved characters, and same-folder conflicts.
-- Single-target delete behind a dialog that names the file and its relative
-  path, states that it cannot be undone, and re-checks the file identity before
-  removing it.
+- Single-target delete behind a dialog that names the item and its relative
+  path, states that it cannot be undone, and re-checks the item identity before
+  removing it. Files and empty folders can be deleted; a folder that still has
+  content is refused with an explanation.
 - Refresh that keeps the search text and re-selects the previous item by file
   identity, then by relative path, and only clears the selection when the item
   is gone or filtered out. A failed refresh keeps the last good list.

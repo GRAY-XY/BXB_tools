@@ -316,6 +316,10 @@ The WinUI workspace page uses dedicated user-action bridge methods for destructi
 
 Both methods resolve files through the managed workspace boundary. Rename refuses to overwrite an existing file. Delete is intentionally absent from the autonomous Agent tool schema and requires an in-app user confirmation that names the exact target; the optional `expected` fingerprint cancels the delete when the file changed while the dialog was open.
 
+`list_workspace_files` returns files only by default. Pass `include_directories: true` to also receive folder entries (`isDirectory: true`, `category: "directory"`), which is what the macOS workspace browser does so that folders can be selected, renamed, and deleted while empty. Folders can be renamed like files, but `read_workspace_file` on a folder fails with `is_directory`.
+
+Deleting a folder is limited to empty folders: the service calls `rmdir`, never a recursive remove, so a folder that gained a file since the emptiness check fails with `directory_not_empty` instead of being deleted.
+
 Failed workspace operations answer with an `error.code` so a client can explain the problem without parsing message text:
 
 | code | meaning |
@@ -328,7 +332,8 @@ Failed workspace operations answer with an `error.code` so a client can explain 
 | `blocked_special_file` | the item is not a regular file or directory |
 | `target_changed` | the file changed between confirmation and execution |
 | `not_found` | the item could not be resolved |
-| `is_directory` / `directory_not_empty` | folder deletion is not supported |
+| `is_directory` | the target is a folder where a file was expected (reading, or a folder named like the new file) |
+| `directory_not_empty` | the folder still has content, and the service never deletes recursively |
 | `import_too_large` | the folder scan exceeded its entry budget |
 
 An active Agent request can be canceled independently of page navigation:

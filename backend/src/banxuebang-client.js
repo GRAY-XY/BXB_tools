@@ -6,6 +6,7 @@ import {
   readFile,
   realpath,
   rename,
+  rmdir,
   rm,
   stat,
   unlink,
@@ -789,21 +790,23 @@ function summarizeLocalFile(filePath, workspaceDir, fileStat) {
     modifiedAt: fileStat.mtime.toISOString(),
     identity: fileIdentity(fileStat),
     isDirectory: fileStat.isDirectory(),
-    category: IMAGE_EXTENSIONS.has(extension)
-      ? "image"
-      : VIDEO_EXTENSIONS.has(extension)
-        ? "video"
-        : AUDIO_EXTENSIONS.has(extension)
-          ? "audio"
-          : extension === ".pdf"
-            ? "pdf"
-            : extension === ".docx"
-              ? "docx"
-              : extension === ".doc"
-                ? "doc"
-                : TEXT_FILE_EXTENSIONS.has(extension)
-                  ? "text"
-                  : "file",
+    category: fileStat.isDirectory()
+      ? "directory"
+      : IMAGE_EXTENSIONS.has(extension)
+        ? "image"
+        : VIDEO_EXTENSIONS.has(extension)
+          ? "video"
+          : AUDIO_EXTENSIONS.has(extension)
+            ? "audio"
+            : extension === ".pdf"
+              ? "pdf"
+              : extension === ".docx"
+                ? "docx"
+                : extension === ".doc"
+                  ? "doc"
+                  : TEXT_FILE_EXTENSIONS.has(extension)
+                    ? "text"
+                    : "file",
   };
 }
 
@@ -984,32 +987,44 @@ function parseBingRssResults(xml, maxResults) {
     .slice(0, maxResults);
 }
 
-async function listFilesRecursive(rootDir, { maxFiles = 200, currentDir = rootDir } = {}) {
-  const entries = await readdir(currentDir, { withFileTypes: true });
-  const files = [];
+async function listWorkspaceEntries(
+  rootDir,
+  { maxEntries = 200, includeDirectories = false, currentDir = rootDir } = {},
+) {
+  let entries;
+  try {
+    entries = await readdir(currentDir, { withFileTypes: true });
+  } catch {
+    // A single unreadable subfolder should not hide the rest of the workspace.
+    return [];
+  }
 
+  const results = [];
   for (const entry of entries) {
-    if (files.length >= maxFiles) {
+    if (results.length >= maxEntries) {
       break;
     }
-
     if (entry.name.startsWith(".")) {
       continue;
     }
 
     const entryPath = path.join(currentDir, entry.name);
     if (entry.isDirectory()) {
-      const nested = await listFilesRecursive(rootDir, {
-        maxFiles: maxFiles - files.length,
+      if (includeDirectories) {
+        results.push({ path: entryPath, isDirectory: true });
+      }
+      const nested = await listWorkspaceEntries(rootDir, {
+        maxEntries: maxEntries - results.length,
+        includeDirectories,
         currentDir: entryPath,
       });
-      files.push(...nested);
+      results.push(...nested);
     } else if (entry.isFile()) {
-      files.push(entryPath);
+      results.push({ path: entryPath, isDirectory: false });
     }
   }
 
-  return files;
+  return results;
 }
 
 function getPrivateMessagePeer(contact) {
@@ -1249,21 +1264,21 @@ export class BanxuebangClient {
       }
     }
 
-    const filePaths = await listFilesRecursive(root, { maxFiles: 500 });
+    const entries = await listWorkspaceEntries(root, { maxEntries: 500, includeDirectories: true });
     const normalized = target.replaceAll("\\", "/").toLowerCase();
-    const match = filePaths.find((filePath) => {
-      const relativePath = path.relative(root, filePath).replaceAll("\\", "/").toLowerCase();
-      return relativePath === normalized || path.basename(filePath).toLowerCase() === normalized;
+    const match = entries.find((entry) => {
+      const relativePath = path.relative(root, entry.path).replaceAll("\\", "/").toLowerCase();
+      return relativePath === normalized || path.basename(entry.path).toLowerCase() === normalized;
     });
     if (!match) {
       throw workspaceError("not_found", `工作区中找不到“${target}”，它可能已被移动或删除。`);
     }
 
-    const entry = await this.inspectWorkspaceEntry(match);
-    if (!entry) {
+    const resolved = await this.inspectWorkspaceEntry(match.path);
+    if (!resolved) {
       throw workspaceError("not_found", `工作区中找不到“${target}”，它可能已被移动或删除。`);
     }
-    return entry;
+    return resolved;
   }
 
   async resolveWorkspaceFile(fileRef) {
@@ -1271,16 +1286,25 @@ export class BanxuebangClient {
     return entry.path;
   }
 
-  async listWorkspaceFiles({ query = "", maxFiles = 200 } = {}) {
+  async listWorkspaceFiles({ query = "", maxFiles = 200, includeDirectories = false } = {}) {
     const workspaceDir = await this.workspaceRoot();
     const limit = clampInt(maxFiles, 200, { min: 1, max: 500 });
     const normalizedQuery = String(query || "").trim().toLowerCase();
-    const filePaths = await listFilesRecursive(workspaceDir, { maxFiles: limit });
+    const entries = await listWorkspaceEntries(workspaceDir, {
+      maxEntries: limit,
+      includeDirectories: includeDirectories === true,
+    });
     const files = [];
 
-    for (const filePath of filePaths) {
-      const fileStat = await stat(filePath);
-      const summary = summarizeLocalFile(filePath, workspaceDir, fileStat);
+    for (const entry of entries) {
+      let fileStat;
+      try {
+        fileStat = await stat(entry.path);
+      } catch {
+        // The entry disappeared between the directory scan and this stat call.
+        continue;
+      }
+      const summary = summarizeLocalFile(entry.path, workspaceDir, fileStat);
       if (
         normalizedQuery &&
         !summary.name.toLowerCase().includes(normalizedQuery) &&
@@ -1301,6 +1325,9 @@ export class BanxuebangClient {
 
   async readWorkspaceFile({ file, maxChars = 8000 } = {}) {
     const entry = await this.resolveWorkspaceEntry(file);
+    if (entry.fileStat.isDirectory()) {
+      throw workspaceError("is_directory", `“${path.basename(entry.path)}”是文件夹，不能作为文件读取。`);
+    }
     const result = await this.readLocalAttachment(entry.path, maxChars);
     return {
       workspaceDir: await this.workspaceRoot(),
@@ -1342,18 +1369,17 @@ export class BanxuebangClient {
     const fileStat = entry.fileStat;
     const name = path.basename(filePath);
 
+    if (!fileStat.isFile() && !fileStat.isDirectory()) {
+      throw workspaceError("blocked_special_file", `无法删除“${name}”：它不是普通文件或文件夹。`);
+    }
     if (fileStat.isDirectory()) {
-      const children = await readdir(filePath).catch(() => []);
-      if (children.length) {
+      const children = await readdir(filePath).catch(() => null);
+      if (children && children.length) {
         throw workspaceError(
           "directory_not_empty",
           `无法删除“${name}”：文件夹不是空的。应用不提供递归删除。`,
         );
       }
-      throw workspaceError("is_directory", `无法删除“${name}”：应用只删除单个文件，不删除文件夹。`);
-    }
-    if (!fileStat.isFile()) {
-      throw workspaceError("blocked_special_file", `无法删除“${name}”：它不是普通文件。`);
     }
 
     const expectedIdentity = expected && typeof expected === "object" ? String(expected.identity || "") : "";
@@ -1366,7 +1392,26 @@ export class BanxuebangClient {
     }
 
     const deleted = summarizeLocalFile(filePath, workspaceDir, fileStat);
-    await unlink(filePath);
+    if (fileStat.isDirectory()) {
+      // rmdir only ever removes an empty directory, so a file created between
+      // the check above and this call fails the delete instead of recursing.
+      try {
+        await rmdir(filePath);
+      } catch (error) {
+        if (error?.code === "ENOTEMPTY" || error?.code === "EEXIST") {
+          throw workspaceError(
+            "directory_not_empty",
+            `无法删除“${name}”：文件夹不是空的。应用不提供递归删除。`,
+          );
+        }
+        if (error?.code === "ENOENT") {
+          throw workspaceError("not_found", `工作区中找不到“${name}”，它可能已被删除。`);
+        }
+        throw error;
+      }
+    } else {
+      await unlink(filePath);
+    }
     return {
       ok: true,
       workspaceDir,
