@@ -94,15 +94,43 @@ struct WorkspaceParsingSmoke {
             WorkspaceNameValidator.extensionHint(for: "draft", originalExtension: ".md")?.contains("draft.md") == true
         )
         precondition(WorkspaceNameValidator.extensionHint(for: "draft.txt", originalExtension: ".md") == nil)
+        // Folders pass an empty extension, so they never advertise a kept one.
+        precondition(WorkspaceNameValidator.extensionHint(for: "notes", originalExtension: "") == nil)
 
         let restored = WorkspaceSelection.restoredID(for: files[0], in: files)
         precondition(restored == files[0].id)
         precondition(WorkspaceSelection.restoredID(for: files[0], in: []) == nil)
         precondition(WorkspaceSelection.restoredID(for: nil, in: files) == nil)
 
+        let folderListing = try decode(#"""
+        {
+          "files": [
+            {
+              "name": "pack",
+              "relativePath": "pack",
+              "path": "/tmp/workspace/pack",
+              "extension": "",
+              "size": 96,
+              "modifiedAt": "2026-09-19T12:00:00.000Z",
+              "category": "directory",
+              "identity": "16777229:63775990",
+              "isDirectory": true
+            }
+          ]
+        }
+        """#)
+        let folders = WorkspaceFile.parseList(folderListing)
+        precondition(folders.count == 1)
+        precondition(folders[0].isDirectory)
+        precondition(folders[0].symbolName == "folder")
+        precondition(folders[0].sizeDisplay == "文件夹")
+        precondition(!files[0].isDirectory)
+        precondition(files[0].sizeDisplay != "文件夹")
+
         print(
             "workspace-parsing=ok files=\(files.count) reader=\(preview.reader) "
-                + "imported=\(outcome.imported.count) problems=\(outcome.problems.count)"
+                + "imported=\(outcome.imported.count) problems=\(outcome.problems.count) "
+                + "folders=\(folders.count)"
         )
     }
 

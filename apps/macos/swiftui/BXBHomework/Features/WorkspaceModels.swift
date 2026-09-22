@@ -14,6 +14,7 @@ struct WorkspaceFile: Identifiable, Hashable, Sendable {
 
     var symbolName: String {
         switch category {
+        case "directory": "folder"
         case "image": "photo"
         case "video": "film"
         case "audio": "waveform"
@@ -26,6 +27,10 @@ struct WorkspaceFile: Identifiable, Hashable, Sendable {
 
     var formattedSize: String {
         ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)
+    }
+
+    var sizeDisplay: String {
+        isDirectory ? "文件夹" : formattedSize
     }
 
     var modifiedDisplay: String {
@@ -208,6 +213,7 @@ struct WorkspaceTextPreview: Sendable {
 enum WorkspacePreview {
     case text(WorkspaceFile, WorkspaceTextPreview)
     case quickLook(WorkspaceFile)
+    case directory(WorkspaceFile)
 }
 
 private extension String {

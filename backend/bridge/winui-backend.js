@@ -1314,7 +1314,14 @@ function safeToolSchemas() {
     {
       name: "list_workspace_files",
       description: "列出本地工作区文件。",
-      parameters: { type: "object", properties: { query: { type: "string" }, max_files: { type: "number" } } },
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string" },
+          max_files: { type: "number" },
+          include_directories: { type: "boolean", description: "是否包含文件夹条目，默认 false。" },
+        },
+      },
     },
     {
       name: "read_workspace_file",

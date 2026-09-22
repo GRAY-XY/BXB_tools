@@ -130,7 +130,7 @@ struct WorkspaceView: View {
                 Label("删除", systemImage: "trash")
             }
             .disabled(!model.canUseSelection)
-            .help("删除所选文件，删除前会再次确认")
+            .help("删除所选项目，删除前会再次确认；文件夹只有为空时才能删除")
 
             Button {
                 Task { await model.revealWorkspace(using: backend) }
@@ -274,7 +274,7 @@ struct WorkspaceView: View {
             VStack(alignment: .leading, spacing: 6) {
                 TextField("文件名", text: Binding(
                     get: { model.renameDraft },
-                    set: { model.updateRenameDraft($0, originalExtension: file.fileExtension) }
+                    set: { model.updateRenameDraft($0, originalExtension: file.isDirectory ? "" : file.fileExtension) }
                 ))
                 .textFieldStyle(.roundedBorder)
                 .onSubmit {
@@ -343,6 +343,10 @@ struct WorkspaceView: View {
                         Divider()
                     }
                     QuickLookPreview(url: URL(filePath: file.path))
+                }
+            case .directory(let file):
+                WorkspaceFolderPreviewView(file: file) {
+                    model.revealSelectedFile()
                 }
             }
         } else {
@@ -435,8 +439,12 @@ struct WorkspaceView: View {
     }
 
     private var deleteMessage: String {
-        let relativePath = pendingDelete?.relativePath ?? ""
-        return "目标：\(relativePath)\n此操作无法撤销，删除后工作区中不会保留该文件。"
+        guard let target = pendingDelete else { return "此操作无法撤销。" }
+        if target.isDirectory {
+            return "目标：\(target.relativePath)\n这是一个文件夹，只有空文件夹可以删除。"
+                + "如果里面还有内容，删除会被拒绝——应用不提供递归删除。"
+        }
+        return "目标：\(target.relativePath)\n此操作无法撤销，删除后工作区中不会保留该文件。"
     }
 
     // MARK: - Actions
@@ -488,7 +496,7 @@ private struct WorkspaceFileRow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                Text("\(file.formattedSize) · \(file.modifiedDisplay)")
+                Text("\(file.sizeDisplay) · \(file.modifiedDisplay)")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
@@ -509,7 +517,7 @@ private struct WorkspacePreviewHeader: View {
                 Text(file.name)
                     .font(.headline)
                     .textSelection(.enabled)
-                Text("\(file.relativePath) · \(file.formattedSize)")
+                Text("\(file.relativePath) · \(file.sizeDisplay)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
@@ -577,5 +585,34 @@ private struct QuickLookPreview: NSViewRepresentable {
         context.coordinator.url = url
         view.previewItem = url as NSURL
         view.refreshPreviewItem()
+    }
+}
+
+private struct WorkspaceFolderPreviewView: View {
+    let file: WorkspaceFile
+    let onReveal: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            WorkspacePreviewHeader(file: file)
+            Divider()
+            VStack(spacing: 12) {
+                Image(systemName: "folder")
+                    .font(.system(size: 44))
+                    .foregroundStyle(.tint)
+                Text("这是一个文件夹")
+                    .font(.headline)
+                Text("文件夹没有可预览的内容。应用只删除空文件夹；如果里面还有内容，删除会被拒绝，因为不提供递归删除。")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 460)
+                Button("在 Finder 中显示") {
+                    onReveal()
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(20)
+        }
     }
 }

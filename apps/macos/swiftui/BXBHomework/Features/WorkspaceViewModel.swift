@@ -60,6 +60,7 @@ final class WorkspaceViewModel {
                 arguments: [
                     "query": .string(searchText.trimmingCharacters(in: .whitespacesAndNewlines)),
                     "max_files": .number(300),
+                    "include_directories": .bool(true),
                 ],
                 requiresSession: false
             )
@@ -102,6 +103,13 @@ final class WorkspaceViewModel {
         isLoadingPreview = true
         previewError = nil
         preview = nil
+
+        if file.isDirectory {
+            guard previewRequestID == requestID else { return }
+            preview = .directory(file)
+            isLoadingPreview = false
+            return
+        }
 
         if file.category != "text" {
             guard previewRequestID == requestID else { return }
