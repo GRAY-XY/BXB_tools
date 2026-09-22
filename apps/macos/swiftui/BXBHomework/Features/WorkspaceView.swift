@@ -274,7 +274,7 @@ struct WorkspaceView: View {
             VStack(alignment: .leading, spacing: 6) {
                 TextField("文件名", text: Binding(
                     get: { model.renameDraft },
-                    set: { model.updateRenameDraft($0, originalExtension: file.fileExtension) }
+                    set: { model.updateRenameDraft($0, originalExtension: file.isDirectory ? "" : file.fileExtension) }
                 ))
                 .textFieldStyle(.roundedBorder)
                 .onSubmit {
