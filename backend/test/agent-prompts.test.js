@@ -48,6 +48,8 @@ test("draft policy requires concise natural submission-ready plain text", () => 
   assert.match(CORE_AGENT_SYSTEM_PROMPT, /像学生独立完成的日常作业/);
   assert.match(CORE_AGENT_SYSTEM_PROMPT, /不得包含 Markdown/);
   assert.match(CORE_AGENT_SYSTEM_PROMPT, /不得包含 HTML 标签或实体/);
+  assert.match(CORE_AGENT_SYSTEM_PROMPT, /编程作业默认只写完成题目所需的代码/);
+  assert.match(CORE_AGENT_SYSTEM_PROMPT, /只有题目、老师或用户明确要求注释时/);
   assert.match(CORE_AGENT_SYSTEM_PROMPT, /普通键盘容易输入的形式/);
   assert.match(CORE_AGENT_SYSTEM_PROMPT, /幂写成 x\^2/);
   assert.match(CORE_AGENT_SYSTEM_PROMPT, /根式写成 sqrt\(x\)/);
