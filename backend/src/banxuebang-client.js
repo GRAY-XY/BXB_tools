@@ -1,5 +1,17 @@
-import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import {
+  copyFile,
+  lstat,
+  mkdir,
+  readdir,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
+import { constants as fsConstants, existsSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { chromium } from "playwright";
@@ -619,9 +631,150 @@ function sanitizeFileName(fileName, fallback = "attachment") {
   return cleaned || fallback;
 }
 
-function sanitizeWorkspaceFileName(fileName, fallback = "workspace-file.txt") {
-  const cleaned = sanitizeFileName(path.basename(String(fileName || "")), fallback);
-  return cleaned === "." || cleaned === ".." ? fallback : cleaned;
+export class WorkspaceError extends Error {
+  constructor(code, message, details = null) {
+    super(message);
+    this.name = "WorkspaceError";
+    this.code = code;
+    if (details) {
+      this.details = details;
+    }
+  }
+}
+
+function workspaceError(code, message, details = null) {
+  return new WorkspaceError(code, message, details);
+}
+
+const WORKSPACE_NAME_MAX_LENGTH = 255;
+const MAX_IMPORT_ITEMS = 50;
+const MAX_IMPORT_SCAN_ENTRIES = 5000;
+
+function validateWorkspaceFileName(fileName) {
+  const trimmed = String(fileName ?? "").trim();
+  if (!trimmed) {
+    throw workspaceError("unsupported_name", "文件名不能为空。");
+  }
+  if (trimmed === "." || trimmed === "..") {
+    throw workspaceError("unsupported_name", `不能使用“${trimmed}”作为文件名。`);
+  }
+  if (/[\\/]/.test(trimmed) || path.basename(trimmed) !== trimmed) {
+    throw workspaceError("unsupported_name", "文件名不能包含路径分隔符，请只输入文件名本身。");
+  }
+  if (/[\u0000-\u001f\u007f]/.test(trimmed)) {
+    throw workspaceError("unsupported_name", "文件名不能包含控制字符。");
+  }
+  const cleaned = trimmed.replace(/[<>:"|?*]/g, "_");
+  if (!cleaned || cleaned === "." || cleaned === "..") {
+    throw workspaceError("unsupported_name", "文件名无效，请换一个名称。");
+  }
+  if (cleaned.length > WORKSPACE_NAME_MAX_LENGTH) {
+    throw workspaceError("unsupported_name", "文件名过长，请缩短后再试。");
+  }
+  return cleaned;
+}
+
+function isInsideOrSame(rootPath, targetPath) {
+  const relative = path.relative(rootPath, targetPath);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function isStrictlyInside(rootPath, targetPath) {
+  const relative = path.relative(rootPath, targetPath);
+  return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+function fileIdentity(fileStat) {
+  return `${fileStat.dev}:${fileStat.ino}`;
+}
+
+async function pathExists(targetPath) {
+  try {
+    await lstat(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function nextAvailableWorkspaceTarget(rootPath, fileName) {
+  const parsed = path.parse(fileName);
+  let candidate = path.join(rootPath, fileName);
+  let index = 2;
+  while (await pathExists(candidate)) {
+    candidate = path.join(rootPath, `${parsed.name} (${index})${parsed.ext}`);
+    index += 1;
+  }
+  return candidate;
+}
+
+// Imported folders are copied file by file so that symlinks and special files can
+// never smuggle a path that points outside the workspace.
+async function scanImportSource(sourcePath) {
+  const queue = [sourcePath];
+  let scanned = 0;
+
+  while (queue.length) {
+    const currentPath = queue.pop();
+    const entries = await readdir(currentPath, { withFileTypes: true });
+    for (const entry of entries) {
+      scanned += 1;
+      if (scanned > MAX_IMPORT_SCAN_ENTRIES) {
+        return {
+          ok: false,
+          code: "import_too_large",
+          message: "文件夹包含的项目过多，请分开导入。",
+        };
+      }
+
+      const entryPath = path.join(currentPath, entry.name);
+      const label = path.relative(sourcePath, entryPath) || entry.name;
+      if (entry.isSymbolicLink()) {
+        return {
+          ok: false,
+          code: "blocked_symlink",
+          message: `文件夹中的“${label}”是符号链接，导入后可能指向工作区外部，已停止导入。`,
+        };
+      }
+      if (entry.isDirectory()) {
+        queue.push(entryPath);
+        continue;
+      }
+      if (!entry.isFile()) {
+        return {
+          ok: false,
+          code: "blocked_special_file",
+          message: `文件夹中的“${label}”不是普通文件，无法导入。`,
+        };
+      }
+    }
+  }
+
+  return { ok: true };
+}
+
+async function copyImportSource(sourcePath, targetPath, sourceStat) {
+  if (!sourceStat.isDirectory()) {
+    await copyFile(sourcePath, targetPath, fsConstants.COPYFILE_EXCL);
+    return;
+  }
+
+  await mkdir(targetPath);
+  const queue = [[sourcePath, targetPath]];
+  while (queue.length) {
+    const [fromDir, toDir] = queue.pop();
+    const entries = await readdir(fromDir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fromPath = path.join(fromDir, entry.name);
+      const toPath = path.join(toDir, entry.name);
+      if (entry.isDirectory()) {
+        await mkdir(toPath);
+        queue.push([fromPath, toPath]);
+      } else if (entry.isFile()) {
+        await copyFile(fromPath, toPath, fsConstants.COPYFILE_EXCL);
+      }
+    }
+  }
 }
 
 function summarizeLocalFile(filePath, workspaceDir, fileStat) {
@@ -634,6 +787,8 @@ function summarizeLocalFile(filePath, workspaceDir, fileStat) {
     extension,
     size: fileStat.size,
     modifiedAt: fileStat.mtime.toISOString(),
+    identity: fileIdentity(fileStat),
+    isDirectory: fileStat.isDirectory(),
     category: IMAGE_EXTENSIONS.has(extension)
       ? "image"
       : VIDEO_EXTENSIONS.has(extension)
@@ -1014,47 +1169,110 @@ export class BanxuebangClient {
     return defaultWorkspaceDir();
   }
 
-  async ensureWorkspaceDir() {
-    const workspaceDir = this.workspaceDir();
-    await mkdir(workspaceDir, { recursive: true });
-    return workspaceDir;
+  // Resolves the configured workspace directory to its canonical path so that
+  // every boundary check below compares like with like.
+  async workspaceRoot() {
+    const configured = this.workspaceDir();
+    await mkdir(configured, { recursive: true });
+    try {
+      return await realpath(configured);
+    } catch {
+      return path.resolve(configured);
+    }
   }
 
-  async resolveWorkspaceFile(fileRef) {
-    const workspaceDir = await this.ensureWorkspaceDir();
-    const target = String(fileRef || "").trim();
-    if (!target) {
-      throw new Error("Workspace file path or name is required.");
+  async ensureWorkspaceDir() {
+    return this.workspaceRoot();
+  }
+
+  async assertWorkspaceTargetPath(targetPath) {
+    const root = await this.workspaceRoot();
+    if (targetPath === root || !isStrictlyInside(root, targetPath)) {
+      throw workspaceError("outside_workspace", "目标必须位于当前工作区内。");
     }
 
-    const directPath = path.resolve(workspaceDir, target);
-    const relativeToWorkspace = path.relative(workspaceDir, directPath);
-    if (relativeToWorkspace && !relativeToWorkspace.startsWith("..") && !path.isAbsolute(relativeToWorkspace)) {
-      try {
-        const fileStat = await stat(directPath);
-        if (fileStat.isFile()) {
-          return directPath;
-        }
-      } catch {
-        // Fall through to name lookup.
+    const realParent = await realpath(path.dirname(targetPath)).catch(() => null);
+    if (!realParent || !isInsideOrSame(root, realParent)) {
+      throw workspaceError("outside_workspace", "目标所在目录不在当前工作区内。");
+    }
+
+    return targetPath;
+  }
+
+  // Validates an existing entry: never follows a final symlink, never accepts a
+  // parent directory that resolves outside the workspace, never the root itself.
+  async inspectWorkspaceEntry(candidatePath) {
+    const root = await this.workspaceRoot();
+    if (candidatePath === root) {
+      throw workspaceError("workspace_root", "不能对工作区根目录执行该操作。");
+    }
+    if (!isStrictlyInside(root, candidatePath)) {
+      throw workspaceError("outside_workspace", "目标必须位于当前工作区内。");
+    }
+
+    let entryStat;
+    try {
+      entryStat = await lstat(candidatePath);
+    } catch {
+      return null;
+    }
+    if (entryStat.isSymbolicLink()) {
+      throw workspaceError(
+        "blocked_symlink",
+        `“${path.basename(candidatePath)}”是符号链接，工作区操作不会跟随符号链接。`,
+      );
+    }
+
+    const realParent = await realpath(path.dirname(candidatePath)).catch(() => null);
+    if (!realParent || !isInsideOrSame(root, realParent)) {
+      throw workspaceError("outside_workspace", "目标所在目录不在当前工作区内。");
+    }
+
+    return { path: candidatePath, fileStat: entryStat };
+  }
+
+  async resolveWorkspaceEntry(fileRef) {
+    const root = await this.workspaceRoot();
+    const target = String(fileRef ?? "").trim();
+    if (!target) {
+      throw workspaceError("not_found", "请先选择要操作的文件。");
+    }
+
+    const directPath = path.resolve(root, target);
+    if (directPath === root) {
+      throw workspaceError("workspace_root", "不能对工作区根目录执行该操作。");
+    }
+    if (isStrictlyInside(root, directPath)) {
+      const entry = await this.inspectWorkspaceEntry(directPath);
+      if (entry) {
+        return entry;
       }
     }
 
-    const files = await listFilesRecursive(workspaceDir);
+    const filePaths = await listFilesRecursive(root, { maxFiles: 500 });
     const normalized = target.replaceAll("\\", "/").toLowerCase();
-    const match = files.find((filePath) => {
-      const relativePath = path.relative(workspaceDir, filePath).replaceAll("\\", "/").toLowerCase();
+    const match = filePaths.find((filePath) => {
+      const relativePath = path.relative(root, filePath).replaceAll("\\", "/").toLowerCase();
       return relativePath === normalized || path.basename(filePath).toLowerCase() === normalized;
     });
-
     if (!match) {
-      throw new Error(`Workspace file "${target}" was not found.`);
+      throw workspaceError("not_found", `工作区中找不到“${target}”，它可能已被移动或删除。`);
     }
-    return match;
+
+    const entry = await this.inspectWorkspaceEntry(match);
+    if (!entry) {
+      throw workspaceError("not_found", `工作区中找不到“${target}”，它可能已被移动或删除。`);
+    }
+    return entry;
+  }
+
+  async resolveWorkspaceFile(fileRef) {
+    const entry = await this.resolveWorkspaceEntry(fileRef);
+    return entry.path;
   }
 
   async listWorkspaceFiles({ query = "", maxFiles = 200 } = {}) {
-    const workspaceDir = await this.ensureWorkspaceDir();
+    const workspaceDir = await this.workspaceRoot();
     const limit = clampInt(maxFiles, 200, { min: 1, max: 500 });
     const normalizedQuery = String(query || "").trim().toLowerCase();
     const filePaths = await listFilesRecursive(workspaceDir, { maxFiles: limit });
@@ -1082,36 +1300,30 @@ export class BanxuebangClient {
   }
 
   async readWorkspaceFile({ file, maxChars = 8000 } = {}) {
-    const filePath = await this.resolveWorkspaceFile(file);
-    const result = await this.readLocalAttachment(filePath, maxChars);
+    const entry = await this.resolveWorkspaceEntry(file);
+    const result = await this.readLocalAttachment(entry.path, maxChars);
     return {
-      workspaceDir: this.workspaceDir(),
+      workspaceDir: await this.workspaceRoot(),
       file: result,
     };
   }
 
   async renameWorkspaceFile({ file, newName } = {}) {
-    const oldPath = await this.resolveWorkspaceFile(file);
-    const workspaceDir = await this.ensureWorkspaceDir();
-    const safeName = sanitizeWorkspaceFileName(newName, path.basename(oldPath));
-    const oldExt = path.extname(oldPath);
-    const nextName = path.extname(safeName) ? safeName : `${safeName}${oldExt}`;
+    const workspaceDir = await this.workspaceRoot();
+    const entry = await this.resolveWorkspaceEntry(file);
+    const oldPath = entry.path;
+    const safeName = validateWorkspaceFileName(newName);
+    const nextName = path.extname(safeName) ? safeName : `${safeName}${path.extname(oldPath)}`;
     const nextPath = path.join(path.dirname(oldPath), nextName);
-    const relativeToWorkspace = path.relative(workspaceDir, nextPath);
-    if (relativeToWorkspace.startsWith("..") || path.isAbsolute(relativeToWorkspace)) {
-      throw new Error("New workspace file name must stay inside the workspace.");
-    }
+    await this.assertWorkspaceTargetPath(nextPath);
 
-    const samePath = process.platform === "win32"
-      ? path.resolve(oldPath).toLowerCase() === path.resolve(nextPath).toLowerCase()
-      : path.resolve(oldPath) === path.resolve(nextPath);
-    if (!samePath) {
-      try {
-        await stat(nextPath);
-        throw new Error(`Workspace file "${nextName}" already exists.`);
-      } catch (error) {
-        if (error?.code !== "ENOENT") throw error;
-      }
+    // A case-only rename targets the same inode on case-insensitive file
+    // systems, so comparing paths alone would reject it as a conflict.
+    const existingStat = await lstat(nextPath).catch(() => null);
+    if (existingStat && (existingStat.dev !== entry.fileStat.dev || existingStat.ino !== entry.fileStat.ino)) {
+      throw workspaceError("name_conflict", `工作区中已存在“${nextName}”，原文件未被覆盖。`, {
+        name: nextName,
+      });
     }
 
     if (oldPath !== nextPath) await rename(oldPath, nextPath);
@@ -1123,10 +1335,36 @@ export class BanxuebangClient {
     };
   }
 
-  async deleteWorkspaceFile({ file } = {}) {
-    const filePath = await this.resolveWorkspaceFile(file);
-    const workspaceDir = await this.ensureWorkspaceDir();
-    const fileStat = await stat(filePath);
+  async deleteWorkspaceFile({ file, expected } = {}) {
+    const workspaceDir = await this.workspaceRoot();
+    const entry = await this.resolveWorkspaceEntry(file);
+    const filePath = entry.path;
+    const fileStat = entry.fileStat;
+    const name = path.basename(filePath);
+
+    if (fileStat.isDirectory()) {
+      const children = await readdir(filePath).catch(() => []);
+      if (children.length) {
+        throw workspaceError(
+          "directory_not_empty",
+          `无法删除“${name}”：文件夹不是空的。应用不提供递归删除。`,
+        );
+      }
+      throw workspaceError("is_directory", `无法删除“${name}”：应用只删除单个文件，不删除文件夹。`);
+    }
+    if (!fileStat.isFile()) {
+      throw workspaceError("blocked_special_file", `无法删除“${name}”：它不是普通文件。`);
+    }
+
+    const expectedIdentity = expected && typeof expected === "object" ? String(expected.identity || "") : "";
+    const expectedModifiedAt = expected && typeof expected === "object" ? String(expected.modifiedAt || "") : "";
+    if (
+      (expectedIdentity && expectedIdentity !== fileIdentity(fileStat)) ||
+      (expectedModifiedAt && expectedModifiedAt !== fileStat.mtime.toISOString())
+    ) {
+      throw workspaceError("target_changed", `“${name}”在确认后发生了变化，已取消删除，请重新确认。`);
+    }
+
     const deleted = summarizeLocalFile(filePath, workspaceDir, fileStat);
     await unlink(filePath);
     return {
@@ -1137,25 +1375,163 @@ export class BanxuebangClient {
   }
 
   async writeWorkspaceTextFile({ fileName, content, overwrite = false } = {}) {
-    const workspaceDir = await this.ensureWorkspaceDir();
-    const safeName = sanitizeWorkspaceFileName(fileName, "assistant-note.md");
-    const filePath = path.join(workspaceDir, safeName);
-    if (!overwrite) {
-      try {
-        await stat(filePath);
-        throw new Error(`Workspace file "${safeName}" already exists. Choose another name or set overwrite=true.`);
-      } catch (error) {
-        if (error?.code !== "ENOENT") {
-          throw error;
-        }
+    const workspaceDir = await this.workspaceRoot();
+    const safeName = validateWorkspaceFileName(fileName);
+    const filePath = await this.assertWorkspaceTargetPath(path.join(workspaceDir, safeName));
+
+    // "wx" creates exclusively, so nothing can be overwritten between a
+    // separate existence check and the write.
+    try {
+      await writeFile(filePath, String(content ?? ""), { encoding: "utf8", flag: overwrite ? "w" : "wx" });
+    } catch (error) {
+      if (error?.code === "EEXIST") {
+        throw workspaceError("name_conflict", `工作区中已存在“${safeName}”，原文件未被覆盖。`, {
+          name: safeName,
+        });
       }
+      if (error?.code === "EISDIR" || error?.code === "EPERM") {
+        throw workspaceError("is_directory", `“${safeName}”与已有文件夹同名，请换一个名称。`);
+      }
+      throw error;
     }
 
-    await writeFile(filePath, String(content || ""), "utf8");
     const fileStat = await stat(filePath);
     return {
       workspaceDir,
       file: summarizeLocalFile(filePath, workspaceDir, fileStat),
+    };
+  }
+
+  // Copies user-picked files and folders into the workspace. Source items are
+  // only ever read; existing workspace files are never overwritten unless the
+  // caller explicitly asks for "keep-both", which picks a free name instead.
+  async importWorkspaceItems({ paths = [], conflictPolicy = "skip" } = {}) {
+    const workspaceDir = await this.workspaceRoot();
+    const policy = conflictPolicy === "keep-both" ? "keep-both" : "skip";
+    const sources = Array.isArray(paths) ? paths.slice(0, MAX_IMPORT_ITEMS) : [];
+    const imported = [];
+    const conflicts = [];
+    const blocked = [];
+
+    for (const rawSource of sources) {
+      const raw = String(rawSource ?? "").trim();
+      if (!raw) {
+        blocked.push({ sourcePath: "", code: "not_found", message: "导入路径为空。" });
+        continue;
+      }
+
+      const sourcePath = path.resolve(raw);
+      const originalName = path.basename(sourcePath);
+      let sourceStat;
+      try {
+        sourceStat = await lstat(sourcePath);
+      } catch {
+        blocked.push({
+          sourcePath,
+          code: "not_found",
+          message: `找不到“${originalName}”，它可能已被移动或删除。`,
+        });
+        continue;
+      }
+
+      if (sourceStat.isSymbolicLink()) {
+        blocked.push({
+          sourcePath,
+          code: "blocked_symlink",
+          message: `“${originalName}”是符号链接，为避免指向工作区外部，未导入。`,
+        });
+        continue;
+      }
+      if (!sourceStat.isFile() && !sourceStat.isDirectory()) {
+        blocked.push({
+          sourcePath,
+          code: "blocked_special_file",
+          message: `“${originalName}”不是普通文件或文件夹，无法导入。`,
+        });
+        continue;
+      }
+      // Canonicalize so that a symlinked ancestor (for example /var on macOS)
+      // cannot disguise a source that already lives inside the workspace.
+      const realSourcePath = await realpath(sourcePath).catch(() => sourcePath);
+      if (isInsideOrSame(workspaceDir, realSourcePath)) {
+        blocked.push({
+          sourcePath,
+          code: "already_in_workspace",
+          message: `“${originalName}”已经在工作区内，无需重复导入。`,
+        });
+        continue;
+      }
+      if (originalName.startsWith(".")) {
+        blocked.push({
+          sourcePath,
+          code: "unsupported_name",
+          message: `“${originalName}”以“.”开头，不会显示在文件列表中，已跳过。`,
+        });
+        continue;
+      }
+
+      const safeName = originalName.replace(/[<>:"|?*\u0000-\u001f]/g, "_").trim() || "imported-item";
+      let targetPath = path.join(workspaceDir, safeName);
+      if (await pathExists(targetPath)) {
+        if (policy !== "keep-both") {
+          conflicts.push({
+            sourcePath,
+            name: safeName,
+            code: "name_conflict",
+            message: `工作区中已存在“${safeName}”，原文件未被覆盖。`,
+          });
+          continue;
+        }
+        targetPath = await nextAvailableWorkspaceTarget(workspaceDir, safeName);
+      }
+      const targetName = path.basename(targetPath);
+
+      if (sourceStat.isDirectory()) {
+        const scan = await scanImportSource(sourcePath);
+        if (!scan.ok) {
+          blocked.push({ sourcePath, code: scan.code, message: scan.message });
+          continue;
+        }
+      }
+
+      try {
+        await copyImportSource(sourcePath, targetPath, sourceStat);
+      } catch (error) {
+        if (error?.code === "EEXIST") {
+          conflicts.push({
+            sourcePath,
+            name: targetName,
+            code: "name_conflict",
+            message: `工作区中已存在“${targetName}”，原文件未被覆盖。`,
+          });
+          continue;
+        }
+        // Exclusive creation failed midway, so only undo what this call made.
+        await rm(targetPath, { recursive: true, force: true }).catch(() => {});
+        blocked.push({
+          sourcePath,
+          code: "io_error",
+          message: `复制“${originalName}”失败：${error?.message || "未知错误"}`,
+        });
+        continue;
+      }
+
+      imported.push({
+        name: targetName,
+        relativePath: path.relative(workspaceDir, targetPath).replaceAll("\\", "/"),
+        path: targetPath,
+        sourcePath,
+        kind: sourceStat.isDirectory() ? "directory" : "file",
+        renamed: targetName !== originalName,
+      });
+    }
+
+    return {
+      workspaceDir,
+      conflictPolicy: policy,
+      imported,
+      conflicts,
+      blocked,
     };
   }
 

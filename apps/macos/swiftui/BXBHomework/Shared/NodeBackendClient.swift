@@ -7,6 +7,12 @@ enum BackendBridgeError: LocalizedError, Sendable {
     case processLaunch(String)
     case protocolFailure(String)
     case remote(String)
+    case remoteCoded(code: String, message: String)
+
+    var remoteCode: String? {
+        if case .remoteCoded(let code, _) = self { return code }
+        return nil
+    }
 
     var errorDescription: String? {
         switch self {
@@ -22,6 +28,8 @@ enum BackendBridgeError: LocalizedError, Sendable {
             "本地后端协议错误：\(message)"
         case .remote(let message):
             message
+        case .remoteCoded(_, let message):
+            message
         }
     }
 }
@@ -35,6 +43,7 @@ private struct BackendRequest: Encodable {
 private struct BackendResponse: Decodable {
     struct Failure: Decodable {
         let message: String?
+        let code: String?
     }
 
     let id: String?
@@ -257,9 +266,12 @@ actor NodeBackendClient {
         if response.ok == true {
             continuation.resume(returning: response.result ?? .null)
         } else {
-            continuation.resume(throwing: BackendBridgeError.remote(
-                response.error?.message ?? "本地后端请求失败。"
-            ))
+            let message = response.error?.message ?? "本地后端请求失败。"
+            if let code = response.error?.code, !code.isEmpty {
+                continuation.resume(throwing: BackendBridgeError.remoteCoded(code: code, message: message))
+            } else {
+                continuation.resume(throwing: BackendBridgeError.remote(message))
+            }
         }
     }
 

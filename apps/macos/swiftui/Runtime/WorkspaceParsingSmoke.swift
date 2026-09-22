@@ -49,7 +49,61 @@ struct WorkspaceParsingSmoke {
         precondition(preview.truncated)
         precondition(preview.totalCharacters == 24_000)
 
-        print("workspace-parsing=ok files=\(files.count) reader=\(preview.reader)")
+        let importResult = try decode(#"""
+        {
+          "imported": [
+            {
+              "name": "poem (2).txt",
+              "relativePath": "poem (2).txt",
+              "kind": "file",
+              "renamed": true
+            }
+          ],
+          "conflicts": [
+            {
+              "sourcePath": "/tmp/sources/notes.txt",
+              "name": "notes.txt",
+              "code": "name_conflict",
+              "message": "工作区中已存在“notes.txt”，原文件未被覆盖。"
+            }
+          ],
+          "blocked": [
+            {
+              "sourcePath": "/tmp/sources/escape",
+              "code": "blocked_symlink",
+              "message": "“escape”是符号链接，为避免指向工作区外部，未导入。"
+            }
+          ]
+        }
+        """#)
+        let outcome = WorkspaceImportOutcome.parse(importResult)
+        precondition(outcome.imported.count == 1)
+        precondition(outcome.imported[0].renamed)
+        precondition(outcome.conflicts.count == 1)
+        precondition(outcome.problems.count == 2)
+        precondition(outcome.blocked[0].name == "escape")
+        precondition(outcome.summaryText.contains("已导入 1 项"))
+        precondition(outcome.summaryText.contains("1 项因同名未覆盖"))
+
+        precondition(WorkspaceNameValidator.validate("notes.md").normalizedName == "notes.md")
+        precondition(WorkspaceNameValidator.validate("   ").message != nil)
+        precondition(WorkspaceNameValidator.validate("..").message != nil)
+        precondition(WorkspaceNameValidator.validate("a/b.txt").message != nil)
+        precondition(WorkspaceNameValidator.validate("a:b.txt").message != nil)
+        precondition(
+            WorkspaceNameValidator.extensionHint(for: "draft", originalExtension: ".md")?.contains("draft.md") == true
+        )
+        precondition(WorkspaceNameValidator.extensionHint(for: "draft.txt", originalExtension: ".md") == nil)
+
+        let restored = WorkspaceSelection.restoredID(for: files[0], in: files)
+        precondition(restored == files[0].id)
+        precondition(WorkspaceSelection.restoredID(for: files[0], in: []) == nil)
+        precondition(WorkspaceSelection.restoredID(for: nil, in: files) == nil)
+
+        print(
+            "workspace-parsing=ok files=\(files.count) reader=\(preview.reader) "
+                + "imported=\(outcome.imported.count) problems=\(outcome.problems.count)"
+        )
     }
 
     private static func decode(_ text: String) throws -> JSONValue {

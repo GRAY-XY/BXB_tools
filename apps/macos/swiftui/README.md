@@ -33,7 +33,18 @@ submission actions remain intentionally disconnected.
 The native workspace browser can search and read the shared local workspace
 without a Banxuebang login. Text files use the bounded backend reader; images,
 PDF, DOCX, audio, video, and other supported local formats use macOS Quick Look.
-Import, rename, and delete actions are not connected yet.
+It also manages the workspace through the shared user-action bridge methods:
+importing files and folders with a native open panel, saving clipboard text as a
+new file, renaming with inline validation, deleting a single confirmed file, and
+revealing workspace items in Finder. Import and rename never overwrite an
+existing workspace file; the page reports each conflicting or blocked item
+instead. Deleting always names the target and cannot be undone, and there is no
+batch, wildcard, or recursive delete action.
+
+The workspace guard lives in `backend/src/banxuebang-client.js` so the page and
+the assistant share one boundary: every target must resolve inside the
+configured workspace directory, symlinks are never followed, and the workspace
+root itself cannot be renamed or deleted.
 
 The native draft review center works without a Banxuebang login. It lists and
 filters local submission drafts, shows review warnings and missing information,

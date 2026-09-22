@@ -357,6 +357,33 @@ UI requirements:
 - Preview panel shows images inline, readable text for supported files, and a diagnostic summary for unsupported files.
 - Task attachment downloads default to the workspace so generated/downloaded files remain visible.
 
+Native clients (WinUI and macOS) additionally provide:
+
+- Import files and folders through the platform picker, showing the destination
+  workspace before the user confirms, and copying only the selected items.
+- Save clipboard text as a new UTF-8 workspace file, with the same name
+  validation as rename and the same no-overwrite guarantee.
+- Inline rename with live validation of empty names, path separators, `.`/`..`,
+  reserved characters, and same-folder conflicts.
+- Single-target delete behind a dialog that names the file and its relative
+  path, states that it cannot be undone, and re-checks the file identity before
+  removing it.
+- Refresh that keeps the search text and re-selects the previous item by file
+  identity, then by relative path, and only clears the selection when the item
+  is gone or filtered out. A failed refresh keeps the last good list.
+- Preview panel that explains unsupported types and offers to reveal the file in
+  the system file manager instead.
+
+Workspace boundary rules for every client:
+
+- Mutations only ever target paths that resolve inside the configured workspace
+  directory; the workspace root itself cannot be renamed or deleted.
+- Symlinks are never followed, and imports refuse items that would leave a link
+  pointing outside the workspace.
+- Creation is exclusive and rename never overwrites, so a conflicting name is
+  reported instead of replacing a file.
+- There is no batch, wildcard, or recursive delete action in any client.
+
 ## Private Messages Page
 
 Purpose:
