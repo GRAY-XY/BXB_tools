@@ -1990,22 +1990,6 @@ async function nextWorkspacePath(fileName) {
   return candidate;
 }
 
-async function importWorkspacePaths(paths) {
-  const sourcePaths = Array.isArray(paths) ? paths : [];
-  const imported = [];
-  for (const sourcePath of sourcePaths) {
-    const targetPath = await nextWorkspacePath(sourcePath);
-    await fs.copyFile(sourcePath, targetPath);
-    imported.push({
-      name: path.basename(targetPath),
-      path: targetPath,
-      relativePath: path.relative(workspaceDir, targetPath).replaceAll("\\", "/"),
-      sourcePath,
-    });
-  }
-  return { imported, canceled: false };
-}
-
 async function saveWorkspacePastes(items) {
   const entries = Array.isArray(items) ? items.slice(0, 20) : [];
   const saved = [];
@@ -2549,6 +2533,40 @@ async function appPathTargets() {
   };
 }
 
+// Launching a missing helper binary raises an unhandled "error" event, which
+// would take the whole bridge process down. Every detached spawn goes through
+// this helper so the failure stays contained.
+function spawnDetached(command, args) {
+  const child = spawn(command, args, { detached: true, stdio: "ignore" });
+  child.on("error", () => {});
+  child.unref();
+  return child;
+}
+
+function openInFileManager(targetPath, { select = false } = {}) {
+  if (process.platform === "darwin") {
+    spawnDetached("open", select ? ["-R", targetPath] : [targetPath]);
+    return;
+  }
+  if (process.platform === "win32") {
+    spawnDetached("explorer.exe", select ? ["/select,", targetPath] : [targetPath]);
+    return;
+  }
+  spawnDetached("xdg-open", [select ? path.dirname(targetPath) : targetPath]);
+}
+
+function openExternalUrl(url) {
+  if (process.platform === "darwin") {
+    spawnDetached("open", [url]);
+    return;
+  }
+  if (process.platform === "win32") {
+    spawnDetached("cmd.exe", ["/c", "start", "", url]);
+    return;
+  }
+  spawnDetached("xdg-open", [url]);
+}
+
 async function openAppPath(key) {
   const targets = await appPathTargets();
   const target = targets[String(key || "")];
@@ -2560,15 +2578,15 @@ async function openAppPath(key) {
     const parent = path.dirname(target.path);
     if (target.ensureParent) await fs.mkdir(parent, { recursive: true });
     if (existsSync(target.path)) {
-      spawn("explorer.exe", ["/select,", target.path], { detached: true, stdio: "ignore" }).unref();
+      openInFileManager(target.path, { select: true });
       return { ok: true, key, path: target.path };
     }
-    spawn("explorer.exe", [parent], { detached: true, stdio: "ignore" }).unref();
+    openInFileManager(parent);
     return { ok: true, key, path: parent };
   }
 
   if (target.ensure) await fs.mkdir(target.path, { recursive: true });
-  spawn("explorer.exe", [target.path], { detached: true, stdio: "ignore" }).unref();
+  openInFileManager(target.path);
   return { ok: true, key, path: target.path };
 }
 
@@ -2664,13 +2682,18 @@ async function handleRequest(request, emitProgress) {
     await saveConversationState(state);
     return { ok: true };
   }
-  if (method === "workspace.importPaths" || method === "workspace:import") return importWorkspacePaths(params.paths || []);
+  if (method === "workspace.importPaths" || method === "workspace:import") {
+    return client.importWorkspaceItems({
+      paths: params.paths || [],
+      conflictPolicy: params.conflictPolicy || params.conflict_policy,
+    });
+  }
   if (method === "workspace.savePastes" || method === "workspace:save-pastes") return saveWorkspacePastes(params.items);
   if (method === "workspace.rename" || method === "workspace:rename") {
     return client.renameWorkspaceFile({ file: params.file, newName: params.newName || params.new_name });
   }
   if (method === "workspace.delete" || method === "workspace:delete") {
-    return client.deleteWorkspaceFile({ file: params.file });
+    return client.deleteWorkspaceFile({ file: params.file, expected: params.expected });
   }
   if (method === "workspace.open" || method === "workspace:open") return openAppPath("workspaceDir");
   if (method === "workspace.imageDataUrl" || method === "workspace:image-data-url") return getWorkspaceImageDataUrl(params.filePath);
@@ -2683,7 +2706,7 @@ async function handleRequest(request, emitProgress) {
   if (method === "update.install" || method === "update:install") return installUpdate();
   if (method === "update.cancel" || method === "update:cancel") return setUpdateState({ status: "idle", message: "下载已取消。" });
   if (method === "update.openUrl" || method === "update:open-url") {
-    spawn("cmd.exe", ["/c", "start", "", String(params.url || RELEASES_PAGE_URL)], { detached: true, stdio: "ignore" }).unref();
+    openExternalUrl(String(params.url || RELEASES_PAGE_URL));
     return { ok: true, url: String(params.url || RELEASES_PAGE_URL) };
   }
   throw new Error(`Unknown WinUI backend method: ${method}`);
@@ -2707,7 +2730,16 @@ async function handleRequestLine(line) {
     const result = await handleRequest(request, emitProgress);
     writeResponse({ id: request.id ?? null, ok: true, result });
   } catch (error) {
-    writeResponse({ id: request?.id ?? null, ok: false, error: { message: error?.message || String(error), stack: error?.stack || "" } });
+    writeResponse({
+      id: request?.id ?? null,
+      ok: false,
+      error: {
+        message: error?.message || String(error),
+        code: typeof error?.code === "string" ? error.code : undefined,
+        details: error?.details ?? undefined,
+        stack: error?.stack || "",
+      },
+    });
   } finally {
     finishRequest();
   }
