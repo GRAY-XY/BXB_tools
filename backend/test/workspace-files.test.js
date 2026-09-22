@@ -87,7 +87,6 @@ test("delete refuses the workspace root, folders, and targets that changed after
   await fs.writeFile(path.join(workspace, "final.txt"), "final", "utf8");
 
   await expectWorkspaceError(client.deleteWorkspaceFile({ file: "." }), "workspace_root");
-  await expectWorkspaceError(client.deleteWorkspaceFile({ file: "empty-folder" }), "is_directory");
   await expectWorkspaceError(client.deleteWorkspaceFile({ file: "archive" }), "directory_not_empty");
   await expectWorkspaceError(
     client.deleteWorkspaceFile({ file: "final.txt", expected: { identity: "1:1" } }),
@@ -109,6 +108,72 @@ test("delete refuses the workspace root, folders, and targets that changed after
     expected: { identity: target.identity, modifiedAt: target.modifiedAt },
   });
   assert.equal(deleted.ok, true);
+});
+
+test("only empty folders can be deleted, and never recursively", async (context) => {
+  const { workspace, client } = await createClient(context, "workspace-folder-delete");
+  await fs.mkdir(path.join(workspace, "empty-folder"));
+  await fs.mkdir(path.join(workspace, "pack", "sub"), { recursive: true });
+  await fs.writeFile(path.join(workspace, "pack", "sub", "kept.txt"), "keep", "utf8");
+
+  const listed = await client.listWorkspaceFiles({ includeDirectories: true });
+  const folder = listed.files.find((file) => file.relativePath === "empty-folder");
+  assert.ok(folder, "folders are listed when the caller asks for them");
+  assert.equal(folder.isDirectory, true);
+  assert.equal(folder.category, "directory");
+  assert.equal(listed.files.find((file) => file.relativePath === "pack").isDirectory, true);
+
+  await expectWorkspaceError(client.deleteWorkspaceFile({ file: "pack" }), "directory_not_empty");
+  assert.equal(await fs.readFile(path.join(workspace, "pack", "sub", "kept.txt"), "utf8"), "keep");
+
+  await expectWorkspaceError(
+    client.deleteWorkspaceFile({ file: "empty-folder", expected: { identity: "1:1" } }),
+    "target_changed",
+  );
+
+  const deleted = await client.deleteWorkspaceFile({
+    file: "empty-folder",
+    expected: { identity: folder.identity, modifiedAt: folder.modifiedAt },
+  });
+  assert.equal(deleted.ok, true);
+  assert.equal(deleted.deleted.isDirectory, true);
+  await assert.rejects(fs.stat(path.join(workspace, "empty-folder")), { code: "ENOENT" });
+  assert.equal(await fs.readFile(path.join(workspace, "pack", "sub", "kept.txt"), "utf8"), "keep");
+});
+
+test("folders are hidden from the default listing and cannot be read as files", async (context) => {
+  const { workspace, client } = await createClient(context, "workspace-folder-list");
+  await fs.mkdir(path.join(workspace, "pack"));
+  await fs.writeFile(path.join(workspace, "pack", "a.txt"), "a", "utf8");
+
+  const defaultListing = await client.listWorkspaceFiles({});
+  assert.deepEqual(defaultListing.files.map((file) => file.relativePath), ["pack/a.txt"]);
+
+  const withFolders = await client.listWorkspaceFiles({ includeDirectories: true });
+  assert.deepEqual(
+    withFolders.files.map((file) => file.relativePath).sort(),
+    ["pack", "pack/a.txt"],
+  );
+
+  await expectWorkspaceError(client.readWorkspaceFile({ file: "pack" }), "is_directory");
+});
+
+test("folders can be renamed but never onto an existing name", async (context) => {
+  const { workspace, client } = await createClient(context, "workspace-folder-rename");
+  await fs.mkdir(path.join(workspace, "draft"));
+  await fs.mkdir(path.join(workspace, "final"));
+  await fs.writeFile(path.join(workspace, "draft", "a.txt"), "a", "utf8");
+
+  const renamed = await client.renameWorkspaceFile({ file: "draft", newName: "draft-v2" });
+  assert.equal(renamed.file.relativePath, "draft-v2");
+  assert.equal(renamed.file.isDirectory, true);
+  assert.equal(await fs.readFile(path.join(workspace, "draft-v2", "a.txt"), "utf8"), "a");
+
+  await expectWorkspaceError(
+    client.renameWorkspaceFile({ file: "draft-v2", newName: "final" }),
+    "name_conflict",
+  );
+  assert.equal(await fs.readFile(path.join(workspace, "draft-v2", "a.txt"), "utf8"), "a");
 });
 
 test("workspace paths cannot escape through parent or absolute references", async (context) => {
