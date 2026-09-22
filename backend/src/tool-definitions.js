@@ -433,9 +433,17 @@ export function createToolDefinitions(client) {
       inputSchema: {
         query: z.string().optional().describe("Optional filename or relative-path search text."),
         max_files: z.number().int().positive().optional().describe("Maximum number of files to return. Default 200."),
+        include_directories: z
+          .boolean()
+          .optional()
+          .describe("Include folder entries in the listing. Default false."),
       },
-      execute: async ({ query, max_files: maxFiles }) =>
-        client.listWorkspaceFiles({ query: query ?? "", maxFiles: maxFiles ?? 200 }),
+      execute: async ({ query, max_files: maxFiles, include_directories: includeDirectories }) =>
+        client.listWorkspaceFiles({
+          query: query ?? "",
+          maxFiles: maxFiles ?? 200,
+          includeDirectories: includeDirectories ?? false,
+        }),
     },
     {
       name: "read_workspace_file",
