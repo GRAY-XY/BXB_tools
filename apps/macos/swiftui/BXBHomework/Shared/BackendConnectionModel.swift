@@ -87,7 +87,7 @@ final class BackendConnectionModel {
             state = .connected
         } catch let error as BackendBridgeError {
             switch error {
-            case .remote:
+            case .remote, .remoteCoded:
                 state = .connected
             default:
                 state = .failed(error.localizedDescription)

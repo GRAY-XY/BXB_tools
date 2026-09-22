@@ -311,10 +311,25 @@ The WinUI workspace page uses dedicated user-action bridge methods for destructi
 
 ```json
 {"method":"workspace:rename","params":{"file":"imports/assignment.pdf","newName":"final-assignment.pdf"}}
-{"method":"workspace:delete","params":{"file":"imports/final-assignment.pdf"}}
+{"method":"workspace:delete","params":{"file":"imports/final-assignment.pdf","expected":{"identity":"16777229:63775990","modifiedAt":"2026-09-22T11:39:07.017Z"}}}
 ```
 
-Both methods resolve files through the managed workspace boundary. Rename refuses to overwrite an existing file. Delete is intentionally absent from the autonomous Agent tool schema and requires an in-app user confirmation.
+Both methods resolve files through the managed workspace boundary. Rename refuses to overwrite an existing file. Delete is intentionally absent from the autonomous Agent tool schema and requires an in-app user confirmation that names the exact target; the optional `expected` fingerprint cancels the delete when the file changed while the dialog was open.
+
+Failed workspace operations answer with an `error.code` so a client can explain the problem without parsing message text:
+
+| code | meaning |
+| --- | --- |
+| `unsupported_name` | empty name, path separator, control character, reserved character, or `.`/`..` |
+| `name_conflict` | the target already exists and was not overwritten |
+| `workspace_root` | the workspace root itself was the target |
+| `outside_workspace` | the resolved target or its real parent is outside the workspace |
+| `blocked_symlink` | the target is a symlink, or an imported folder contains one |
+| `blocked_special_file` | the item is not a regular file or directory |
+| `target_changed` | the file changed between confirmation and execution |
+| `not_found` | the item could not be resolved |
+| `is_directory` / `directory_not_empty` | folder deletion is not supported |
+| `import_too_large` | the folder scan exceeded its entry budget |
 
 An active Agent request can be canceled independently of page navigation:
 
@@ -384,6 +399,39 @@ type WorkspaceImportResult = {
 ```
 
 The renderer must not read arbitrary local files directly. Use `importWorkspaceFiles()` to let the user pick files and copy them into the managed workspace. The Agent should reference workspace files by `relativePath` or filename.
+
+The shared JSONL bridge used by WinUI and the macOS client exposes the same
+operation as `workspace.importPaths` / `workspace:import`, and additionally
+accepts folders:
+
+```json
+{"method":"workspace:import","params":{"paths":["/Users/me/Documents/report.pdf","/Users/me/Documents/notes"],"conflictPolicy":"skip"}}
+```
+
+```ts
+type WorkspaceImportOutcome = {
+  workspaceDir: string;
+  conflictPolicy: "skip" | "keep-both";
+  imported: Array<{ name: string; relativePath: string; path: string; sourcePath: string; kind: "file" | "directory"; renamed: boolean }>;
+  conflicts: Array<{ sourcePath: string; name: string; code: "name_conflict"; message: string }>;
+  blocked: Array<{ sourcePath: string; code: string; message: string }>;
+};
+```
+
+Rules for this method:
+
+- Sources are only ever read; they are never moved or modified.
+- Nothing is overwritten. With the default `conflictPolicy: "skip"`, an existing
+  workspace name is reported under `conflicts` and left untouched.
+  `conflictPolicy: "keep-both"` picks a free `name (2)` variant instead, and is
+  meant to be sent only after the user explicitly chooses to keep both.
+- Folders are copied file by file. Symlinks, FIFOs, sockets, and device files
+  make the whole item fail with `blocked` rather than leaving an escaping path
+  inside the workspace.
+- A source that already lives in the workspace is reported as
+  `already_in_workspace`.
+- Copying uses exclusive creation, so a name that appears mid-import surfaces as
+  a conflict instead of an overwrite.
 
 Composer paste saving:
 
