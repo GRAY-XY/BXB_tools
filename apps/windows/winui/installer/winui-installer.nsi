@@ -29,6 +29,7 @@ InstallDir "$LOCALAPPDATA\Programs\BXB Homework"
 InstallDirRegKey HKCU "${PRODUCT_KEY}" "InstallDir"
 ShowInstDetails nevershow
 ShowUninstDetails nevershow
+AutoCloseWindow true
 
 VIProductVersion "${APP_VERSION_NUMERIC}"
 VIAddVersionKey /LANG=1033 "ProductName" "${PRODUCT_NAME}"
@@ -56,6 +57,11 @@ Section "Install"
   CreateDirectory "$SMPROGRAMS\BXB Homework"
   CreateShortcut "$SMPROGRAMS\BXB Homework\BXB Homework.lnk" "$INSTDIR\BXBHomework.exe" "" "$INSTDIR\BXBHomework.exe"
   CreateShortcut "$DESKTOP\BXB Homework.lnk" "$INSTDIR\BXBHomework.exe" "" "$INSTDIR\BXBHomework.exe"
+
+  Delete "$APPDATA\bxb-homework-electron\updates\pending-update.json"
+  IfSilent SkipLaunch
+  ExecShell "open" "$INSTDIR\BXBHomework.exe"
+SkipLaunch:
 SectionEnd
 
 Section "Uninstall"

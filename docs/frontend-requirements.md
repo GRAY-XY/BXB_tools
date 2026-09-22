@@ -449,7 +449,7 @@ Path card:
 Software update card:
 
 - Channel: Windows stable.
-- Show the current Electron app version.
+- Show the current Windows app version.
 - Check GitHub Releases for non-draft normal releases whose title starts with `BXB Homework v`.
 - Current title/tag convention uses `BXB Homework v<major>.<minor>.<patch>` and `bxb-homework-v<major>.<minor>.<patch>`.
 - New releases should be marked as latest and must not be marked as prerelease.
@@ -457,10 +457,10 @@ Software update card:
 - Show latest version, installer size, publish time, and release notes when an update is found.
 - In-app download/install is allowed only when the release has both the `.exe` installer and matching `.sha256` asset.
 - Download into the local update cache.
-- Show download progress.
+- Show download percentage and downloaded/total bytes in an in-app progress bar.
 - Verify file size and SHA256.
-- After verification, show `现在重启安装` and `稍后`.
-- On `现在重启安装`, launch the verified installer and quit the app.
+- After verification, persist the pending update and show `现在重启安装`; leaving the page keeps it available for later.
+- On `现在重启安装`, require in-app confirmation, schedule the verified installer, and quit the app.
 - The NSIS installer should overwrite the current installation and reopen the new version after installation.
 - Keep the Release page button as the manual fallback.
 
