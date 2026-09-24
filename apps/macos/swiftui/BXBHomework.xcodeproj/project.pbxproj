@@ -30,6 +30,9 @@
 		B10000000000000000000015 /* AssistantModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8000000000000000000001A /* AssistantModels.swift */; };
 		B10000000000000000000016 /* AssistantViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8000000000000000000001B /* AssistantViewModel.swift */; };
 		B10000000000000000000017 /* AssistantView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8000000000000000000001C /* AssistantView.swift */; };
+		B10000000000000000000018 /* MessagesModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8000000000000000000001E /* MessagesModels.swift */; };
+		B10000000000000000000019 /* MessagesViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8000000000000000000001F /* MessagesViewModel.swift */; };
+		B1000000000000000000001A /* MessagesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80000000000000000000020 /* MessagesView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -63,6 +66,9 @@
 		A8000000000000000000001B /* AssistantViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantViewModel.swift; sourceTree = "<group>"; };
 		A8000000000000000000001C /* AssistantView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantView.swift; sourceTree = "<group>"; };
 		A8000000000000000000001D /* AssistantParsingSmoke.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantParsingSmoke.swift; sourceTree = "<group>"; };
+		A8000000000000000000001E /* MessagesModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessagesModels.swift; sourceTree = "<group>"; };
+		A8000000000000000000001F /* MessagesViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessagesViewModel.swift; sourceTree = "<group>"; };
+		A80000000000000000000020 /* MessagesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessagesView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -131,6 +137,9 @@
 				A8000000000000000000001A /* AssistantModels.swift */,
 				A8000000000000000000001B /* AssistantViewModel.swift */,
 				A8000000000000000000001C /* AssistantView.swift */,
+				A8000000000000000000001E /* MessagesModels.swift */,
+				A8000000000000000000001F /* MessagesViewModel.swift */,
+				A80000000000000000000020 /* MessagesView.swift */,
 			);
 			path = Features;
 			sourceTree = "<group>";
@@ -250,6 +259,9 @@
 				B10000000000000000000015 /* AssistantModels.swift in Sources */,
 				B10000000000000000000016 /* AssistantViewModel.swift in Sources */,
 				B10000000000000000000017 /* AssistantView.swift in Sources */,
+				B10000000000000000000018 /* MessagesModels.swift in Sources */,
+				B10000000000000000000019 /* MessagesViewModel.swift in Sources */,
+				B1000000000000000000001A /* MessagesView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
