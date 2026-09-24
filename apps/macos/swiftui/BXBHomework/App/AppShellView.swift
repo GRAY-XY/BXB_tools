@@ -24,6 +24,8 @@ struct AppShellView: View {
                 WorkspaceView()
             case .review:
                 DraftReviewView()
+            case .messages:
+                MessagesView()
             case .some(let selection):
                 FeaturePlaceholderView(section: selection)
             case .none:
