@@ -54,10 +54,11 @@ Approving a draft never submits an assignment or sends a private message; all
 delivery actions remain disconnected.
 
 The native assistant page reads local conversations and model configuration,
-supports creating and selecting conversations, and can send text prompts through
-the shared agent backend. This first increment displays the completed response
-and saved execution steps; live token streaming and image attachments are not
-connected yet.
+supports text and workspace image prompts, and streams the response and tool
+steps through the shared agent backend. It can stop generation, search and
+manage conversations, reset or compact context, and preview attached images.
+Sending a message can invoke the shared agent's tools. Draft review and real
+delivery remain separate flows in the native UI.
 
 ## Bridge smoke test
 
@@ -71,6 +72,18 @@ xcrun swiftc -parse-as-library \
   apps/macos/swiftui/Runtime/BackendBridgeSmoke.swift \
   -o /tmp/bxb-bridge-smoke
 /tmp/bxb-bridge-smoke
+```
+
+The bridge progress, cancellation, and interruption protocol can be checked with an isolated
+fixture. This does not modify the user's conversation history:
+
+```sh
+xcrun swiftc -parse-as-library \
+  apps/macos/swiftui/BXBHomework/Shared/JSONValue.swift \
+  apps/macos/swiftui/BXBHomework/Shared/NodeBackendClient.swift \
+  apps/macos/swiftui/Runtime/BridgeStreamSmoke.swift \
+  -o /tmp/bxb-bridge-stream-smoke
+/tmp/bxb-bridge-stream-smoke
 ```
 
 The homework response parser has a separate account-free smoke test:
