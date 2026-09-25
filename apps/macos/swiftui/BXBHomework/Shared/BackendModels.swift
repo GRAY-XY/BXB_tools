@@ -5,6 +5,7 @@ struct BackendAppInfo: Decodable, Sendable {
     let nodeVersion: String?
     let platform: String
     let isPackaged: Bool
+    let workspaceDir: String?
 }
 
 struct BackendSessionStatus: Decodable, Sendable {

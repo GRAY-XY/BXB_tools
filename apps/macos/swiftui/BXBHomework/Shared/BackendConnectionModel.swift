@@ -122,4 +122,11 @@ final class BackendConnectionModel {
     ) async throws -> JSONValue {
         try await client.invoke(method, params: params)
     }
+
+    func stream(
+        _ method: String,
+        params: [String: JSONValue] = [:]
+    ) async throws -> AsyncThrowingStream<BackendStreamEvent, Error> {
+        try await client.stream(method, params: params)
+    }
 }

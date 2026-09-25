@@ -21,14 +21,35 @@ struct AssistantStep: Identifiable, Hashable, Sendable {
     }
 }
 
+struct AssistantAttachment: Identifiable, Hashable, Sendable {
+    let fileName: String
+    let relativePath: String
+    let mimeType: String
+    let sizeBytes: Int
+
+    var id: String { relativePath }
+
+    static func parse(_ value: JSONValue) -> AssistantAttachment? {
+        let relativePath = value.firstString("relativePath")
+        guard !relativePath.isEmpty else { return nil }
+        return AssistantAttachment(
+            fileName: value.firstString("fileName", "name").fallback(relativePath),
+            relativePath: relativePath,
+            mimeType: value.firstString("mimeType"),
+            sizeBytes: value["sizeBytes"].intValue ?? 0
+        )
+    }
+}
+
 struct AssistantMessage: Identifiable, Hashable, Sendable {
     let id: String
     let role: String
-    let text: String
+    var text: String
     let at: String
-    let steps: [AssistantStep]
-    let isRunning: Bool
-    let status: String
+    var steps: [AssistantStep]
+    var isRunning: Bool
+    var status: String
+    let attachments: [AssistantAttachment]
 
     var isUser: Bool { role == "user" }
     var timeDisplay: String { AssistantDate.display(at) }
@@ -43,11 +64,18 @@ struct AssistantMessage: Identifiable, Hashable, Sendable {
             at: at,
             steps: value["steps"].arrayValue.enumerated().map { AssistantStep.parse($0.element, index: $0.offset) },
             isRunning: value["isRunning"].boolValue ?? false,
-            status: value.firstString("status").fallback("completed")
+            status: value.firstString("status").fallback("completed"),
+            attachments: value["attachments"].arrayValue.compactMap(AssistantAttachment.parse)
         )
     }
 
-    static func optimistic(id: String, role: String, text: String, isRunning: Bool = false) -> AssistantMessage {
+    static func optimistic(
+        id: String,
+        role: String,
+        text: String,
+        isRunning: Bool = false,
+        attachments: [AssistantAttachment] = []
+    ) -> AssistantMessage {
         AssistantMessage(
             id: id,
             role: role,
@@ -55,8 +83,51 @@ struct AssistantMessage: Identifiable, Hashable, Sendable {
             at: ISO8601DateFormatter().string(from: Date()),
             steps: [],
             isRunning: isRunning,
-            status: isRunning ? "running" : "completed"
+            status: isRunning ? "running" : "completed",
+            attachments: attachments
         )
+    }
+
+    mutating func apply(_ progress: AssistantProgress) {
+        guard progress.messageID == id else { return }
+        switch progress.kind {
+        case .text(let text):
+            self.text = text
+        case .steps(let steps):
+            self.steps = steps
+        }
+    }
+}
+
+struct AssistantProgress: Sendable {
+    enum Kind: Sendable {
+        case text(String)
+        case steps([AssistantStep])
+    }
+
+    let conversationID: String
+    let messageID: String
+    let kind: Kind
+
+    static func parse(_ value: JSONValue) -> AssistantProgress? {
+        let conversationID = value.firstString("conversationId")
+        let messageID = value.firstString("messageId")
+        guard !conversationID.isEmpty, !messageID.isEmpty else { return nil }
+        switch value.firstString("type") {
+        case "agent-text":
+            return AssistantProgress(
+                conversationID: conversationID,
+                messageID: messageID,
+                kind: .text(value["text"].stringValue)
+            )
+        case "agent-step":
+            let steps = value["steps"].arrayValue.enumerated().map {
+                AssistantStep.parse($0.element, index: $0.offset)
+            }
+            return AssistantProgress(conversationID: conversationID, messageID: messageID, kind: .steps(steps))
+        default:
+            return nil
+        }
     }
 }
 

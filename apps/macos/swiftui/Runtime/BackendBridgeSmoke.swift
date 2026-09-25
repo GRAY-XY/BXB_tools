@@ -10,6 +10,16 @@ struct BackendBridgeSmoke {
             let session = try await client.invoke("session.status", as: BackendSessionStatus.self)
             let conversations = try await client.invoke("conversation.list")
             let modelConfig = try await client.invoke("modelConfig.load")
+            let stream = try await client.stream("app.info")
+            var streamedAppInfo = false
+            for try await event in stream {
+                if case .result(let value) = event {
+                    streamedAppInfo = value["platform"].stringValue == appInfo.platform
+                }
+            }
+            guard streamedAppInfo else {
+                throw BackendBridgeError.protocolFailure("流式请求没有返回 app.info 结果。")
+            }
             let conversationCount = conversations["conversations"].arrayValue.count
             let modelConfigured = modelConfig["hasApiKey"].boolValue ?? false
             print(

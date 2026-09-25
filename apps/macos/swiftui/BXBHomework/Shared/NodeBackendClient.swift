@@ -53,6 +53,11 @@ private struct BackendResponse: Decodable {
     let error: Failure?
 }
 
+enum BackendStreamEvent: Sendable {
+    case progress(JSONValue)
+    case result(JSONValue)
+}
+
 private struct BackendRuntime {
     let repositoryRoot: URL
     let nodeExecutable: URL
@@ -131,14 +136,21 @@ private struct BackendRuntime {
 }
 
 actor NodeBackendClient {
+    private let bridgeScriptOverride: URL?
     private var process: Process?
     private var stdinHandle: FileHandle?
     private var stdoutHandle: FileHandle?
     private var stderrHandle: FileHandle?
+    private var stdoutReadTask: Task<Void, Never>?
     private var stdoutBuffer = Data()
     private var stderrLines: [String] = []
     private var nextRequestID = 0
     private var pending: [String: CheckedContinuation<JSONValue, Error>] = [:]
+    private var streaming: [String: AsyncThrowingStream<BackendStreamEvent, Error>.Continuation] = [:]
+
+    init(bridgeScriptOverride: URL? = nil) {
+        self.bridgeScriptOverride = bridgeScriptOverride
+    }
 
     func invoke<T: Decodable & Sendable>(
         _ method: String,
@@ -153,7 +165,7 @@ actor NodeBackendClient {
         _ method: String,
         params: [String: JSONValue] = [:]
     ) async throws -> JSONValue {
-        try startIfNeeded()
+        try await startIfNeeded()
         nextRequestID += 1
         let requestID = String(nextRequestID)
         let request = BackendRequest(id: requestID, method: method, params: params)
@@ -171,19 +183,57 @@ actor NodeBackendClient {
         }
     }
 
-    private func startIfNeeded() throws {
+    func stream(
+        _ method: String,
+        params: [String: JSONValue] = [:]
+    ) async throws -> AsyncThrowingStream<BackendStreamEvent, Error> {
+        try await startIfNeeded()
+        nextRequestID += 1
+        let requestID = String(nextRequestID)
+        let request = BackendRequest(id: requestID, method: method, params: params)
+        var payload = try JSONEncoder().encode(request)
+        payload.append(0x0A)
+
+        return AsyncThrowingStream { continuation in
+            streaming[requestID] = continuation
+            continuation.onTermination = { [weak self] termination in
+                if case .cancelled = termination {
+                    Task { await self?.removeStream(requestID) }
+                }
+            }
+            do {
+                try stdinHandle?.write(contentsOf: payload)
+            } catch {
+                streaming.removeValue(forKey: requestID)
+                continuation.finish(throwing: BackendBridgeError.processLaunch(error.localizedDescription))
+            }
+        }
+    }
+
+    private func removeStream(_ requestID: String) {
+        streaming.removeValue(forKey: requestID)
+    }
+
+    private func startIfNeeded() async throws {
+        if let oldProcess = process, !oldProcess.isRunning {
+            await processDidTerminate(oldProcess)
+        }
         if process?.isRunning == true {
             return
         }
 
         let runtime = try BackendRuntime.locate()
+        let bridgeScript = bridgeScriptOverride ?? runtime.bridgeScript
+        guard FileManager.default.fileExists(atPath: bridgeScript.path) else {
+            throw BackendBridgeError.scriptNotFound(bridgeScript.path)
+        }
         let process = Process()
         let stdinPipe = Pipe()
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
 
         process.executableURL = runtime.nodeExecutable
-        process.arguments = [runtime.bridgeScript.path]
+        process.arguments = [bridgeScript.path]
         process.currentDirectoryURL = runtime.repositoryRoot
         process.standardInput = stdinPipe
         process.standardOutput = stdoutPipe
@@ -197,13 +247,16 @@ actor NodeBackendClient {
 
         let outputHandle = stdoutPipe.fileHandleForReading
         let errorHandle = stderrPipe.fileHandleForReading
-        outputHandle.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            guard !data.isEmpty else {
-                handle.readabilityHandler = nil
-                return
+        let stdoutChunks = AsyncStream<Data> { continuation in
+            outputHandle.readabilityHandler = { handle in
+                let data = handle.availableData
+                if data.isEmpty {
+                    handle.readabilityHandler = nil
+                    continuation.finish()
+                } else {
+                    continuation.yield(data)
+                }
             }
-            Task { await self?.consumeStdout(data) }
         }
         errorHandle.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
@@ -214,7 +267,7 @@ actor NodeBackendClient {
             Task { await self?.consumeStderr(data) }
         }
         process.terminationHandler = { [weak self] process in
-            Task { await self?.processDidTerminate(status: process.terminationStatus) }
+            Task { await self?.processDidTerminate(process) }
         }
 
         do {
@@ -229,6 +282,11 @@ actor NodeBackendClient {
         stdinHandle = stdinPipe.fileHandleForWriting
         stdoutHandle = outputHandle
         stderrHandle = errorHandle
+        stdoutReadTask = Task { [weak self] in
+            for await data in stdoutChunks {
+                await self?.consumeStdout(data)
+            }
+        }
     }
 
     private func consumeStdout(_ data: Data) {
@@ -257,12 +315,26 @@ actor NodeBackendClient {
             return
         }
 
+        guard let id = response.id else { return }
         if response.event == "progress" {
+            streaming[id]?.yield(.progress(response.result ?? .null))
             return
         }
-        guard let id = response.id, let continuation = pending.removeValue(forKey: id) else {
+        if let continuation = streaming.removeValue(forKey: id) {
+            if response.ok == true {
+                continuation.yield(.result(response.result ?? .null))
+                continuation.finish()
+            } else {
+                let message = response.error?.message ?? "本地后端请求失败。"
+                if let code = response.error?.code, !code.isEmpty {
+                    continuation.finish(throwing: BackendBridgeError.remoteCoded(code: code, message: message))
+                } else {
+                    continuation.finish(throwing: BackendBridgeError.remote(message))
+                }
+            }
             return
         }
+        guard let continuation = pending.removeValue(forKey: id) else { return }
         if response.ok == true {
             continuation.resume(returning: response.result ?? .null)
         } else {
@@ -275,13 +347,20 @@ actor NodeBackendClient {
         }
     }
 
-    private func processDidTerminate(status: Int32) {
+    private func processDidTerminate(_ terminatedProcess: Process) async {
+        guard process === terminatedProcess else { return }
+        let readTask = stdoutReadTask
+        await readTask?.value
+        guard process === terminatedProcess else { return }
+        let status = terminatedProcess.terminationStatus
         stdoutHandle?.readabilityHandler = nil
         stderrHandle?.readabilityHandler = nil
         process = nil
         stdinHandle = nil
         stdoutHandle = nil
         stderrHandle = nil
+        stdoutReadTask = nil
+        stdoutBuffer.removeAll()
 
         let details = stderrLines.suffix(3).joined(separator: " ")
         let message = details.isEmpty
@@ -292,5 +371,11 @@ actor NodeBackendClient {
         for continuation in continuations {
             continuation.resume(throwing: BackendBridgeError.processLaunch(message))
         }
+        let streams = streaming.values
+        streaming.removeAll()
+        for stream in streams {
+            stream.finish(throwing: BackendBridgeError.processLaunch(message))
+        }
+        stderrLines.removeAll()
     }
 }
