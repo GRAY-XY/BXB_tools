@@ -14,6 +14,7 @@ final class BackendConnectionModel {
     private(set) var state: State = .disconnected
     private(set) var appInfo: BackendAppInfo?
     private(set) var session: BackendSessionStatus?
+    private(set) var themePreference = "system"
     private let client = NodeBackendClient()
 
     var statusText: String {
@@ -44,6 +45,10 @@ final class BackendConnectionModel {
         do {
             appInfo = try await client.invoke("app.info", as: BackendAppInfo.self)
             session = try await client.invoke("session.status", as: BackendSessionStatus.self)
+            if let config = try? await client.invoke("modelConfig.load") {
+                let preference = config["theme"].stringValue
+                themePreference = preference.isEmpty ? "system" : preference
+            }
             state = .connected
         } catch {
             state = .failed(error.localizedDescription)
@@ -60,6 +65,26 @@ final class BackendConnectionModel {
             state = .connected
         } catch {
             state = .failed(error.localizedDescription)
+        }
+    }
+
+    func refreshSessionContext() async throws {
+        session = try await client.invoke("session.refresh", as: BackendSessionStatus.self)
+        state = .connected
+    }
+
+    func signOut() async throws {
+        session = try await client.invoke("session.logout", as: BackendSessionStatus.self)
+        state = .connected
+    }
+
+    func refreshAppInfo() async throws {
+        appInfo = try await client.invoke("app.info", as: BackendAppInfo.self)
+    }
+
+    func refreshThemePreference() async {
+        if let config = try? await client.invoke("modelConfig.load") {
+            themePreference = config["theme"].stringValue
         }
     }
 
@@ -127,6 +152,32 @@ final class BackendConnectionModel {
         _ method: String,
         params: [String: JSONValue] = [:]
     ) async throws -> AsyncThrowingStream<BackendStreamEvent, Error> {
-        try await client.stream(method, params: params)
+        var streamParams = params
+        if method == "agent.chat", streamParams["apiKeys"] == nil {
+            if let config = try? await client.invoke("modelConfig.load") {
+                streamParams["apiKeys"] = .object(try ephemeralAPIKeys(for: config))
+            }
+        }
+        return try await client.stream(method, params: streamParams)
+    }
+
+    func hasModelAPIKey(role: String, providerID: String) -> Bool {
+        (try? ModelAPIKeychainStore().load(role: role, providerID: providerID)) != nil
+    }
+
+    private func ephemeralAPIKeys(for config: JSONValue) throws -> [String: JSONValue] {
+        var roles: [String: JSONValue] = [:]
+        let keychain = ModelAPIKeychainStore()
+        for role in ["chat", "image_caption"] {
+            let providers = config["modelRoles"][role]["providers"].arrayValue
+            var keys: [String: JSONValue] = [:]
+            for provider in providers {
+                let id = provider.firstString("id", "providerId")
+                guard !id.isEmpty, let key = try keychain.load(role: role, providerID: id), !key.isEmpty else { continue }
+                keys[id] = .string(key)
+            }
+            roles[role] = .object(keys)
+        }
+        return roles
     }
 }

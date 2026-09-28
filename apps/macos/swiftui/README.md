@@ -60,6 +60,15 @@ manage conversations, reset or compact context, and preview attached images.
 Sending a message can invoke the shared agent's tools. Draft review and real
 delivery remain separate flows in the native UI.
 
+The native Settings screen provides separate chat and optional image-caption
+provider profiles, model discovery and connection checks, assistant limits and
+instructions, session refresh/sign-out, and Finder shortcuts for the local
+data directories. macOS API keys live in Keychain; the backend receives them
+only for a model check or assistant request, and they are removed from the
+local model-config file. Existing keys in that file are migrated to Keychain
+before the settings screen allows edits. Signing out only clears the saved
+Banxuebang session and leaves conversations, drafts, and workspace files alone.
+
 ## Bridge smoke test
 
 Compile and run the bridge smoke test from the repository root:
