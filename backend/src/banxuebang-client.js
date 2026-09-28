@@ -1,5 +1,6 @@
 import {
   copyFile,
+  open,
   lstat,
   mkdir,
   readdir,
@@ -2696,7 +2697,19 @@ export class BanxuebangClient {
     );
     const targetPath = path.join(downloadDir, resolvedFileName);
     const buffer = Buffer.from(await response.arrayBuffer());
-    await writeFile(targetPath, buffer);
+    let output;
+    try {
+      output = await open(targetPath, "wx");
+      await output.writeFile(buffer);
+      await output.close();
+      output = null;
+    } catch (error) {
+      if (output) {
+        await output.close().catch(() => {});
+        await unlink(targetPath).catch(() => {});
+      }
+      throw error;
+    }
 
     return {
       fileId: normalizeId(fileId),

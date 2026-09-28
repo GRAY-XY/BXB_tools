@@ -11,6 +11,7 @@ final class HomeworkViewModel {
     private(set) var isLoadingTasks = false
     private(set) var isLoadingDetail = false
     private(set) var errorMessage: String?
+    private(set) var attachmentDownloadStates: [String: HomeworkAttachmentDownloadState] = [:]
 
     var selectedCourseID = "__all_courses__"
     var selectedFilter: HomeworkFilter = .all
@@ -112,5 +113,37 @@ final class HomeworkViewModel {
             isLoadingDetail = false
             errorMessage = error.localizedDescription
         }
+    }
+
+    func attachmentDownloadState(for attachment: HomeworkAttachment) -> HomeworkAttachmentDownloadState? {
+        guard let selectedTaskID else { return nil }
+        return attachmentDownloadStates[downloadKey(taskID: selectedTaskID, fileID: attachment.id)]
+    }
+
+    func downloadAttachment(_ attachment: HomeworkAttachment, using backend: BackendConnectionModel) async {
+        guard let taskID = selectedTaskID, detail?.taskID == taskID else { return }
+        let key = downloadKey(taskID: taskID, fileID: attachment.id)
+        guard attachmentDownloadStates[key] != .downloading else { return }
+        attachmentDownloadStates[key] = .downloading
+
+        do {
+            let result = try await backend.callTool(
+                "download_task_attachment",
+                arguments: [
+                    "task_id": .string(taskID),
+                    "file_id": .string(attachment.id),
+                ]
+            )
+            guard let downloaded = HomeworkAttachmentDownload.parse(result) else {
+                throw BackendBridgeError.protocolFailure("下载结果缺少文件名或保存路径。")
+            }
+            attachmentDownloadStates[key] = .downloaded(downloaded)
+        } catch {
+            attachmentDownloadStates[key] = .failed(error.localizedDescription)
+        }
+    }
+
+    private func downloadKey(taskID: String, fileID: String) -> String {
+        "\(taskID)::\(fileID)"
     }
 }

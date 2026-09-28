@@ -4,10 +4,20 @@ import SwiftUI
 
 struct WorkspaceView: View {
     @Environment(BackendConnectionModel.self) private var backend
+    private let selectingRelativePath: String?
+    private let onWorkspaceSelectionApplied: () -> Void
     @State private var model = WorkspaceViewModel()
     @State private var showingPasteSheet = false
     @State private var showingDeleteConfirmation = false
     @State private var pendingDelete: WorkspaceFile?
+
+    init(
+        selectingRelativePath: String? = nil,
+        onWorkspaceSelectionApplied: @escaping () -> Void = {}
+    ) {
+        self.selectingRelativePath = selectingRelativePath
+        self.onWorkspaceSelectionApplied = onWorkspaceSelectionApplied
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -39,6 +49,10 @@ struct WorkspaceView: View {
             }
             guard !Task.isCancelled else { return }
             await model.loadFiles(using: backend)
+            if let selectingRelativePath {
+                await model.selectFile(relativePath: selectingRelativePath, using: backend)
+                onWorkspaceSelectionApplied()
+            }
         }
         .onChange(of: model.selectedFileID) {
             Task { await model.loadSelectedFile(using: backend) }
