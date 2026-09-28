@@ -303,6 +303,11 @@ Task submission flow:
 - Pass the `confirmationToken` returned by `prepare_draft_submission`.
 - Reject submission if the draft text or task state changed after the preview.
 - Prevent duplicate submissions while a draft is already submitting.
+- Persist a task delivery attempt before the remote request. After an app restart, an `in_flight` attempt is treated as unresolved and blocks another call.
+- On a network failure or server error, record `deliveryAttempt.status: "unknown"`, keep the draft `approved`, and show the user that they must inspect the task in Banxuebang. Never retry that attempt automatically.
+- Record a definite client rejection as `failed`; allow a new preview and confirmation after the user sees the rejection.
+- If Banxuebang succeeds but saving the local delivery record fails, report remote success separately and do not offer a retry.
+- Show delivery history and the current attempt state in the draft detail.
 - Use the task's own class ID, not the current global subject's class ID.
 - If an existing submission is detected but no existing submission ID can be determined, block automatic submission to avoid duplicate records.
 - If Banxuebang rejects the operation, keep the local draft `approved`, show the error, and show a `改用私信老师` entry.

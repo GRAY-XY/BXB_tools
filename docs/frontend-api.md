@@ -494,6 +494,9 @@ Frontend rule:
 - Only call `submit_approved_draft` after a second explicit user click on the confirmation screen.
 - Pass the `confirmationToken` returned by `prepare_draft_submission`; submission is rejected if the task state or draft content changed after preview.
 - `submit_approved_draft` repeats validation server-side, submits to the task's own class, and marks the local draft `submitted` only after Banxuebang reports success.
+- A persistent task delivery attempt is written before the remote submit request. A transport failure or server error leaves the draft `approved`, records the outcome as `unknown`, and blocks another submit call even after the desktop app restarts.
+- If the outcome is `unknown`, tell the user to inspect the task in Banxuebang before taking further action. Never retry automatically. A clear client rejection is recorded as `failed`; the user may prepare a fresh preview and explicitly try again.
+- If Banxuebang reports success but the local result record cannot be saved, show that remote success separately and do not submit again.
 - Submission failures leave the draft `approved` and must be shown to the user.
 - Task submission failures should expose a `改用私信老师` path, but must not automatically send private messages.
 - The draft page must call `prepare_draft_private_message` first and show the selected contact, course, task, full preview text split into roughly 800-character chunks, and destination.

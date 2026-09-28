@@ -54,8 +54,11 @@ root itself cannot be renamed or deleted.
 The native draft review center works without a Banxuebang login. It lists and
 filters local submission drafts, shows review warnings and missing information,
 and supports local plain-text edits plus explicit approve/reject confirmations.
-Approving a draft never submits an assignment or sends a private message; all
-delivery actions remain disconnected.
+Approved drafts can open a structured task-submission preview with the full text,
+destination, mode, and retained attachments; the user must click a separate
+confirmation button before submission. A persistent delivery record blocks
+automatic retries when a network failure leaves the remote result uncertain.
+Private-message delivery remains disconnected.
 
 The native assistant page reads local conversations and model configuration,
 supports text and workspace image prompts, and streams the response and tool
