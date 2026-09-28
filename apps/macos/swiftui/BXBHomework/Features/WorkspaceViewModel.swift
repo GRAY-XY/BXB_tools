@@ -137,6 +137,18 @@ final class WorkspaceViewModel {
         }
     }
 
+    func selectFile(relativePath: String, using backend: BackendConnectionModel) async {
+        guard let file = files.first(where: { $0.relativePath == relativePath }) else {
+            actionError = "工作区中找不到已下载的文件：\(relativePath)"
+            return
+        }
+        let selectionChanged = selectedFileID != file.id
+        selectedFileID = file.id
+        if !selectionChanged {
+            await loadSelectedFile(using: backend)
+        }
+    }
+
     // MARK: - Messages
 
     func clearActionMessages() {

@@ -3,6 +3,7 @@ import SwiftUI
 struct AppShellView: View {
     @Environment(BackendConnectionModel.self) private var backend
     @State private var selection: AppSection? = .overview
+    @State private var pendingWorkspaceRelativePath: String?
 
     var body: some View {
         NavigationSplitView {
@@ -17,11 +18,16 @@ struct AppShellView: View {
             case .overview:
                 OverviewView()
             case .homework:
-                HomeworkView()
+                HomeworkView { relativePath in
+                    pendingWorkspaceRelativePath = relativePath
+                    selection = .workspace
+                }
             case .assistant:
                 AssistantView()
             case .workspace:
-                WorkspaceView()
+                WorkspaceView(selectingRelativePath: pendingWorkspaceRelativePath) {
+                    pendingWorkspaceRelativePath = nil
+                }
             case .review:
                 DraftReviewView()
             case .messages:

@@ -53,6 +53,15 @@ struct HomeworkParsingSmoke {
         precondition(parsedDetail.status == "待处理")
         precondition(parsedDetail.attachments.first?.name == "要求.pdf")
 
+        let downloaded = try decode(#"""
+        {"fileId":"88","fileName":"要求.pdf","path":"/tmp/workspace/要求.pdf","sizeBytes":321}
+        """#)
+        let parsedDownload = HomeworkAttachmentDownload.parse(downloaded)
+        precondition(parsedDownload?.fileName == "要求.pdf")
+        precondition(parsedDownload?.path == "/tmp/workspace/要求.pdf")
+        precondition(parsedDownload?.sizeBytes == 321)
+        precondition(HomeworkAttachmentDownload.parse(try decode("{}")) == nil)
+
         print("homework-parsing=ok courses=\(parsedCourses.count) tasks=\(parsedTasks.count) attachments=\(parsedDetail.attachments.count)")
     }
 

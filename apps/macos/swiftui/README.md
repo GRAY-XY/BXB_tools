@@ -23,12 +23,16 @@ xcodebuild \
 The native shell starts the shared Node JSONL bridge, reads app/session status,
 and exposes a user-triggered native login form. Credentials are sent only to the
 local Node process for login and are optionally stored in the macOS Keychain
-after a successful login. Mutating homework tools are not connected yet.
+after a successful login. Attachment download is connected; submission and other
+external homework actions remain disconnected.
 
 The native homework center uses the shared read-only course, task-list, and task
 content tools. It supports course selection, all/pending filtering, and detail
-views for task text, reference content, and attachment metadata. Download and
-submission actions remain intentionally disconnected.
+views for task text, reference content, and attachment metadata. Users can
+download task attachments into the managed workspace, see the saved location or
+a retryable failure, and open a successful download in the workspace preview.
+Submission and draft-delivery actions remain disconnected until the reviewed
+delivery flow is implemented.
 
 The native workspace browser can search and read the shared local workspace
 without a Banxuebang login. Text files use the bounded backend reader; images,

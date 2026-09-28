@@ -109,6 +109,25 @@ struct HomeworkAttachment: Identifiable, Hashable, Sendable {
     }
 }
 
+struct HomeworkAttachmentDownload: Hashable, Sendable {
+    let fileName: String
+    let path: String
+    let sizeBytes: Int
+
+    static func parse(_ value: JSONValue) -> Self? {
+        let fileName = value.firstString("fileName")
+        let path = value.firstString("path")
+        guard !fileName.isEmpty, !path.isEmpty else { return nil }
+        return Self(fileName: fileName, path: path, sizeBytes: value["sizeBytes"].intValue ?? 0)
+    }
+}
+
+enum HomeworkAttachmentDownloadState: Equatable, Sendable {
+    case downloading
+    case downloaded(HomeworkAttachmentDownload)
+    case failed(String)
+}
+
 struct HomeworkDetail: Sendable {
     let taskID: String
     let title: String
