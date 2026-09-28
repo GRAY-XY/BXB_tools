@@ -136,6 +136,11 @@ xcrun swiftc -parse-as-library \
 /tmp/bxb-draft-parsing-smoke
 ```
 
+The draft review screen requires a second explicit confirmation before either task
+submission or teacher messaging. Teacher messages are previewed with a selected
+existing contact and exact chunks; a definite rejection resumes at the failed
+chunk, while an uncertain result locks the draft until the conversation is checked.
+
 Assistant conversation and model-summary parsing can be verified without a
 configured model:
 

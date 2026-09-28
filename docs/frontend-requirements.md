@@ -327,10 +327,11 @@ Teacher private-message flow:
 - Require a second explicit click on `确认并分条发送`.
 - Pass the `confirmationToken` returned by the contact-specific preview.
 - Reject send if the draft, task, contact, or chunk text changed after the preview.
-- Prevent duplicate private-message sends while a draft is already sending.
-- Send chunks sequentially through `sendPrivateMessageText`.
-- If chunk N fails, stop subsequent chunks, keep the local draft `approved`, and show sent count plus the error.
-- Mark the local draft `sent_to_teacher` only after all chunks succeed.
+- Persist an in-flight attempt before each message chunk and checkpoint each confirmed chunk before continuing.
+- If a chunk is definitely rejected, keep the local draft `approved` and allow a fresh preview and confirmation to resume at that chunk without resending confirmed chunks.
+- If a transport or server failure makes the result uncertain, keep the local draft `approved`, mark the attempt `unknown`, and block resending after restart. Tell the user to inspect the Banxuebang conversation first.
+- While a teacher-message attempt is in flight, unknown, or partially confirmed, lock the draft against edits and deletion. Block another draft from sending to the same task and contact until that delivery is resolved.
+- Show confirmed chunk count and the exact next chunk in the preview. A fully successful teacher message marks the local draft `sent_to_teacher`, not `submitted`.
 
 Agent boundary:
 
