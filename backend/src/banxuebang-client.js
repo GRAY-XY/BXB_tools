@@ -1112,6 +1112,7 @@ export class BanxuebangClient {
     this.store = store;
     this.draftStore = draftStore;
     this.submittingDraftIds = new Set();
+    this.submittingTaskIds = new Set();
     this.sendingDraftMessageIds = new Set();
   }
 
@@ -2968,6 +2969,7 @@ export class BanxuebangClient {
         submittedAt: draft.submittedAt,
         sentToTeacherAt: draft.sentToTeacherAt,
         deliveryTarget: draft.deliveryTarget || draft.preferredTarget || "task",
+        deliveryAttemptStatus: draft.deliveryAttempt?.status || null,
         deliveryHistoryCount: Array.isArray(draft.deliveryHistory) ? draft.deliveryHistory.length : 0,
         needsUserInput: Boolean(draft.needsUserInput),
         missingInfoCount: Array.isArray(draft.missingInfo) ? draft.missingInfo.length : 0,
@@ -3127,6 +3129,13 @@ export class BanxuebangClient {
     const submissionId = lastAwcId || submissionRecordId(existingSubmission);
     const hasExistingSubmission =
       Boolean(existingSubmission || submissionId) || isParticipatedHomework(taskSummary) || isParticipatedHomework(task);
+    const unresolvedTaskAttempt = (await this.draftStore.list()).find((item) =>
+      String(item.draftId) !== String(draft.draftId) &&
+      normalizeId(item.taskId) === normalizeId(draft.taskId) &&
+      ["in_flight", "unknown"].includes(item.deliveryAttempt?.status),
+    );
+    const unresolvedAttempt =
+      ["in_flight", "unknown"].includes(draft.deliveryAttempt?.status) || Boolean(unresolvedTaskAttempt);
     const isCorrection =
       isEnabledFlag(taskSummary.correction) ||
       isEnabledFlag(task.correction) ||
@@ -3145,10 +3154,12 @@ export class BanxuebangClient {
       modeLabel = "补交";
     }
 
-    const canSubmit = !hasExistingSubmission || Boolean(submissionId);
-    const reason = canSubmit
-      ? null
-      : "检测到该 task 已有提交记录，但无法确定原提交记录 ID。为避免产生重复提交，当前不能自动提交。";
+    const canSubmit = (!hasExistingSubmission || Boolean(submissionId)) && !unresolvedAttempt;
+    const reason = unresolvedAttempt
+      ? "上次提交的结果尚未确认。请先在伴学邦核对 task 状态；系统已阻止重复提交。"
+      : canSubmit
+        ? null
+        : "检测到该 task 已有提交记录，但无法确定原提交记录 ID。为避免产生重复提交，当前不能自动提交。";
     const retainedAttachments = toArray(detail.mySubmissionAttachments).map((attachment) => ({
       fileId: attachment.fileId,
       fileName: attachment.fileName || attachment.name || null,
@@ -3192,14 +3203,61 @@ export class BanxuebangClient {
       throw new Error("这个草稿正在提交，请等待当前提交完成。");
     }
     this.submittingDraftIds.add(normalizedDraftId);
+    let lockedTaskId = null;
 
     try {
+      const currentDraft = await this.draftStore.get(draftId);
+      if (!currentDraft) {
+        throw draftNotFoundError(draftId);
+      }
+      if (currentDraft.status !== "approved") {
+        throw new Error("只有已通过审核的草稿可以提交。");
+      }
+      lockedTaskId = normalizeId(currentDraft.taskId);
+      if (lockedTaskId && this.submittingTaskIds.has(lockedTaskId)) {
+        throw new Error("该 task 正在提交另一份草稿，请等待当前提交结果。");
+      }
+      if (lockedTaskId) this.submittingTaskIds.add(lockedTaskId);
+      if (["in_flight", "unknown"].includes(currentDraft.deliveryAttempt?.status)) {
+        const error = new Error("上次提交的结果尚未确认，请先核对伴学邦 task 状态；系统已阻止重复提交。");
+        error.code = "delivery_unknown";
+        throw error;
+      }
+
       const preview = await this.prepareDraftSubmission(draftId);
       if (!preview.canSubmit) {
         throw new Error(preview.reason || "当前草稿无法提交。");
       }
       if (preview.confirmationToken !== confirmationToken) {
         throw new Error("草稿正文或 task 状态在确认后发生了变化，请返回草稿并重新核对提交内容。");
+      }
+
+      const startedAt = new Date().toISOString();
+      const attemptId = randomUUID();
+      const startedDraft = await this.draftStore.update(draftId, async (draft) => {
+        if (draft.status !== "approved") {
+          throw new Error("只有已通过审核的草稿可以提交。");
+        }
+        if (["in_flight", "unknown"].includes(draft.deliveryAttempt?.status)) {
+          const error = new Error("上次提交的结果尚未确认，请先核对伴学邦 task 状态。");
+          error.code = "delivery_unknown";
+          throw error;
+        }
+        return {
+          ...draft,
+          deliveryAttempt: {
+            id: attemptId,
+            target: "task",
+            status: "in_flight",
+            taskId: preview.taskId,
+            mode: preview.mode,
+            startedAt,
+          },
+          updatedAt: startedAt,
+        };
+      });
+      if (!startedDraft) {
+        throw draftNotFoundError(draftId);
       }
 
       let submission;
@@ -3212,7 +3270,44 @@ export class BanxuebangClient {
           classId: preview.classId,
         });
       } catch (error) {
-        throw new Error(`无法提交到伴学邦：${error.message}`);
+        const finishedAt = new Date().toISOString();
+        const outcomeUnknown = Boolean(error?.deliveryOutcomeUnknown);
+        const attemptStatus = outcomeUnknown ? "unknown" : "failed";
+        let localRecordError = null;
+        try {
+          await this.draftStore.update(draftId, async (draft) => ({
+            ...draft,
+            deliveryAttempt: {
+              ...draft.deliveryAttempt,
+              status: attemptStatus,
+              completedAt: finishedAt,
+              error: error.message,
+            },
+            updatedAt: finishedAt,
+            deliveryHistory: [
+              ...toArray(draft.deliveryHistory),
+              {
+                type: "task",
+                status: attemptStatus,
+                attemptId,
+                taskId: preview.taskId,
+                mode: preview.mode,
+                modeLabel: preview.modeLabel,
+                startedAt,
+                completedAt: finishedAt,
+                error: error.message,
+              },
+            ],
+          }));
+        } catch (recordError) {
+          localRecordError = `本地交付状态无法保存：${recordError.message}`;
+        }
+        const message = outcomeUnknown
+          ? `提交结果未知，请先核对伴学邦中的作业状态。系统已阻止重试。${localRecordError ? ` ${localRecordError}` : ""}`
+          : `无法提交到伴学邦：${error.message}${localRecordError ? ` ${localRecordError}` : ""}`;
+        const wrapped = new Error(message, { cause: error });
+        if (outcomeUnknown) wrapped.code = "delivery_unknown";
+        throw wrapped;
       }
 
       const submittedAt = new Date().toISOString();
@@ -3233,11 +3328,22 @@ export class BanxuebangClient {
             submittedAt,
             result: submission.result ?? null,
           },
+          deliveryAttempt: {
+            id: attemptId,
+            target: "task",
+            status: "success",
+            taskId: preview.taskId,
+            mode: preview.mode,
+            startedAt,
+            completedAt: submittedAt,
+            submissionId: submission.submissionId || preview.submissionId || null,
+          },
           deliveryHistory: [
             ...toArray(draft.deliveryHistory),
             {
               type: "task",
               status: "success",
+              attemptId,
               taskId: preview.taskId,
               mode: preview.mode,
               modeLabel: preview.modeLabel,
@@ -3265,6 +3371,7 @@ export class BanxuebangClient {
       };
     } finally {
       this.submittingDraftIds.delete(normalizedDraftId);
+      if (lockedTaskId) this.submittingTaskIds.delete(lockedTaskId);
     }
   }
 
@@ -3605,12 +3712,21 @@ export class BanxuebangClient {
       throw new Error("内容和附件不能都为空");
     }
 
-    const result = safeBusinessResult(
-      await this.request(session, "PUT", "/gateway/bxb/activityUser/receipt", {
+    let response;
+    try {
+      response = await this.request(session, "PUT", "/gateway/bxb/activityUser/receipt", {
         body: payload,
-      }),
-      "activityUser/receipt",
-    );
+      });
+    } catch (error) {
+      const status = Number(String(error?.message || "").match(/^HTTP (\d{3})\b/)?.[1] || 0);
+      if (!status || status >= 500) {
+        const uncertain = new Error(error?.message || "提交请求中断，无法确认伴学邦是否已接收。", { cause: error });
+        uncertain.deliveryOutcomeUnknown = true;
+        throw uncertain;
+      }
+      throw error;
+    }
+    const result = safeBusinessResult(response, "activityUser/receipt");
 
     await this.refreshContext(session);
 
