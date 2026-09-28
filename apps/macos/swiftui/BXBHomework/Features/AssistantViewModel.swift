@@ -81,7 +81,19 @@ final class AssistantViewModel {
         }
 
         guard loadRequestID == requestID else { return }
-        modelSummary = (try? await backend.invoke("modelConfig.load")).map(AssistantModelSummary.parse)
+        if let config = try? await backend.invoke("modelConfig.load") {
+            let parsed = AssistantModelSummary.parse(config)
+            let providerID = config["modelRoles"]["chat"].firstString("activeProviderId", "providerId")
+            let keyAvailable = (!providerID.isEmpty && backend.hasModelAPIKey(role: "chat", providerID: providerID))
+                || parsed.hasAPIKey
+            modelSummary = AssistantModelSummary(
+                providerName: parsed.providerName,
+                modelName: parsed.modelName,
+                hasAPIKey: keyAvailable
+            )
+        } else {
+            modelSummary = nil
+        }
     }
 
     func createConversation(using backend: BackendConnectionModel) async {

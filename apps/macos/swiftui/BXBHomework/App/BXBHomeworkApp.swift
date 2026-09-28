@@ -15,7 +15,7 @@ struct BXBHomeworkApp: App {
         .defaultSize(width: 1180, height: 760)
 
         Settings {
-            NativeSettingsView()
+            SettingsView()
                 .environment(backend)
         }
     }
