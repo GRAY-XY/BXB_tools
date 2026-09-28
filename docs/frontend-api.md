@@ -502,7 +502,8 @@ Frontend rule:
 - The draft page must call `prepare_draft_private_message` first and show the selected contact, course, task, full preview text split into roughly 800-character chunks, and destination.
 - Only call `send_approved_draft_private_message` after a second explicit user click on the confirmation screen.
 - Pass the `confirmationToken` returned by the contact-specific `prepare_draft_private_message`; sending is rejected if the draft, task, contact, or chunk text changed after preview.
-- `send_approved_draft_private_message` sends chunks sequentially. If chunk N fails, it stops, leaves the draft `approved`, and returns the sent count plus the error.
+- `send_approved_draft_private_message` writes an `in_flight` record before each chunk, then persists each confirmed chunk before continuing. A clear rejection leaves the draft `approved` and allows a fresh confirmation to resume at the rejected chunk without resending earlier chunks. A transport or server failure becomes `unknown` and blocks resending after restart; inspect the conversation in Banxuebang before taking further action.
+- A partial or uncertain teacher-message delivery locks the draft against edits and deletion so its content, contact, and duplicate-send guard remain intact. Other drafts for the same task and contact cannot start while a delivery is unresolved or has confirmed chunks.
 - A fully successful teacher message marks the local draft `sent_to_teacher`, not `submitted`.
 
 ### Autonomous Agent Tool Set

@@ -184,7 +184,16 @@ struct DraftReviewView: View {
                 canPrepareSubmission: model.canPrepareSubmission,
                 onPrepareSubmission: { Task { await model.prepareSubmission(using: backend) } },
                 onCancelSubmission: model.cancelSubmissionPreview,
-                onSubmit: { Task { await model.submitPreparedDraft(using: backend) } }
+                onSubmit: { Task { await model.submitPreparedDraft(using: backend) } },
+                privateMessagePreview: model.privateMessagePreview,
+                selectedPrivateMessageContactKey: model.selectedPrivateMessageContactKey,
+                canPreparePrivateMessage: model.canPreparePrivateMessage,
+                onPreparePrivateMessage: { Task { await model.preparePrivateMessage(using: backend) } },
+                onSelectPrivateMessageContact: { key in
+                    Task { await model.selectPrivateMessageContact(key, using: backend) }
+                },
+                onCancelPrivateMessage: model.cancelPrivateMessagePreview,
+                onSendPrivateMessage: { Task { await model.sendPreparedPrivateMessage(using: backend) } }
             )
         } else if let error = model.detailError {
             ContentUnavailableView(
@@ -235,8 +244,10 @@ private struct DraftSummaryRow: View {
                 .font(.caption2)
                 .foregroundStyle(.orange)
             }
-            if ["unknown", "in_flight"].contains(draft.deliveryAttemptStatus) {
-                Label("提交结果待核对", systemImage: "exclamationmark.triangle.fill")
+            if ["unknown", "in_flight"].contains(draft.deliveryAttemptStatus)
+                || ["unknown", "in_flight", "ready"].contains(draft.teacherMessageAttemptStatus)
+                || (draft.teacherMessageAttemptStatus == "failed" && draft.teacherMessageConfirmedCount > 0) {
+                Label("交付进度待核对", systemImage: "exclamationmark.triangle.fill")
                     .font(.caption2)
                     .foregroundStyle(.orange)
             }
@@ -261,12 +272,23 @@ private struct DraftDetailView: View {
     let onPrepareSubmission: () -> Void
     let onCancelSubmission: () -> Void
     let onSubmit: () -> Void
+    let privateMessagePreview: DraftPrivateMessagePreview?
+    let selectedPrivateMessageContactKey: String?
+    let canPreparePrivateMessage: Bool
+    let onPreparePrivateMessage: () -> Void
+    let onSelectPrivateMessageContact: (String) -> Void
+    let onCancelPrivateMessage: () -> Void
+    let onSendPrivateMessage: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
             ScrollView {
                 if let submissionPreview {
                     submissionPreviewSection(submissionPreview)
+                        .padding(20)
+                        .frame(maxWidth: 860, alignment: .leading)
+                } else if let privateMessagePreview {
+                    privateMessagePreviewSection(privateMessagePreview)
                         .padding(20)
                         .frame(maxWidth: 860, alignment: .leading)
                 } else {
@@ -306,8 +328,8 @@ private struct DraftDetailView: View {
                 Label("这份草稿已交付，不能再编辑或审核。", systemImage: "lock.fill")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            } else if ["unknown", "in_flight"].contains(detail.deliveryAttemptStatus) {
-                Label("上次提交结果待核对；请先检查伴学邦中的作业状态。系统已阻止重复提交。", systemImage: "exclamationmark.triangle.fill")
+            } else if detail.hasUnresolvedDelivery {
+                Label("交付仍有未核对或已部分送达的内容；正文已锁定，避免修改后重发造成重复。", systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
                     .foregroundStyle(.orange)
             } else {
@@ -363,7 +385,7 @@ private struct DraftDetailView: View {
             VStack(alignment: .leading, spacing: 10) {
                 TextField("摘要（可选）", text: $editableSummary)
                     .textFieldStyle(.roundedBorder)
-                    .disabled(detail.isFinal || isPerformingAction)
+                    .disabled(!detail.canEdit || isPerformingAction)
 
                 TextEditor(text: $editableText)
                     .font(.body)
@@ -375,7 +397,7 @@ private struct DraftDetailView: View {
                         RoundedRectangle(cornerRadius: 8)
                             .stroke(.separator, lineWidth: 1)
                     }
-                    .disabled(detail.isFinal || isPerformingAction)
+                    .disabled(!detail.canEdit || isPerformingAction)
 
                 Text("正文必须保持纯文本。保存修改后状态会回到“待审核”。")
                     .font(.caption)
@@ -397,6 +419,16 @@ private struct DraftDetailView: View {
                                 .foregroundStyle(entry.status == "success" ? Color.primary : Color.orange)
                             if !entry.modeLabel.isEmpty {
                                 Text("方式：\(entry.modeLabel)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            if !entry.contactName.isEmpty {
+                                Text("联系人：\(entry.contactName)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            if !entry.progress.isEmpty {
+                                Text(entry.progress)
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -494,6 +526,107 @@ private struct DraftDetailView: View {
         }
     }
 
+    private func privateMessagePreviewSection(_ preview: DraftPrivateMessagePreview) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text("私信发送前核对")
+                    .font(.title2.bold())
+                Text("先选定老师并检查所有消息分段。只有点击“确认并发送”后才会发送；续发只发送尚未确认的分段。")
+                    .foregroundStyle(.secondary)
+            }
+
+            GroupBox("发送目标") {
+                Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 8) {
+                    metadataRow("课程", preview.subjectName)
+                    metadataRow("作业", preview.taskTitle)
+                    metadataRow("Task ID", preview.taskID)
+                    metadataRow("目标", preview.destination)
+                    if let selectedContact = preview.selectedContact {
+                        metadataRow("联系人", selectedContact.peerName)
+                        metadataRow("班级", selectedContact.className)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 5)
+            }
+
+            GroupBox("选择已有联系人") {
+                if preview.contacts.isEmpty {
+                    Label("当前伴学邦账号没有可用的私信联系人。", systemImage: "person.crop.circle.badge.exclamationmark")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    Picker("老师联系人", selection: Binding(
+                        get: { selectedPrivateMessageContactKey ?? preview.selectedContact?.contactKey ?? "" },
+                        set: onSelectPrivateMessageContact
+                    )) {
+                        Text("选择联系人…").tag("")
+                        ForEach(preview.contacts) { contact in
+                            Text(contact.pickerLabel).tag(contact.contactKey)
+                        }
+                    }
+                    .frame(maxWidth: 520, alignment: .leading)
+                }
+            }
+
+            if preview.confirmedChunkCount > 0 {
+                Label(
+                    "已确认发送 \(preview.confirmedChunkCount) 段；接下来从第 \(preview.nextChunkIndex + 1) 段继续。",
+                    systemImage: "arrowshape.turn.up.right.circle"
+                )
+                .foregroundStyle(.orange)
+            }
+
+            GroupBox("完整私信正文（按发送分段）") {
+                if preview.chunks.isEmpty {
+                    Text("没有可发送的消息正文。")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(preview.chunks) { chunk in
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack {
+                                    Text("第 \(chunk.index)/\(chunk.total) 段")
+                                        .fontWeight(.semibold)
+                                    if chunk.index <= preview.confirmedChunkCount {
+                                        Label("已确认发送", systemImage: "checkmark.circle.fill")
+                                            .font(.caption)
+                                            .foregroundStyle(.green)
+                                    }
+                                    Spacer()
+                                    Text("\(chunk.length) 字")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Text(chunk.text)
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(10)
+                                    .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+                            }
+                            if chunk.id != preview.chunks.last?.id {
+                                Divider()
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 5)
+                }
+            }
+
+            if !preview.note.isEmpty {
+                Label(preview.note, systemImage: "info.circle")
+                    .foregroundStyle(.orange)
+            }
+            if !preview.canSend {
+                Label(preview.reason.isEmpty ? "当前无法安全发送私信。" : preview.reason, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+            }
+        }
+    }
+
     private var actionBar: some View {
         HStack(spacing: 10) {
             if isPerformingAction {
@@ -522,9 +655,15 @@ private struct DraftDetailView: View {
                 Button("确认并提交", action: onSubmit)
                     .buttonStyle(.borderedProminent)
                     .disabled(isPerformingAction || submissionPreview?.canSubmit != true)
+            } else if privateMessagePreview != nil {
+                Button("返回草稿", action: onCancelPrivateMessage)
+                    .disabled(isPerformingAction)
+                Button("确认并发送", action: onSendPrivateMessage)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isPerformingAction || privateMessagePreview?.canSend != true)
             } else {
                 Button("保存正文", action: onSave)
-                    .disabled(detail.isFinal || !hasUnsavedChanges || isPerformingAction || editableText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(!detail.canEdit || !hasUnsavedChanges || isPerformingAction || editableText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
                 Button("驳回", role: .destructive, action: onReject)
                     .disabled(!detail.canReview || hasUnsavedChanges || isPerformingAction)
@@ -536,6 +675,8 @@ private struct DraftDetailView: View {
                 if detail.status == "approved" {
                     Button("准备提交", action: onPrepareSubmission)
                         .disabled(!canPrepareSubmission)
+                    Button(detail.deliveryAttemptStatus == "failed" ? "改用私信老师" : "准备私信老师", action: onPreparePrivateMessage)
+                        .disabled(!canPreparePrivateMessage)
                 }
             }
         }

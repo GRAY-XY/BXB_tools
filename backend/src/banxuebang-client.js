@@ -371,6 +371,28 @@ function isFinalDraftStatus(status) {
   return FINAL_DRAFT_STATUSES.has(String(status || "").trim());
 }
 
+function draftHasUnresolvedTaskSubmission(draft) {
+  return ["in_flight", "unknown"].includes(String(draft?.deliveryAttempt?.status || ""));
+}
+
+function draftHasUnresolvedTeacherMessage(draft) {
+  const messageAttempt = ensureObject(draft?.teacherMessageAttempt);
+  const messageStatus = String(messageAttempt.status || "");
+  const confirmedMessages = toArray(messageAttempt.confirmedMessages);
+  return ["in_flight", "unknown", "ready"].includes(messageStatus) ||
+    (messageStatus === "failed" && confirmedMessages.length > 0);
+}
+
+function draftHasUnresolvedDelivery(draft) {
+  return draftHasUnresolvedTaskSubmission(draft) || draftHasUnresolvedTeacherMessage(draft);
+}
+
+function assertDraftDeliverySettled(draft) {
+  if (draftHasUnresolvedDelivery(draft)) {
+    throw new Error("这份草稿有尚未核对或已部分送达的交付记录；请先处理交付状态后再编辑或删除。");
+  }
+}
+
 function draftNotFoundError(draftId) {
   return new Error(`找不到草稿 ${draftId}。草稿可能已被删除，请刷新草稿列表后重试。`);
 }
@@ -384,6 +406,25 @@ function draftPrivateMessageContactKey(contact) {
     normalizeId(source.receiverId) || "",
     normalizeId(source.senderId) || "",
   ].join("|");
+}
+
+function draftPrivateMessageContactSummary(contact) {
+  const source = ensureObject(contact?.raw || contact);
+  return {
+    id: normalizeId(source.id),
+    classId: normalizeId(source.classId),
+    className: source.className || null,
+    peerId: normalizeId(source.peerId),
+    peerName: source.peerName || null,
+    peerType: source.peerType || null,
+    receiverId: normalizeId(source.receiverId),
+    receiverType: source.receiverType || null,
+    senderId: normalizeId(source.senderId),
+    senderType: source.senderType || null,
+    childId: normalizeId(source.childId) || "",
+    kinship: source.kinship || "",
+    courseName: source.courseName || null,
+  };
 }
 
 function draftPrivateMessageConfirmationToken(preview) {
@@ -1114,6 +1155,7 @@ export class BanxuebangClient {
     this.submittingDraftIds = new Set();
     this.submittingTaskIds = new Set();
     this.sendingDraftMessageIds = new Set();
+    this.sendingTaskContactKeys = new Set();
   }
 
   async getSession() {
@@ -2539,12 +2581,23 @@ export class BanxuebangClient {
       contentType: "T",
     };
 
-    const response = safeBusinessResult(
-      await this.request(session, "POST", "/gateway/bxb/priv-msg-content/send", {
+    let response;
+    try {
+      response = await this.request(session, "POST", "/gateway/bxb/priv-msg-content/send", {
         body,
-      }),
-      "priv-msg-content-send",
-    );
+      });
+    } catch (error) {
+      const status = Number(String(error?.message || "").match(/^HTTP (\d{3})\b/)?.[1] || 0);
+      error.deliveryOutcomeUnknown = !status || status >= 500;
+      throw error;
+    }
+
+    try {
+      response = safeBusinessResult(response, "priv-msg-content-send");
+    } catch (error) {
+      error.deliveryOutcomeUnknown = false;
+      throw error;
+    }
 
     return {
       sent: true,
@@ -2970,6 +3023,8 @@ export class BanxuebangClient {
         sentToTeacherAt: draft.sentToTeacherAt,
         deliveryTarget: draft.deliveryTarget || draft.preferredTarget || "task",
         deliveryAttemptStatus: draft.deliveryAttempt?.status || null,
+        teacherMessageAttemptStatus: draft.teacherMessageAttempt?.status || null,
+        teacherMessageConfirmedCount: toArray(draft.teacherMessageAttempt?.confirmedMessages).length,
         deliveryHistoryCount: Array.isArray(draft.deliveryHistory) ? draft.deliveryHistory.length : 0,
         needsUserInput: Boolean(draft.needsUserInput),
         missingInfoCount: Array.isArray(draft.missingInfo) ? draft.missingInfo.length : 0,
@@ -3000,6 +3055,7 @@ export class BanxuebangClient {
       if (isFinalDraftStatus(draft.status)) {
         throw new Error("已交付的草稿不能再修改。请新建草稿后重新审核。");
       }
+      assertDraftDeliverySettled(draft);
 
       return {
         ...draft,
@@ -3030,6 +3086,7 @@ export class BanxuebangClient {
       if (isFinalDraftStatus(draft.status)) {
         throw new Error("已交付的草稿不能再次审核。请新建草稿后重新审核。");
       }
+      assertDraftDeliverySettled(draft);
 
       const reviewedAt = new Date().toISOString();
       return {
@@ -3060,6 +3117,7 @@ export class BanxuebangClient {
       if (isFinalDraftStatus(draft.status)) {
         throw new Error("已交付的草稿不能再次审核。请新建草稿后重新审核。");
       }
+      assertDraftDeliverySettled(draft);
 
       const rejectedAt = new Date().toISOString();
       return {
@@ -3091,6 +3149,8 @@ export class BanxuebangClient {
     if (!draft) {
       throw draftNotFoundError(draftId);
     }
+
+    assertDraftDeliverySettled(draft);
 
     await this.draftStore.clear(draftId);
 
@@ -3129,11 +3189,14 @@ export class BanxuebangClient {
     const submissionId = lastAwcId || submissionRecordId(existingSubmission);
     const hasExistingSubmission =
       Boolean(existingSubmission || submissionId) || isParticipatedHomework(taskSummary) || isParticipatedHomework(task);
-    const unresolvedTaskAttempt = (await this.draftStore.list()).find((item) =>
-      String(item.draftId) !== String(draft.draftId) &&
-      normalizeId(item.taskId) === normalizeId(draft.taskId) &&
-      ["in_flight", "unknown"].includes(item.deliveryAttempt?.status),
+    const sameTaskDrafts = (await this.draftStore.list()).filter((item) =>
+      normalizeId(item.taskId) === normalizeId(draft.taskId),
     );
+    const unresolvedTaskAttempt = sameTaskDrafts.find((item) =>
+      String(item.draftId) !== String(draft.draftId) &&
+      draftHasUnresolvedTaskSubmission(item),
+    );
+    const unresolvedTeacherMessage = sameTaskDrafts.find(draftHasUnresolvedTeacherMessage);
     const unresolvedAttempt =
       ["in_flight", "unknown"].includes(draft.deliveryAttempt?.status) || Boolean(unresolvedTaskAttempt);
     const isCorrection =
@@ -3154,12 +3217,14 @@ export class BanxuebangClient {
       modeLabel = "补交";
     }
 
-    const canSubmit = (!hasExistingSubmission || Boolean(submissionId)) && !unresolvedAttempt;
+    const canSubmit = (!hasExistingSubmission || Boolean(submissionId)) && !unresolvedAttempt && !unresolvedTeacherMessage;
     const reason = unresolvedAttempt
       ? "上次提交的结果尚未确认。请先在伴学邦核对 task 状态；系统已阻止重复提交。"
-      : canSubmit
-        ? null
-        : "检测到该 task 已有提交记录，但无法确定原提交记录 ID。为避免产生重复提交，当前不能自动提交。";
+      : unresolvedTeacherMessage
+        ? "同一 task 的老师私信仍有未核对或部分送达记录，请先处理该记录再提交作业。"
+        : canSubmit
+          ? null
+          : "检测到该 task 已有提交记录，但无法确定原提交记录 ID。为避免产生重复提交，当前不能自动提交。";
     const retainedAttachments = toArray(detail.mySubmissionAttachments).map((attachment) => ({
       fileId: attachment.fileId,
       fileName: attachment.fileName || attachment.name || null,
@@ -3204,6 +3269,7 @@ export class BanxuebangClient {
     }
     this.submittingDraftIds.add(normalizedDraftId);
     let lockedTaskId = null;
+    let didLockTask = false;
 
     try {
       const currentDraft = await this.draftStore.get(draftId);
@@ -3217,7 +3283,10 @@ export class BanxuebangClient {
       if (lockedTaskId && this.submittingTaskIds.has(lockedTaskId)) {
         throw new Error("该 task 正在提交另一份草稿，请等待当前提交结果。");
       }
-      if (lockedTaskId) this.submittingTaskIds.add(lockedTaskId);
+      if (lockedTaskId) {
+        this.submittingTaskIds.add(lockedTaskId);
+        didLockTask = true;
+      }
       if (["in_flight", "unknown"].includes(currentDraft.deliveryAttempt?.status)) {
         const error = new Error("上次提交的结果尚未确认，请先核对伴学邦 task 状态；系统已阻止重复提交。");
         error.code = "delivery_unknown";
@@ -3371,7 +3440,7 @@ export class BanxuebangClient {
       };
     } finally {
       this.submittingDraftIds.delete(normalizedDraftId);
-      if (lockedTaskId) this.submittingTaskIds.delete(lockedTaskId);
+      if (didLockTask) this.submittingTaskIds.delete(lockedTaskId);
     }
   }
 
@@ -3403,9 +3472,10 @@ export class BanxuebangClient {
     const contacts = toArray(contactsResult.contacts)
       .map((item) => {
         const contactSummary = item?.peerName || item?.peerId ? item : summarizePrivateContact(item.raw || item);
+        const deliveryContact = draftPrivateMessageContactSummary(contactSummary);
         return {
-          ...contactSummary,
-          contactKey: draftPrivateMessageContactKey(contactSummary),
+          ...deliveryContact,
+          contactKey: draftPrivateMessageContactKey(deliveryContact),
           ...scoreDraftPrivateContact(contactSummary, signals),
         };
       })
@@ -3450,9 +3520,61 @@ export class BanxuebangClient {
       note: detailWarning,
     };
 
+    const confirmationToken = draftPrivateMessageConfirmationToken(preview);
+    const attempt = ensureObject(draft.teacherMessageAttempt);
+    const attemptStatus = String(attempt.status || "");
+    const confirmedMessages = toArray(attempt.confirmedMessages);
+    const sameTaskDrafts = (await this.draftStore.list()).filter((item) =>
+      normalizeId(item.taskId) === normalizeId(draft.taskId),
+    );
+    const matchingAttempt = attempt.contentFingerprint === confirmationToken;
+    let nextChunkIndex = matchingAttempt ? Math.max(0, Number(attempt.nextChunkIndex) || 0) : 0;
+    let blockedReason = sameTaskDrafts.some(draftHasUnresolvedTaskSubmission)
+      ? "同一 task 的作业提交结果尚未确认；请先核对作业状态，再决定是否发送私信。"
+      : null;
+
+    if (!blockedReason && ["in_flight", "unknown"].includes(attemptStatus)) {
+      blockedReason = "上次私信发送结果尚未确认。请先在伴学邦核对会话记录；系统已阻止重复发送。";
+    } else if (!blockedReason && attemptStatus === "success") {
+      blockedReason = "这份草稿的私信已完成发送。";
+    } else if (!blockedReason && ["ready", "failed"].includes(attemptStatus) && confirmedMessages.length > 0 && !matchingAttempt) {
+      blockedReason = "已有部分私信发送成功；继续前不能更换联系人或修改正文，请使用原联系人和原正文继续。";
+    } else if (!blockedReason && matchingAttempt && ["ready", "failed"].includes(attemptStatus)) {
+      nextChunkIndex = Math.min(nextChunkIndex, chunks.length);
+    }
+
+    const otherDraftAttempt = selectedContact
+      ? sameTaskDrafts.find((item) => {
+          if (String(item.draftId) === String(draft.draftId) || normalizeId(item.taskId) !== normalizeId(draft.taskId)) {
+            return false;
+          }
+          const otherAttempt = ensureObject(item.teacherMessageAttempt);
+          const sameContact = otherAttempt.contactKey === selectedContact.contactKey;
+          const hasProgress = toArray(otherAttempt.confirmedMessages).length > 0;
+          return sameContact && (
+            ["in_flight", "unknown", "ready"].includes(otherAttempt.status) ||
+            (otherAttempt.status === "failed" && hasProgress)
+          );
+        })
+      : null;
+    if (!blockedReason && otherDraftAttempt) {
+      blockedReason = "同一 task 和联系人已有一份私信正在处理或需要续发；请先回到那份草稿核对发送状态。";
+    }
+
+    const canSend = Boolean(selectedContact && chunks.length && !blockedReason && nextChunkIndex < chunks.length);
+
     return {
       ...preview,
-      confirmationToken: draftPrivateMessageConfirmationToken(preview),
+      canSend,
+      nextChunkIndex,
+      confirmedChunkCount: matchingAttempt ? confirmedMessages.length : 0,
+      attemptStatus: matchingAttempt ? attemptStatus || null : null,
+      reason: blockedReason || (selectedContact
+        ? nextChunkIndex < chunks.length
+          ? null
+          : "所有私信分段均已确认发送。"
+        : "请选择一个已有私信联系人后再确认发送。"),
+      confirmationToken,
     };
   }
 
@@ -3469,8 +3591,18 @@ export class BanxuebangClient {
       throw new Error("这个草稿正在发送私信，请等待当前发送完成。");
     }
     this.sendingDraftMessageIds.add(normalizedDraftId);
+    let lockedTaskContactKey = null;
+    let lockedTaskId = null;
+    let didLockTask = false;
 
     try {
+      const beforePreviewDraft = await this.draftStore.get(draftId);
+      if (!beforePreviewDraft) {
+        throw draftNotFoundError(draftId);
+      }
+      if (beforePreviewDraft.status !== "approved") {
+        throw new Error("只有已通过的草稿可以发送私信。");
+      }
       const preview = await this.prepareDraftPrivateMessage(draftId, { contact });
       if (!preview.canSend) {
         throw new Error(preview.reason || "当前草稿无法私信老师。");
@@ -3478,110 +3610,218 @@ export class BanxuebangClient {
       if (preview.confirmationToken !== confirmationToken) {
         throw new Error("草稿正文、task 或私信联系人在确认后发生了变化，请返回草稿并重新核对私信内容。");
       }
+      const currentDraft = await this.draftStore.get(draftId);
+      if (!currentDraft || currentDraft.status !== "approved" || currentDraft.draftText !== beforePreviewDraft.draftText) {
+        throw new Error("草稿在准备私信后发生了变化，请返回草稿并重新核对内容。");
+      }
 
-      const sentMessages = [];
-      let failed = null;
-      for (const chunk of preview.chunks) {
+      lockedTaskId = normalizeId(preview.taskId);
+      if (lockedTaskId && this.submittingTaskIds.has(lockedTaskId)) {
+        throw new Error("该 task 正在执行另一项交付，请等待当前结果后再发送私信。");
+      }
+      if (lockedTaskId) {
+        this.submittingTaskIds.add(lockedTaskId);
+        didLockTask = true;
+      }
+
+      lockedTaskContactKey = `${normalizeId(preview.taskId)}|${preview.selectedContact.contactKey}`;
+      if (this.sendingTaskContactKeys.has(lockedTaskContactKey)) {
+        throw new Error("同一 task 和联系人正在发送另一份私信，请等待当前发送结果。");
+      }
+      this.sendingTaskContactKeys.add(lockedTaskContactKey);
+
+      const existingAttempt = ensureObject(currentDraft.teacherMessageAttempt);
+      const canResume =
+        existingAttempt.contentFingerprint === preview.confirmationToken &&
+        ["ready", "failed"].includes(existingAttempt.status);
+      const attemptId = canResume ? existingAttempt.id : randomUUID();
+      const confirmedMessages = canResume ? toArray(existingAttempt.confirmedMessages) : [];
+      const nextChunkIndex = canResume ? preview.nextChunkIndex : 0;
+      const startedAt = canResume ? existingAttempt.startedAt : new Date().toISOString();
+
+      for (let chunkOffset = nextChunkIndex; chunkOffset < preview.chunks.length; chunkOffset += 1) {
+        const chunk = preview.chunks[chunkOffset];
+        const sendingAt = new Date().toISOString();
+        let remoteAccepted = false;
+        const startedAttempt = await this.draftStore.update(draftId, async (draft) => {
+          if (draft.status !== "approved" || draft.draftText !== currentDraft.draftText) {
+            throw new Error("草稿在发送前发生了变化，已取消私信发送。");
+          }
+          const latestAttempt = ensureObject(draft.teacherMessageAttempt);
+          if (canResume && latestAttempt.id !== attemptId) {
+            throw new Error("私信发送记录已变化，请重新读取草稿后再试。");
+          }
+          if (latestAttempt.contentFingerprint && latestAttempt.contentFingerprint !== preview.confirmationToken && toArray(latestAttempt.confirmedMessages).length > 0) {
+            throw new Error("已有部分私信发送成功；继续前不能更换联系人或修改正文。");
+          }
+          return {
+            ...draft,
+            teacherMessageAttempt: {
+              id: attemptId,
+              target: "teacher_private_message",
+              status: "in_flight",
+              taskId: preview.taskId,
+              contactKey: preview.selectedContact.contactKey,
+              contact: preview.selectedContact,
+              contentFingerprint: preview.confirmationToken,
+              chunkCount: preview.chunkCount,
+              nextChunkIndex: chunkOffset,
+              inFlightChunkIndex: chunk.index,
+              confirmedMessages,
+              startedAt,
+              updatedAt: sendingAt,
+            },
+            updatedAt: sendingAt,
+          };
+        });
+        if (!startedAttempt) {
+          throw draftNotFoundError(draftId);
+        }
+
         try {
           const result = await this.sendPrivateMessageText(preview.selectedContact, chunk.text);
-          sentMessages.push({
+          remoteAccepted = true;
+          const sentMessage = {
             index: chunk.index,
             length: chunk.length,
-            result: result.message || result,
-          });
-        } catch (error) {
-          failed = {
-            index: chunk.index,
-            error: error.message,
+            messageId: normalizeId(result.message?.id) || null,
+            sentAt: new Date().toISOString(),
           };
-          break;
+          confirmedMessages.push(sentMessage);
+          const isFinalChunk = chunkOffset === preview.chunks.length - 1;
+          const confirmedAt = new Date().toISOString();
+          const updated = await this.draftStore.update(draftId, async (draft) => {
+            if (draft.status !== "approved" || draft.draftText !== currentDraft.draftText) {
+              throw new Error("私信已发送，但草稿状态在保存发送记录前发生了变化。");
+            }
+            const latestAttempt = ensureObject(draft.teacherMessageAttempt);
+            if (latestAttempt.id !== attemptId || latestAttempt.status !== "in_flight") {
+              throw new Error("私信已发送，但本地发送记录与当前尝试不匹配。");
+            }
+            const attempt = {
+              ...latestAttempt,
+              status: isFinalChunk ? "success" : "ready",
+              nextChunkIndex: chunkOffset + 1,
+              inFlightChunkIndex: null,
+              confirmedMessages: [...confirmedMessages],
+              updatedAt: confirmedAt,
+              ...(isFinalChunk ? { completedAt: confirmedAt } : {}),
+            };
+            const deliveryHistory = isFinalChunk
+              ? [
+                  ...toArray(draft.deliveryHistory),
+                  {
+                    type: "teacher_private_message",
+                    status: "success",
+                    attemptId,
+                    contact: preview.selectedContact,
+                    chunkCount: preview.chunkCount,
+                    sentCount: confirmedMessages.length,
+                    sentAt: confirmedAt,
+                    messages: [...confirmedMessages],
+                  },
+                ]
+              : toArray(draft.deliveryHistory);
+            return {
+              ...draft,
+              ...(isFinalChunk
+                ? {
+                    status: "sent_to_teacher",
+                    deliveryTarget: "teacher_private_message",
+                    sentToTeacherAt: confirmedAt,
+                    teacherPrivateMessage: {
+                      contact: preview.selectedContact,
+                      chunkCount: preview.chunkCount,
+                      sentAt: confirmedAt,
+                    },
+                  }
+                : {}),
+              teacherMessageAttempt: attempt,
+              deliveryHistory,
+              updatedAt: confirmedAt,
+            };
+          });
+          if (!updated) {
+            throw new Error("私信已发送，但本地草稿记录不存在。");
+          }
+        } catch (error) {
+          const outcomeUnknown = remoteAccepted || error?.deliveryOutcomeUnknown === true;
+          const failedAt = new Date().toISOString();
+          const failureMessage = error.message || "私信发送中断，无法确定该分段是否已送达。";
+          let recorded = false;
+          try {
+            await this.draftStore.update(draftId, async (draft) => {
+              const latestAttempt = ensureObject(draft.teacherMessageAttempt);
+              if (latestAttempt.id !== attemptId) {
+                throw new Error("本地私信尝试记录已变化。");
+              }
+              const status = outcomeUnknown ? "unknown" : "failed";
+              const attempt = {
+                ...latestAttempt,
+                status,
+                nextChunkIndex: remoteAccepted ? chunkOffset + 1 : chunkOffset,
+                inFlightChunkIndex: null,
+                uncertainChunkIndex: !remoteAccepted && outcomeUnknown ? chunk.index : null,
+                confirmedMessages: [...confirmedMessages],
+                completedAt: failedAt,
+                updatedAt: failedAt,
+                error: failureMessage,
+              };
+              return {
+                ...draft,
+                status: "approved",
+                deliveryTarget: "teacher_private_message",
+                teacherMessageAttempt: attempt,
+                updatedAt: failedAt,
+                deliveryHistory: [
+                  ...toArray(draft.deliveryHistory),
+                  {
+                    type: "teacher_private_message",
+                    status,
+                    attemptId,
+                    contact: preview.selectedContact,
+                    chunkCount: preview.chunkCount,
+                    sentCount: confirmedMessages.length,
+                    failedChunkIndex: remoteAccepted ? null : chunk.index,
+                    uncertainChunkIndex: !remoteAccepted && outcomeUnknown ? chunk.index : null,
+                    failedAt,
+                    error: failureMessage,
+                    messages: [...confirmedMessages],
+                  },
+                ],
+              };
+            });
+            recorded = true;
+          } catch {
+            // The pre-send in_flight record remains the durable duplicate-send guard.
+          }
+          return {
+            sent: false,
+            partial: confirmedMessages.length > 0,
+            sentCount: confirmedMessages.length,
+            failedChunkIndex: remoteAccepted ? null : chunk.index,
+            outcomeUnknown: outcomeUnknown || !recorded,
+            remoteAccepted,
+            error: failureMessage,
+            preview,
+            draft: await this.draftStore.get(draftId),
+          };
         }
       }
-
-      if (failed) {
-        const failedAt = new Date().toISOString();
-        let updated = null;
-        try {
-          updated = await this.draftStore.update(draftId, async (draft) => ({
-            ...draft,
-            status: "approved",
-            deliveryTarget: "teacher_private_message",
-            updatedAt: failedAt,
-            deliveryHistory: [
-              ...toArray(draft.deliveryHistory),
-              {
-                type: "teacher_private_message",
-                status: "failed",
-                contact: preview.selectedContact,
-                chunkCount: preview.chunkCount,
-                sentCount: sentMessages.length,
-                failedChunkIndex: failed.index,
-                failedAt,
-                error: failed.error,
-                messages: sentMessages,
-              },
-            ],
-          }));
-        } catch {
-          updated = null;
-        }
-
-        return {
-          sent: false,
-          partial: sentMessages.length > 0,
-          sentCount: sentMessages.length,
-          failedChunkIndex: failed.index,
-          error: failed.error,
-          preview,
-          draft: updated,
-        };
-      }
-
-      const sentAt = new Date().toISOString();
-      let updated = null;
-      let localRecordError = null;
-      try {
-        updated = await this.draftStore.update(draftId, async (draft) => ({
-          ...draft,
-          status: "sent_to_teacher",
-          deliveryTarget: "teacher_private_message",
-          sentToTeacherAt: sentAt,
-          updatedAt: sentAt,
-          teacherPrivateMessage: {
-            contact: preview.selectedContact,
-            chunkCount: preview.chunkCount,
-            sentAt,
-          },
-          deliveryHistory: [
-            ...toArray(draft.deliveryHistory),
-            {
-              type: "teacher_private_message",
-              status: "success",
-              contact: preview.selectedContact,
-              chunkCount: preview.chunkCount,
-              sentAt,
-              messages: sentMessages,
-            },
-          ],
-        }));
-        if (!updated) {
-          localRecordError = "本地草稿记录不存在，无法标记为已私信老师。";
-        }
-      } catch (error) {
-        localRecordError = `无法更新本地草稿记录：${error.message}`;
-      }
-
+      const updated = await this.draftStore.get(draftId);
       return {
         sent: true,
-        sentAt,
+        sentAt: updated?.sentToTeacherAt || new Date().toISOString(),
         chunkCount: preview.chunkCount,
-        localRecordUpdated: Boolean(updated),
-        localRecordError,
+        localRecordUpdated: updated?.status === "sent_to_teacher",
+        localRecordError: updated?.status === "sent_to_teacher" ? null : "私信已发送，但本地草稿状态仍待核对。",
         preview,
         draft: updated,
       };
     } finally {
       this.sendingDraftMessageIds.delete(normalizedDraftId);
+      if (lockedTaskContactKey) this.sendingTaskContactKeys.delete(lockedTaskContactKey);
+      if (didLockTask) this.submittingTaskIds.delete(lockedTaskId);
     }
   }
 
