@@ -214,6 +214,7 @@ final class DraftViewModel {
     func selectPrivateMessageContact(_ contactKey: String, using backend: BackendConnectionModel) async {
         guard let detail, let preview = privateMessagePreview,
               let contact = preview.contacts.first(where: { $0.contactKey == contactKey }) else { return }
+        let previousContactKey = preview.selectedContact?.contactKey
         selectedPrivateMessageContactKey = contactKey
         isPerformingAction = true
         detailError = nil
@@ -232,6 +233,7 @@ final class DraftViewModel {
             }
             privateMessagePreview = refreshedPreview
         } catch {
+            selectedPrivateMessageContactKey = previousContactKey
             detailError = error.localizedDescription
         }
     }
