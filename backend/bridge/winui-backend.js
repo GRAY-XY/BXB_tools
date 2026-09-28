@@ -449,10 +449,10 @@ function normalizeModelRoles(source, chatProviders, imageProviders, fallbackChat
     chatProviders,
     fallbackChatId,
   );
-  const imageProviderId = pickProviderId(
-    imageRole.activeProviderId || imageRole.providerId || source.imageCaptionProviderId || source.captionProviderId,
-    imageProviders,
-  );
+  const requestedImageProviderId = imageRole.activeProviderId || imageRole.providerId || source.imageCaptionProviderId || source.captionProviderId;
+  const imageProviderId = imageRole.enabled === true || requestedImageProviderId
+    ? pickProviderId(requestedImageProviderId, imageProviders)
+    : "";
   return {
     chat: {
       enabled: true,
@@ -499,6 +499,17 @@ function normalizeModelConfig(rawConfig) {
     } else if (legacy.apiKey || legacy.baseUrl || legacy.modelName || !providers.length) {
       providers.unshift(legacy);
     }
+  }
+
+  // Some older settings files kept the active chat key only in the legacy
+  // top-level field while also carrying a provider list. Preserve that key so
+  // the native Keychain migration can move it before the file is scrubbed.
+  const legacyActiveId = normalizeProviderId(source.activeProviderId || source.providerId, providers[0].id);
+  const legacyActiveProvider = providers.find((provider) => provider.id === legacyActiveId)
+    || providers.find((provider) => provider.baseUrl || provider.modelName)
+    || providers[0];
+  if (source.apiKey && legacyActiveProvider && !legacyActiveProvider.apiKey) {
+    legacyActiveProvider.apiKey = String(source.apiKey).trim();
   }
 
   if (!providers.length) {
@@ -570,12 +581,69 @@ function modelConfigForStorage(config) {
   };
 }
 
+function redactModelConfigSecrets(config) {
+  const normalized = modelConfigForStorage(config);
+  if (process.env.BXB_MACOS_NATIVE !== "1") return normalized;
+
+  const redactProviders = (providers) => (Array.isArray(providers) ? providers : []).map((provider) => ({
+    ...provider,
+    apiKey: "",
+  }));
+  const modelRoles = Object.fromEntries(Object.entries(normalized.modelRoles || {}).map(([role, value]) => [
+    role,
+    { ...value, providers: redactProviders(value?.providers) },
+  ]));
+  return {
+    ...normalized,
+    apiKey: "",
+    modelRoles,
+    providers: redactProviders(normalized.providers),
+  };
+}
+
+async function persistModelConfig(config) {
+  await writeJson(modelConfigPath, redactModelConfigSecrets(config));
+}
+
 async function readModelConfigInternal() {
   return normalizeModelConfig(await readJson(modelConfigPath, {}));
 }
 
 async function loadModelConfig() {
   return publicModelConfig(await readModelConfigInternal());
+}
+
+function collectLegacyModelConfigSecrets(config) {
+  const secrets = [];
+  for (const role of ["chat", "image_caption"]) {
+    for (const provider of getRoleProviders(config, role)) {
+      if (provider.apiKey) secrets.push({ role, providerId: provider.id, apiKey: provider.apiKey });
+    }
+  }
+  return secrets;
+}
+
+function applyEphemeralModelAPIKeys(config, apiKeys) {
+  if (!apiKeys || typeof apiKeys !== "object") return config;
+  const modelRoles = {};
+  for (const role of ["chat", "image_caption"]) {
+    const source = config.modelRoles?.[role] || {};
+    const roleKeys = apiKeys[role] && typeof apiKeys[role] === "object" ? apiKeys[role] : {};
+    modelRoles[role] = {
+      ...source,
+      providers: getRoleProviders(config, role).map((provider) => ({
+        ...provider,
+        apiKey: typeof roleKeys[provider.id] === "string" && roleKeys[provider.id]
+          ? roleKeys[provider.id]
+          : provider.apiKey,
+      })),
+    };
+  }
+  return normalizeModelConfig({
+    ...config,
+    providers: modelRoles.chat.providers,
+    modelRoles,
+  });
 }
 
 function publicModelConfig(config) {
@@ -643,30 +711,28 @@ async function saveModelConfig(config) {
   let roleProviders = [...getRoleProviders(existing, modelRole)];
   const existingRoleProviderId = getRoleProviderId(existing, modelRole);
   const requestedProviderId = incoming.activeProviderId || incoming.providerId || "";
-  let activeProviderId = requestedProviderId
-    ? normalizeProviderId(requestedProviderId, existingRoleProviderId)
-    : existingRoleProviderId;
-
-  if (incoming.provider && typeof incoming.provider === "object") {
-    activeProviderId = normalizeProviderId(
-      incoming.provider.id || incoming.provider.providerId || activeProviderId,
-      activeProviderId || `provider_${safeId()}`,
-    );
+  let activeProviderId = existingRoleProviderId;
+  if (requestedProviderId && incoming.activate !== false) {
+    activeProviderId = normalizeProviderId(requestedProviderId, existingRoleProviderId);
   }
+  const targetProviderId = normalizeProviderId(
+    incoming.provider?.id || incoming.provider?.providerId || requestedProviderId || activeProviderId,
+    activeProviderId || `provider_${safeId()}`,
+  );
 
   const shouldUpdateProvider = Boolean(incoming.provider)
     || Object.prototype.hasOwnProperty.call(incoming, "apiKey")
     || Object.prototype.hasOwnProperty.call(incoming, "baseUrl")
     || Object.prototype.hasOwnProperty.call(incoming, "modelName")
     || Object.prototype.hasOwnProperty.call(incoming, "providerName");
-  let providerIndex = roleProviders.findIndex((provider) => provider.id === activeProviderId);
+  let providerIndex = roleProviders.findIndex((provider) => provider.id === targetProviderId);
   if (providerIndex < 0 && shouldUpdateProvider) {
-    activeProviderId = activeProviderId || `provider_${safeId()}`;
-    roleProviders.push(normalizeProvider({ id: activeProviderId, name: incoming.providerName || "新提供商" }, activeProviderId));
+    roleProviders.push(normalizeProvider({ id: targetProviderId, name: incoming.providerName || "新提供商" }, targetProviderId));
     providerIndex = roleProviders.length - 1;
   }
   if (shouldUpdateProvider) {
     roleProviders[providerIndex] = mergeProvider(roleProviders[providerIndex], incoming.provider || {}, incoming);
+    if (incoming.activate !== false) activeProviderId = targetProviderId;
   }
 
   const existingRole = existing.modelRoles?.[modelRole] || {};
@@ -699,16 +765,17 @@ async function saveModelConfig(config) {
         ? normalizeCustomInstructions(incoming)
         : existing.customInstructions,
   });
-  await writeJson(modelConfigPath, normalized);
+  await persistModelConfig(normalized);
   return loadModelConfig();
 }
 
-async function createModelProvider({ name, type, baseUrl, apiKey, modelName, modelRole } = {}) {
+async function createModelProvider({ id, name, type, baseUrl, apiKey, modelName, modelRole, activate = true } = {}) {
   const existing = await readModelConfigInternal();
   const role = normalizeModelRole(modelRole || "chat");
   const roleProviders = getRoleProviders(existing, role);
+  const existingRole = existing.modelRoles?.[role] || {};
   const provider = normalizeProvider({
-    id: `provider_${safeId()}`,
+    id: normalizeProviderId(id, `provider_${safeId()}`),
     type: String(type || "openai").trim() || "openai",
     name: String(name || "").trim() || `提供商 ${roleProviders.length + 1}`,
     baseUrl,
@@ -718,18 +785,20 @@ async function createModelProvider({ name, type, baseUrl, apiKey, modelName, mod
   const normalized = modelConfigForStorage({
     ...existing,
     providers: role === "chat" ? [...roleProviders, provider] : existing.providers,
-    activeProviderId: role === "chat" ? provider.id : existing.activeProviderId,
+    activeProviderId: role === "chat" && activate ? provider.id : existing.activeProviderId,
     modelRoles: {
       ...existing.modelRoles,
       [role]: {
-        ...(existing.modelRoles?.[role] || {}),
-        enabled: role === "image_caption" ? true : true,
-        activeProviderId: provider.id,
+        ...existingRole,
+        enabled: role === "image_caption"
+          ? (activate ? true : roleProviders.length ? existingRole.enabled === true : false)
+          : true,
+        activeProviderId: activate ? provider.id : getRoleProviderId(existing, role),
         providers: [...roleProviders, provider],
       },
     },
   });
-  await writeJson(modelConfigPath, normalized);
+  await persistModelConfig(normalized);
   return loadModelConfig();
 }
 
@@ -752,11 +821,16 @@ async function deleteModelProvider({ providerId, modelRole } = {}) {
     modelRoles: Object.fromEntries(Object.entries(existing.modelRoles || {}).map(([role, value]) => [
       role,
       role === normalizeModelRole(modelRole || "chat")
-        ? { ...(value || {}), activeProviderId: nextActiveProviderId, providers }
+        ? {
+            ...(value || {}),
+            ...(role === "image_caption" && !providers.length ? { enabled: false } : {}),
+            activeProviderId: nextActiveProviderId,
+            providers,
+          }
         : value,
     ])),
   });
-  await writeJson(modelConfigPath, normalized);
+  await persistModelConfig(normalized);
   return loadModelConfig();
 }
 
@@ -790,9 +864,16 @@ async function listModelOptions(config) {
 
 async function testModelConfig(config) {
   const modelRole = normalizeModelRole(config?.modelRole || config?.role || "chat");
-  await saveModelConfig(config);
-  const saved = await readModelConfigInternal();
-  const candidate = getActiveProvider(saved, modelRole);
+  let candidate;
+  if (process.env.BXB_MACOS_NATIVE === "1") {
+    const saved = await readModelConfigInternal();
+    candidate = resolveModelCandidate(saved, { ...config, modelRole });
+  } else {
+    // Keep the WinUI settings flow unchanged; its test action also saves the
+    // edited provider as the active configuration.
+    await saveModelConfig(config);
+    candidate = getActiveProvider(await readModelConfigInternal(), modelRole);
+  }
   if (!candidate.apiKey || !candidate.baseUrl || !candidate.modelName) {
     throw new Error("请先填写 API Key、调用链接和模型名称。");
   }
@@ -1702,8 +1783,8 @@ async function compactConversationContext(config, conversation, {
   };
 }
 
-async function runAgent({ text, attachments, conversationId, userMessageId, assistantMessageId } = {}, { emitProgress, signal } = {}) {
-  const config = await readModelConfigInternal();
+async function runAgent({ text, attachments, conversationId, userMessageId, assistantMessageId, apiKeys } = {}, { emitProgress, signal } = {}) {
+  const config = applyEphemeralModelAPIKeys(await readModelConfigInternal(), apiKeys);
   const typedPrompt = String(text || "").trim();
   const images = await loadWorkspaceImages(attachments);
   if (!typedPrompt && !images.length) throw new Error("消息不能为空。");
@@ -2632,10 +2713,27 @@ async function handleRequest(request, emitProgress) {
       agreeTerms: params.agreeTerms !== false,
     });
   }
+  if (method === "session.refresh") {
+    return client.refreshContext();
+  }
+  if (method === "session.logout") {
+    await client.clearSession();
+    return client.summarizeSession(await client.getSession());
+  }
   if (method === "tool.call" || method === "bxb:tool") return callTool(String(params.name || ""), params.args || {});
   if (method === "session.status" || method === "bxb:session") return callTool("session_status", {});
   if (method === "home.pendingCount" || method === "home:pending-count") return client.getPendingHomeworkSummary();
   if (method === "modelConfig.load" || method === "config:model:load") return loadModelConfig();
+  if (method === "modelConfig.migrateLegacyKeys") {
+    if (process.env.BXB_MACOS_NATIVE !== "1") throw new Error("Legacy key migration is only available in the native macOS client.");
+    const config = await readModelConfigInternal();
+    return { config: publicModelConfig(config), secrets: collectLegacyModelConfigSecrets(config) };
+  }
+  if (method === "modelConfig.scrubLegacyKeys") {
+    if (process.env.BXB_MACOS_NATIVE !== "1") throw new Error("Legacy key migration is only available in the native macOS client.");
+    await persistModelConfig(await readModelConfigInternal());
+    return loadModelConfig();
+  }
   if (method === "modelConfig.save" || method === "config:model:save") return saveModelConfig(params.config || params);
   if (method === "modelConfig.providerCreate" || method === "config:model:provider:create") return createModelProvider(params.config || params);
   if (method === "modelConfig.providerDelete" || method === "config:model:provider:delete") return deleteModelProvider(params.config || params);
