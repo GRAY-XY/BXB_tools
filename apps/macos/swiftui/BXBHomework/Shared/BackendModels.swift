@@ -1,11 +1,24 @@
 import Foundation
 
 struct BackendAppInfo: Decodable, Sendable {
+    struct BrowserDependency: Decodable, Sendable {
+        let ready: Bool?
+        let browserRoot: String?
+    }
+
     let version: String
     let nodeVersion: String?
     let platform: String
     let isPackaged: Bool
     let workspaceDir: String?
+    let userDataRoot: String?
+    let dataRoot: String?
+    let draftDir: String?
+    let updateDir: String?
+    let modelConfigPath: String?
+    let conversationsPath: String?
+    let payloadRoot: String?
+    let browserDependency: BrowserDependency?
 }
 
 struct BackendSessionStatus: Decodable, Sendable {
