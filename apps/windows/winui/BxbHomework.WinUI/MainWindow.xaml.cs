@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using BxbHomework.WinUI.Services;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
@@ -87,6 +88,7 @@ public sealed partial class MainWindow : Window
     private bool _suppressDraftDeliverySelection;
     private int _draftDeliveryPreviewVersion;
     private readonly List<AgentChatMessage> _agentPreviewMessages = new();
+    private readonly Dictionary<string, string> _agentPreviewDataUrlCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _expandedAgentProcessIds = new(StringComparer.Ordinal);
     private WebView2? _agentMarkdownWebView;
     private bool _agentMarkdownWebViewUnavailable;
@@ -3809,14 +3811,26 @@ public sealed partial class MainWindow : Window
             {
                 return;
             }
-            _agentMarkdownWebView.NavigateToString(MarkdownHtmlRenderer.RenderConversation(
-                messages.Select(message => (
+            var renderedMessages = new List<(string Id, string Role, string Text, bool IsRunning, JsonElement? Steps, bool ProcessExpanded)>();
+            foreach (var message in messages)
+            {
+                var steps = message.Role == "assistant" && !message.IsRunning
+                    ? await AddPreviewImageDataUrlsAsync(message.Steps)
+                    : message.Steps;
+                renderedMessages.Add((
                     message.Id,
                     message.Role,
                     message.Text,
                     message.IsRunning,
-                    message.Steps,
-                    ProcessExpanded: _expandedAgentProcessIds.Contains(message.Id))),
+                    steps,
+                    ProcessExpanded: _expandedAgentProcessIds.Contains(message.Id)));
+            }
+            if (version != _agentMarkdownRenderVersion)
+            {
+                return;
+            }
+            _agentMarkdownWebView.NavigateToString(MarkdownHtmlRenderer.RenderConversation(
+                renderedMessages,
                 GetCurrentUiTheme(),
                 _agentShouldFollowLatest,
                 _agentScrollTop,
@@ -3835,6 +3849,46 @@ public sealed partial class MainWindow : Window
             }
             RenderAgentFallback(messages);
         }
+    }
+
+    private async Task<JsonElement?> AddPreviewImageDataUrlsAsync(JsonElement? steps)
+    {
+        if (!steps.HasValue || steps.Value.ValueKind != JsonValueKind.Array) return steps;
+        var clonedSteps = JsonNode.Parse(steps.Value.GetRawText()) as JsonArray;
+        if (clonedSteps is null) return steps;
+        var changed = false;
+
+        foreach (var step in clonedSteps.OfType<JsonObject>())
+        {
+            if (step["previewImages"] is not JsonArray images) continue;
+            foreach (var image in images.OfType<JsonObject>())
+            {
+                if (image["relativePath"] is not JsonValue pathValue
+                    || !pathValue.TryGetValue<string>(out var relativePath)
+                    || string.IsNullOrWhiteSpace(relativePath)) continue;
+                try
+                {
+                    if (!_agentPreviewDataUrlCache.TryGetValue(relativePath, out var dataUrl))
+                    {
+                        if (_agentPreviewDataUrlCache.Count >= 32) _agentPreviewDataUrlCache.Clear();
+                        var result = await InvokeAsync("workspace:image-data-url", new { filePath = relativePath });
+                        dataUrl = GetString(result, "dataUrl", "");
+                        if (!dataUrl.StartsWith("data:image/png;base64,", StringComparison.Ordinal)) continue;
+                        _agentPreviewDataUrlCache[relativePath] = dataUrl;
+                    }
+                    image["dataUrl"] = dataUrl;
+                    changed = true;
+                }
+                catch (Exception error)
+                {
+                    App.LogException(error);
+                }
+            }
+        }
+
+        if (!changed) return steps;
+        using var document = JsonDocument.Parse(clonedSteps.ToJsonString());
+        return document.RootElement.Clone();
     }
 
     private WebView2 CreateAgentMarkdownWebView()

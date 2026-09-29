@@ -120,6 +120,41 @@ internal static class MarkdownHtmlRenderer
       user-select: none;
     }
     .assistant-body { min-width: 0; }
+    .code-preview-list {
+      display: grid;
+      gap: 12px;
+      width: min(1060px, calc(50vw + 402px));
+      max-width: calc(50vw + 402px);
+      margin: 14px 0 0 -38px;
+    }
+    @media (max-width: 867px) {
+      .code-preview-list {
+        width: calc(100vw - 88px);
+        max-width: calc(100vw - 88px);
+        margin-left: 0;
+      }
+    }
+    .code-preview {
+      min-width: 0;
+      margin: 0;
+      padding: 9px;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      background: var(--code-bg);
+    }
+    .code-preview figcaption {
+      margin: 0 0 7px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .code-preview img {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      background: #1e1e1e;
+    }
     .process {
       margin: 0 0 10px;
       color: var(--muted);
@@ -477,8 +512,33 @@ internal static class MarkdownHtmlRenderer
       const running = message.running ? " running" : "";
       const process = renderProcess(message);
       const content = clean ? `<div class="content">${clean}</div>` : "";
+      const previews = renderCodePreviews(message);
       const copyAction = clean ? '<div class="message-actions"><button class="message-action" type="button" data-action="copy">复制</button></div>' : '';
-      return `<section class="message assistant${running}" data-id="${id}"><div class="assistant-avatar">BXB</div><div class="assistant-body">${process}${content}${copyAction}</div></section>`;
+      return `<section class="message assistant${running}" data-id="${id}"><div class="assistant-avatar">BXB</div><div class="assistant-body">${process}${content}${previews}${copyAction}</div></section>`;
+    }
+
+    function renderCodePreviews(message) {
+      const steps = Array.isArray(message.steps) ? message.steps : [];
+      const seen = new Set();
+      const images = [];
+      for (const step of steps) {
+        if (!Array.isArray(step.previewImages)) continue;
+        for (const image of step.previewImages) {
+          const dataUrl = String(image.dataUrl || '');
+          if (!/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(dataUrl) || dataUrl.length > 16000000) continue;
+          const key = String(image.relativePath || dataUrl.slice(0, 80));
+          if (seen.has(key)) continue;
+          seen.add(key);
+          const fileName = String(image.fileName || '代码预览.png');
+          const firstLine = Number(image.firstLine) || 1;
+          const lastLine = Number(image.lastLine) || firstLine;
+          const caption = `${fileName} · 第 ${firstLine}–${lastLine} 行`;
+          images.push(`<figure class="code-preview"><figcaption>${escapeHtml(caption)}</figcaption><img src="${escapeHtml(dataUrl)}" alt="${escapeHtml(caption)}" loading="lazy"></figure>`);
+          if (images.length >= 8) break;
+        }
+        if (images.length >= 8) break;
+      }
+      return images.length ? `<div class="code-preview-list">${images.join('')}</div>` : '';
     }
 
     function escapeHtml(text) {

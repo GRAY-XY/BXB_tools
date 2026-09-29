@@ -9,6 +9,7 @@ import { fetch as undiciFetch, ProxyAgent } from "undici";
 import { BanxuebangClient } from "../src/banxuebang-client.js";
 import { compactAgentToolResult } from "../src/agent-tool-results.js";
 import { requestChatCompletionWithRecovery } from "../src/chat-completion-stream.js";
+import { renderCodeAsVscodeImages } from "../src/code-image-preview.js";
 import { DraftStore, migrateDraftFiles } from "../src/draft-store.js";
 import {
   contextBudget,
@@ -1088,6 +1089,17 @@ async function callTool(name, args = {}, { signal } = {}) {
     await ensurePlaywrightBrowsers();
   }
   throwIfAgentAborted(signal);
+  if (name === "render_code_as_vscode_image") {
+    const rendered = await waitForAgentOperation(renderCodeAsVscodeImages({
+      fileName: args.file_name,
+      code: args.code,
+      language: args.language,
+      theme: args.theme || "dark",
+      workspaceDir,
+    }), signal);
+    throwIfAgentAborted(signal);
+    return rendered;
+  }
   const result = await waitForAgentOperation(executeTool(toolDefinitions, name, args || {}), signal);
   throwIfAgentAborted(signal);
   return waitForAgentOperation(enhanceReadableToolResult(name, args || {}, result, { signal }), signal);
@@ -1453,6 +1465,20 @@ function safeToolSchemas() {
       parameters: { type: "object", properties: { code: { type: "string" }, stdin: { type: "string" }, timeout_ms: { type: "number" } }, required: ["code"] },
     },
     {
+      name: "render_code_as_vscode_image",
+      description: "将助手编写的程序代码排版成 VS Code 风格 PNG 草稿，保存到本机工作区并显示在对话中；不上传或提交。",
+      parameters: {
+        type: "object",
+        properties: {
+          file_name: { type: "string", description: "代码源文件名，例如 main.py 或 Program.cs。" },
+          code: { type: "string", description: "要渲染的完整代码；必须与已保存的作业代码正文一致。" },
+          language: { type: "string", description: "可选的代码语言，例如 python、javascript、csharp。" },
+          theme: { type: "string", enum: ["dark", "light"], description: "VS Code 深色或浅色主题，默认 dark。" },
+        },
+        required: ["file_name", "code"],
+      },
+    },
+    {
       name: "web_search",
       description: "通过本机浏览器联网搜索。适合查询最新资料；回答时应引用返回结果中的链接。",
       parameters: { type: "object", properties: { query: { type: "string" }, max_results: { type: "number" }, engine: { type: "string", enum: ["bing"] }, timeout_ms: { type: "number" } }, required: ["query"] },
@@ -1539,6 +1565,7 @@ const AGENT_TOOL_TITLES = Object.freeze({
   extract_pdf_text: "读取 PDF",
   extract_docx_text: "读取 Word 文档",
   run_python_snippet: "运行 Python 计算",
+  render_code_as_vscode_image: "渲染代码预览",
   web_search: "搜索网页",
   read_web_page: "读取网页内容",
   collect_task_submission_context: "整理作业提交信息",
@@ -1824,8 +1851,8 @@ async function runAgent({ text, attachments, conversationId, userMessageId, assi
   state.activeId = conversation.id;
   await saveConversationState(state);
 
-  const pushStep = (kind, title, detail = "") => {
-    const step = { kind, title, detail, at: nowIso() };
+  const pushStep = (kind, title, detail = "", extra = {}) => {
+    const step = { kind, title, detail, ...extra, at: nowIso() };
     steps.push(step);
     emitProgress?.({
       type: "agent-step",
@@ -1997,7 +2024,22 @@ async function runAgent({ text, attachments, conversationId, userMessageId, assi
           pushStep("tool", `正在${toolTitle}`, JSON.stringify(args, null, 2));
           const result = await callTool(toolName, args, { signal });
           const compactResult = compactAgentToolResult(toolName, result);
-          pushStep("tool", `${toolTitle}完成`, JSON.stringify(compactResult, null, 2).slice(0, 4000));
+          const previewImages = toolName === "render_code_as_vscode_image" && Array.isArray(result?.images)
+            ? result.images.map((image) => ({
+                relativePath: image.relativePath,
+                fileName: image.fileName,
+                width: image.width,
+                height: image.height,
+                firstLine: image.firstLine,
+                lastLine: image.lastLine,
+              }))
+            : null;
+          pushStep(
+            "tool",
+            `${toolTitle}完成`,
+            JSON.stringify(compactResult, null, 2).slice(0, 4000),
+            previewImages ? { previewImages } : {},
+          );
           const toolMessage = { role: "tool", tool_call_id: call.id, content: JSON.stringify(compactResult) };
           runtimeMessages.push(toolMessage);
           contextRuntimeMessages.push(toolMessage);
@@ -2123,7 +2165,10 @@ async function saveWorkspacePastes(items) {
 
 function assertWorkspacePath(filePath) {
   const workspaceRoot = path.resolve(workspaceDir);
-  const resolved = path.resolve(String(filePath || ""));
+  const requested = String(filePath || "");
+  const resolved = path.isAbsolute(requested)
+    ? path.resolve(requested)
+    : path.resolve(workspaceRoot, requested);
   const relative = path.relative(workspaceRoot, resolved);
   if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
     throw new Error("Only workspace files can be previewed.");

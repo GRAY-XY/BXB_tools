@@ -117,6 +117,25 @@ function sanitize(value, key = "", depth = 0) {
 
 export function compactAgentToolResult(name, result) {
   const toolName = String(name || "");
+  if (toolName === "render_code_as_vscode_image") {
+    return {
+      ok: result?.ok === true,
+      fileName: String(result?.fileName || ""),
+      language: String(result?.language || "text"),
+      theme: String(result?.theme || "dark"),
+      lineCount: Number(result?.lineCount) || 0,
+      pageCount: Number(result?.pageCount) || 0,
+      images: Array.isArray(result?.images) ? result.images.slice(0, 8).map((image) => ({
+        fileName: String(image?.fileName || ""),
+        relativePath: String(image?.relativePath || ""),
+        width: Number(image?.width) || 0,
+        height: Number(image?.height) || 0,
+        firstLine: Number(image?.firstLine) || 0,
+        lastLine: Number(image?.lastLine) || 0,
+        sizeBytes: Number(image?.sizeBytes) || 0,
+      })) : [],
+    };
+  }
   if (["draft_task_submission", "update_submission_draft"].includes(toolName)) {
     return compactDraftWriteResult(result);
   }
