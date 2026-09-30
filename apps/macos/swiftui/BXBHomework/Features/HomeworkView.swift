@@ -2,8 +2,13 @@ import SwiftUI
 
 struct HomeworkView: View {
     @Environment(BackendConnectionModel.self) private var backend
+    private let onOpenWorkspaceFile: (String) -> Void
     @State private var model = HomeworkViewModel()
     @State private var showingLogin = false
+
+    init(onOpenWorkspaceFile: @escaping (String) -> Void = { _ in }) {
+        self.onOpenWorkspaceFile = onOpenWorkspaceFile
+    }
 
     var body: some View {
         @Bindable var model = model
@@ -175,7 +180,7 @@ struct HomeworkView: View {
             ProgressView("正在读取作业详情…")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let detail = model.detail {
-            HomeworkDetailView(detail: detail)
+            HomeworkDetailView(detail: detail, model: model, onOpenWorkspaceFile: onOpenWorkspaceFile)
         } else if let error = model.errorMessage, model.selectedTaskID != nil {
             ContentUnavailableView(
                 "无法读取详情",
@@ -231,7 +236,10 @@ private struct HomeworkTaskRow: View {
 }
 
 private struct HomeworkDetailView: View {
+    @Environment(BackendConnectionModel.self) private var backend
     let detail: HomeworkDetail
+    let model: HomeworkViewModel
+    let onOpenWorkspaceFile: (String) -> Void
 
     var body: some View {
         ScrollView {
@@ -282,6 +290,7 @@ private struct HomeworkDetailView: View {
                                             .foregroundStyle(.secondary)
                                     }
                                     Spacer()
+                                    attachmentAction(attachment)
                                 }
                                 .padding(.vertical, 9)
                             }
@@ -306,6 +315,52 @@ private struct HomeworkDetailView: View {
             }
             .padding(20)
             .frame(maxWidth: 820, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private func attachmentAction(_ attachment: HomeworkAttachment) -> some View {
+        VStack(alignment: .trailing, spacing: 4) {
+            switch model.attachmentDownloadState(for: attachment) {
+            case .downloading:
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("下载中…")
+                        .font(.caption)
+                        .fixedSize()
+                }
+            case .downloaded(let file):
+                Button("在文件中预览") {
+                    onOpenWorkspaceFile(file.fileName)
+                }
+                .help(file.path)
+            case .failed(let message):
+                Button("重试下载") {
+                    Task { await model.downloadAttachment(attachment, using: backend) }
+                }
+                .help(message)
+            case nil:
+                Button("下载") {
+                    Task { await model.downloadAttachment(attachment, using: backend) }
+                }
+            }
+
+            switch model.attachmentDownloadState(for: attachment) {
+            case .downloaded(let file):
+                Text("已保存到 \(file.path)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+            case .failed(let message):
+                Text(message)
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+                    .lineLimit(2)
+            default:
+                EmptyView()
+            }
         }
     }
 
