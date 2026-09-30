@@ -32,6 +32,8 @@ struct SubmissionDraftSummary: Identifiable, Hashable, Sendable {
     let updatedAt: String
     let deliveryTarget: String
     let deliveryAttemptStatus: String
+    let teacherMessageAttemptStatus: String
+    let teacherMessageConfirmedCount: Int
     let warningCount: Int
     let missingInfoCount: Int
     let needsUserInput: Bool
@@ -39,6 +41,12 @@ struct SubmissionDraftSummary: Identifiable, Hashable, Sendable {
     var statusLabel: String { DraftStatus.label(for: status) }
     var statusSymbol: String { DraftStatus.symbol(for: status) }
     var isFinal: Bool { DraftStatus.isFinal(status) }
+    var hasUnresolvedDelivery: Bool {
+        ["unknown", "in_flight"].contains(deliveryAttemptStatus)
+            || ["unknown", "in_flight", "ready"].contains(teacherMessageAttemptStatus)
+            || (teacherMessageAttemptStatus == "failed" && teacherMessageConfirmedCount > 0)
+    }
+    var canEdit: Bool { !isFinal && !hasUnresolvedDelivery }
     var createdDisplay: String { DraftDate.display(createdAt) }
 
     static func parseList(_ value: JSONValue) -> [SubmissionDraftSummary] {
@@ -56,6 +64,8 @@ struct SubmissionDraftSummary: Identifiable, Hashable, Sendable {
                 deliveryTarget: item.firstString("deliveryTarget", "preferredTarget").fallback("task"),
                 deliveryAttemptStatus: item["deliveryAttempt"]["status"].stringValue
                     .fallback(item.firstString("deliveryAttemptStatus")),
+                teacherMessageAttemptStatus: item["teacherMessageAttemptStatus"].stringValue,
+                teacherMessageConfirmedCount: item["teacherMessageConfirmedCount"].intValue ?? 0,
                 warningCount: item["warningCount"].intValue ?? 0,
                 missingInfoCount: item["missingInfoCount"].intValue ?? 0,
                 needsUserInput: item["needsUserInput"].boolValue ?? false
@@ -78,6 +88,8 @@ struct SubmissionDraftDetail: Sendable {
     let reviewNote: String
     let deliveryTarget: String
     let deliveryAttemptStatus: String
+    let teacherMessageAttemptStatus: String
+    let teacherMessageConfirmedCount: Int
     let deliveryHistory: [DraftDeliveryHistoryEntry]
     let warnings: [String]
     let missingInfo: [String]
@@ -86,7 +98,13 @@ struct SubmissionDraftDetail: Sendable {
     var statusLabel: String { DraftStatus.label(for: status) }
     var statusSymbol: String { DraftStatus.symbol(for: status) }
     var isFinal: Bool { DraftStatus.isFinal(status) }
-    var canReview: Bool { !isFinal }
+    var hasUnresolvedDelivery: Bool {
+        ["unknown", "in_flight"].contains(deliveryAttemptStatus)
+            || ["unknown", "in_flight", "ready"].contains(teacherMessageAttemptStatus)
+            || (teacherMessageAttemptStatus == "failed" && teacherMessageConfirmedCount > 0)
+    }
+    var canReview: Bool { !isFinal && !hasUnresolvedDelivery }
+    var canEdit: Bool { !isFinal && !hasUnresolvedDelivery }
     var createdDisplay: String { DraftDate.display(createdAt) }
     var updatedDisplay: String { DraftDate.display(updatedAt) }
     var reviewedDisplay: String { DraftDate.display(reviewedAt) }
@@ -111,6 +129,8 @@ struct SubmissionDraftDetail: Sendable {
             reviewNote: source.firstString("reviewNote"),
             deliveryTarget: source.firstString("deliveryTarget", "preferredTarget").fallback("task"),
             deliveryAttemptStatus: source["deliveryAttempt"]["status"].stringValue,
+            teacherMessageAttemptStatus: source["teacherMessageAttempt"]["status"].stringValue,
+            teacherMessageConfirmedCount: source["teacherMessageAttempt"]["confirmedMessages"].arrayValue.count,
             deliveryHistory: DraftDeliveryHistoryEntry.parseList(source["deliveryHistory"].arrayValue),
             warnings: source["warnings"].stringArray,
             missingInfo: source["missingInfo"].stringArray,
@@ -126,6 +146,8 @@ struct DraftDeliveryHistoryEntry: Identifiable, Hashable, Sendable {
     let taskID: String
     let modeLabel: String
     let submissionID: String
+    let contactName: String
+    let progress: String
     let occurredAt: String
     let error: String
 
@@ -149,6 +171,15 @@ struct DraftDeliveryHistoryEntry: Identifiable, Hashable, Sendable {
                 taskID: item.firstString("taskId"),
                 modeLabel: item.firstString("modeLabel"),
                 submissionID: item.firstString("submissionId"),
+                contactName: item["contact"].firstString("peerName", "name"),
+                progress: {
+                    let sentCount = item["sentCount"].intValue
+                    let chunkCount = item["chunkCount"].intValue
+                    guard let sentCount, let chunkCount, chunkCount > 0 else { return "" }
+                    let failedIndex = item["failedChunkIndex"].intValue
+                    return failedIndex.map { "已确认发送 \(sentCount)/\(chunkCount) 条；第 \($0) 条中断" }
+                        ?? "已确认发送 \(sentCount)/\(chunkCount) 条"
+                }(),
                 occurredAt: item.firstString("completedAt", "submittedAt", "sentAt", "failedAt", "startedAt"),
                 error: item.firstString("error")
             )
@@ -208,6 +239,100 @@ struct DraftSubmissionPreview: Sendable {
             reason: value.firstString("reason"),
             note: value.firstString("note"),
             confirmationToken: token
+        )
+    }
+}
+
+struct DraftPrivateMessageContact: Identifiable, Sendable {
+    let contactKey: String
+    let peerName: String
+    let className: String
+    let courseName: String
+    let rawValue: JSONValue
+
+    var id: String { contactKey }
+    var pickerLabel: String {
+        let context = [courseName, className].filter { !$0.isEmpty }.joined(separator: " · ")
+        return context.isEmpty ? peerName : "\(peerName) — \(context)"
+    }
+
+    static func parse(_ value: JSONValue) -> Self? {
+        guard case .object = value else { return nil }
+        let key = value.firstString("contactKey")
+        guard !key.isEmpty else { return nil }
+        return Self(
+            contactKey: key,
+            peerName: value.firstString("peerName", "name").fallback("未命名联系人"),
+            className: value.firstString("className"),
+            courseName: value.firstString("courseName"),
+            rawValue: value
+        )
+    }
+
+    static func parseList(_ values: [JSONValue]) -> [Self] {
+        values.compactMap(Self.parse)
+    }
+}
+
+struct DraftMessageChunk: Identifiable, Sendable {
+    let index: Int
+    let total: Int
+    let length: Int
+    let text: String
+
+    var id: Int { index }
+
+    static func parseList(_ values: [JSONValue]) -> [Self] {
+        values.compactMap { item in
+            guard let index = item["index"].intValue else { return nil }
+            return Self(
+                index: index,
+                total: item["total"].intValue ?? values.count,
+                length: item["length"].intValue ?? 0,
+                text: item.firstString("text")
+            )
+        }
+    }
+}
+
+struct DraftPrivateMessagePreview: Sendable {
+    let draftID: String
+    let taskID: String
+    let taskTitle: String
+    let subjectName: String
+    let destination: String
+    let contacts: [DraftPrivateMessageContact]
+    let selectedContact: DraftPrivateMessageContact?
+    let chunks: [DraftMessageChunk]
+    let canSend: Bool
+    let reason: String
+    let note: String
+    let confirmationToken: String
+    let nextChunkIndex: Int
+    let confirmedChunkCount: Int
+    let attemptStatus: String
+
+    static func parse(_ value: JSONValue) -> Self? {
+        let draftID = value.firstString("draftId")
+        let taskID = value.firstString("taskId")
+        let token = value.firstString("confirmationToken")
+        guard !draftID.isEmpty, !taskID.isEmpty, !token.isEmpty else { return nil }
+        return Self(
+            draftID: draftID,
+            taskID: taskID,
+            taskTitle: value.firstString("taskTitle").fallback("未命名作业"),
+            subjectName: value.firstString("subjectName").fallback("未知课程"),
+            destination: value.firstString("destination").fallback("伴学邦私信老师"),
+            contacts: DraftPrivateMessageContact.parseList(value["contacts"].arrayValue),
+            selectedContact: DraftPrivateMessageContact.parse(value["selectedContact"]),
+            chunks: DraftMessageChunk.parseList(value["chunks"].arrayValue),
+            canSend: value["canSend"].boolValue ?? false,
+            reason: value.firstString("reason"),
+            note: value.firstString("note"),
+            confirmationToken: token,
+            nextChunkIndex: value["nextChunkIndex"].intValue ?? 0,
+            confirmedChunkCount: value["confirmedChunkCount"].intValue ?? 0,
+            attemptStatus: value.firstString("attemptStatus")
         )
     }
 }

@@ -13,6 +13,8 @@ final class DraftViewModel {
     private(set) var detailError: String?
     private(set) var actionMessage: String?
     private(set) var submissionPreview: DraftSubmissionPreview?
+    private(set) var privateMessagePreview: DraftPrivateMessagePreview?
+    private(set) var selectedPrivateMessageContactKey: String?
 
     var selectedFilter: DraftFilter = .all
     var selectedDraftID: String?
@@ -29,6 +31,10 @@ final class DraftViewModel {
     }
 
     var canPrepareSubmission: Bool {
+        detail?.status == "approved" && !hasUnsavedChanges && !isPerformingAction
+    }
+
+    var canPreparePrivateMessage: Bool {
         detail?.status == "approved" && !hasUnsavedChanges && !isPerformingAction
     }
 
@@ -52,6 +58,8 @@ final class DraftViewModel {
                 editableText = ""
                 editableSummary = ""
                 submissionPreview = nil
+                privateMessagePreview = nil
+                selectedPrivateMessageContactKey = nil
             }
             isLoadingList = false
         } catch {
@@ -64,6 +72,8 @@ final class DraftViewModel {
 
     func loadSelectedDraft(using backend: BackendConnectionModel) async {
         submissionPreview = nil
+        privateMessagePreview = nil
+        selectedPrivateMessageContactKey = nil
         guard let selectedDraftID else {
             detail = nil
             editableText = ""
@@ -151,6 +161,8 @@ final class DraftViewModel {
 
     func prepareSubmission(using backend: BackendConnectionModel) async {
         guard canPrepareSubmission, let detail else { return }
+        privateMessagePreview = nil
+        selectedPrivateMessageContactKey = nil
         isPerformingAction = true
         detailError = nil
         actionMessage = nil
@@ -173,6 +185,109 @@ final class DraftViewModel {
     func cancelSubmissionPreview() {
         submissionPreview = nil
         detailError = nil
+    }
+
+    func preparePrivateMessage(using backend: BackendConnectionModel) async {
+        guard canPreparePrivateMessage, let detail else { return }
+        submissionPreview = nil
+        privateMessagePreview = nil
+        selectedPrivateMessageContactKey = nil
+        isPerformingAction = true
+        detailError = nil
+        actionMessage = nil
+        defer { isPerformingAction = false }
+
+        do {
+            let result = try await backend.callTool(
+                "prepare_draft_private_message",
+                arguments: ["draft_id": .string(detail.id)]
+            )
+            guard let preview = DraftPrivateMessagePreview.parse(result) else {
+                throw BackendBridgeError.protocolFailure("私信预览缺少 task 信息或确认令牌。")
+            }
+            privateMessagePreview = preview
+        } catch {
+            detailError = error.localizedDescription
+        }
+    }
+
+    func selectPrivateMessageContact(_ contactKey: String, using backend: BackendConnectionModel) async {
+        guard let detail, let preview = privateMessagePreview,
+              let contact = preview.contacts.first(where: { $0.contactKey == contactKey }) else { return }
+        let previousContactKey = preview.selectedContact?.contactKey
+        selectedPrivateMessageContactKey = contactKey
+        isPerformingAction = true
+        detailError = nil
+        defer { isPerformingAction = false }
+
+        do {
+            let result = try await backend.callTool(
+                "prepare_draft_private_message",
+                arguments: [
+                    "draft_id": .string(detail.id),
+                    "contact": contact.rawValue,
+                ]
+            )
+            guard let refreshedPreview = DraftPrivateMessagePreview.parse(result) else {
+                throw BackendBridgeError.protocolFailure("所选联系人对应的私信预览无效。")
+            }
+            privateMessagePreview = refreshedPreview
+        } catch {
+            selectedPrivateMessageContactKey = previousContactKey
+            detailError = error.localizedDescription
+        }
+    }
+
+    func cancelPrivateMessagePreview() {
+        privateMessagePreview = nil
+        selectedPrivateMessageContactKey = nil
+        detailError = nil
+    }
+
+    func sendPreparedPrivateMessage(using backend: BackendConnectionModel) async {
+        guard let detail, let preview = privateMessagePreview,
+              let contact = preview.selectedContact, preview.canSend,
+              detail.id == preview.draftID, detail.status == "approved", !hasUnsavedChanges else { return }
+
+        isPerformingAction = true
+        detailError = nil
+        actionMessage = nil
+        privateMessagePreview = nil
+        defer { isPerformingAction = false }
+
+        do {
+            let result = try await backend.callTool(
+                "send_approved_draft_private_message",
+                arguments: [
+                    "draft_id": .string(detail.id),
+                    "contact": contact.rawValue,
+                    "confirmation_token": .string(preview.confirmationToken),
+                ]
+            )
+            await refreshAfterDelivery(using: backend)
+            if result["sent"].boolValue == true {
+                let localRecordUpdated = result["localRecordUpdated"].boolValue ?? false
+                actionMessage = localRecordUpdated
+                    ? "已向\(contact.peerName)发送 \(preview.chunks.count) 段私信，并保存了本地交付记录。"
+                    : "私信已发送，但本地状态仍待核对：\(result.firstString("localRecordError").fallback("请检查本机草稿状态。"))"
+            } else {
+                let sentCount = result["sentCount"].intValue ?? 0
+                let failedIndex = result["failedChunkIndex"].intValue ?? preview.nextChunkIndex + 1
+                if result["outcomeUnknown"].boolValue == true {
+                    detailError = result["remoteAccepted"].boolValue == true
+                        ? "伴学邦已确认第 \(sentCount) 段发送成功，但本地进度保存失败。请核对伴学邦会话和本机草稿；系统已阻止重复发送。"
+                        : "第 \(failedIndex) 段私信的结果未知。请先核对伴学邦会话；系统已锁定草稿并阻止重复发送。"
+                } else if sentCount > 0 {
+                    actionMessage = "已确认发送 \(sentCount) 段；第 \(failedIndex) 段被拒绝。重新准备并确认后会从未发送部分继续。"
+                } else {
+                    detailError = result.firstString("error").fallback("私信未发送，请检查联系人和消息内容后重试。")
+                }
+            }
+        } catch {
+            let message = error.localizedDescription
+            await refreshAfterDelivery(using: backend)
+            detailError = message
+        }
     }
 
     func submitPreparedDraft(using backend: BackendConnectionModel) async {
@@ -198,14 +313,13 @@ final class DraftViewModel {
             }
             let localRecordUpdated = result["localRecordUpdated"].boolValue ?? false
             let localRecordError = result.firstString("localRecordError")
-            await loadSelectedDraft(using: backend)
-            await loadDrafts(using: backend)
+            await refreshAfterDelivery(using: backend)
             actionMessage = localRecordUpdated
                 ? "作业已提交，结果已保存到本地交付记录。"
                 : "作业已提交，但本地交付记录未能保存：\(localRecordError.isEmpty ? "请检查本机草稿状态。" : localRecordError)"
         } catch {
             let message = error.localizedDescription
-            await loadSelectedDraft(using: backend)
+            await refreshAfterDelivery(using: backend)
             detailError = message
         }
     }
@@ -234,5 +348,16 @@ final class DraftViewModel {
         detail = draft
         editableText = draft.draftText
         editableSummary = draft.summary
+        submissionPreview = nil
+        privateMessagePreview = nil
+        selectedPrivateMessageContactKey = nil
+    }
+
+    private func refreshAfterDelivery(using backend: BackendConnectionModel) async {
+        await loadSelectedDraft(using: backend)
+        if let detail, selectedFilter != .all, selectedFilter.rawValue != detail.status {
+            selectedFilter = .all
+        }
+        await loadDrafts(using: backend)
     }
 }

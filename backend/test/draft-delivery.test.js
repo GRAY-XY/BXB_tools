@@ -153,6 +153,21 @@ test("an in-flight attempt loaded after restart cannot submit again", async (con
   assert.equal((await store.get("draft_delivery_test")).deliveryAttempt.status, "in_flight");
 });
 
+test("an unresolved attempt cannot be erased or edited to bypass its duplicate-send guard", async (context) => {
+  const { client, store } = await setup(context);
+  await store.update("draft_delivery_test", async (draft) => ({
+    ...draft,
+    deliveryAttempt: { id: "attempt-unknown", target: "task", status: "unknown" },
+  }));
+
+  await assert.rejects(client.deleteSubmissionDraft("draft_delivery_test"), /尚未核对或已部分送达/);
+  await assert.rejects(
+    client.updateSubmissionDraft("draft_delivery_test", { draftText: "替换正文" }),
+    /尚未核对或已部分送达/,
+  );
+  assert.equal((await store.get("draft_delivery_test")).deliveryAttempt.status, "unknown");
+});
+
 test("an unresolved attempt for one draft blocks another draft on the same task", async (context) => {
   const { client, store } = await setup(context);
   delete client.prepareDraftSubmission;
@@ -180,6 +195,31 @@ test("an unresolved attempt for one draft blocks another draft on the same task"
   assert.match(preview.reason, /上次提交的结果尚未确认/);
 });
 
+test("an unresolved teacher-message delivery blocks task submission for the same task", async (context) => {
+  const { client, store } = await setup(context);
+  delete client.prepareDraftSubmission;
+  await store.update("draft_delivery_test", async (draft) => ({
+    ...draft,
+    teacherMessageAttempt: {
+      id: "message-attempt-1",
+      status: "failed",
+      confirmedMessages: [{ index: 1 }],
+    },
+  }));
+  client.getTaskDetail = async () => ({
+    task: {},
+    taskSummary: { classId: "task-class-4" },
+    taskClassId: "task-class-4",
+    taskId: "task-9",
+    mySubmissionList: [],
+    mySubmissionAttachments: [],
+  });
+
+  const preview = await client.prepareDraftSubmission("draft_delivery_test");
+  assert.equal(preview.canSubmit, false);
+  assert.match(preview.reason, /老师私信仍有未核对或部分送达/);
+});
+
 test("parallel drafts cannot submit to the same task at once", async (context) => {
   const { client, store } = await setup(context);
   await store.save({
@@ -205,6 +245,17 @@ test("parallel drafts cannot submit to the same task at once", async (context) =
   await firstStarted;
   await assert.rejects(
     client.submitApprovedDraft("draft_second_attempt", { confirmationToken: "confirmed-preview" }),
+    /正在提交另一份草稿/,
+  );
+  await store.save({
+    draftId: "draft_third_attempt",
+    status: "approved",
+    taskId: "task-9",
+    draftText: "第三份正文",
+    deliveryHistory: [],
+  });
+  await assert.rejects(
+    client.submitApprovedDraft("draft_third_attempt", { confirmationToken: "confirmed-preview" }),
     /正在提交另一份草稿/,
   );
   assert.equal(submitCalls, 1);
