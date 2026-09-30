@@ -179,7 +179,12 @@ struct DraftReviewView: View {
                 errorMessage: model.detailError,
                 onSave: { Task { await model.save(using: backend) } },
                 onApprove: { showingApproveConfirmation = true },
-                onReject: { showingRejectConfirmation = true }
+                onReject: { showingRejectConfirmation = true },
+                submissionPreview: model.submissionPreview,
+                canPrepareSubmission: model.canPrepareSubmission,
+                onPrepareSubmission: { Task { await model.prepareSubmission(using: backend) } },
+                onCancelSubmission: model.cancelSubmissionPreview,
+                onSubmit: { Task { await model.submitPreparedDraft(using: backend) } }
             )
         } else if let error = model.detailError {
             ContentUnavailableView(
@@ -230,6 +235,11 @@ private struct DraftSummaryRow: View {
                 .font(.caption2)
                 .foregroundStyle(.orange)
             }
+            if ["unknown", "in_flight"].contains(draft.deliveryAttemptStatus) {
+                Label("提交结果待核对", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+            }
         }
         .padding(.vertical, 5)
     }
@@ -246,18 +256,30 @@ private struct DraftDetailView: View {
     let onSave: () -> Void
     let onApprove: () -> Void
     let onReject: () -> Void
+    let submissionPreview: DraftSubmissionPreview?
+    let canPrepareSubmission: Bool
+    let onPrepareSubmission: () -> Void
+    let onCancelSubmission: () -> Void
+    let onSubmit: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    titleSection
-                    metadataSection
-                    reviewSignals
-                    editorSection
+                if let submissionPreview {
+                    submissionPreviewSection(submissionPreview)
+                        .padding(20)
+                        .frame(maxWidth: 860, alignment: .leading)
+                } else {
+                    VStack(alignment: .leading, spacing: 16) {
+                        titleSection
+                        metadataSection
+                        reviewSignals
+                        deliveryHistorySection
+                        editorSection
+                    }
+                    .padding(20)
+                    .frame(maxWidth: 860, alignment: .leading)
                 }
-                .padding(20)
-                .frame(maxWidth: 860, alignment: .leading)
             }
 
             Divider()
@@ -284,6 +306,10 @@ private struct DraftDetailView: View {
                 Label("这份草稿已交付，不能再编辑或审核。", systemImage: "lock.fill")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            } else if ["unknown", "in_flight"].contains(detail.deliveryAttemptStatus) {
+                Label("上次提交结果待核对；请先检查伴学邦中的作业状态。系统已阻止重复提交。", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
             } else {
                 Label("通过审核不会自动提交作业或发送私信。", systemImage: "hand.raised.fill")
                     .font(.caption)
@@ -359,6 +385,115 @@ private struct DraftDetailView: View {
         }
     }
 
+    @ViewBuilder
+    private var deliveryHistorySection: some View {
+        if !detail.deliveryHistory.isEmpty {
+            GroupBox("交付记录") {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(detail.deliveryHistory) { entry in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Label(entry.title, systemImage: entry.status == "success" ? "checkmark.circle" : "exclamationmark.triangle")
+                                .fontWeight(.medium)
+                                .foregroundStyle(entry.status == "success" ? Color.primary : Color.orange)
+                            if !entry.modeLabel.isEmpty {
+                                Text("方式：\(entry.modeLabel)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            if !entry.submissionID.isEmpty {
+                                Text("提交记录：\(entry.submissionID)")
+                                    .font(.caption)
+                                    .textSelection(.enabled)
+                            }
+                            if !entry.occurredAt.isEmpty {
+                                Text(entry.occurredAt)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            if !entry.error.isEmpty {
+                                Text(entry.error)
+                                    .font(.caption)
+                                    .foregroundStyle(.red)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                        if entry.id != detail.deliveryHistory.last?.id {
+                            Divider()
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 5)
+            }
+        }
+    }
+
+    private func submissionPreviewSection(_ preview: DraftSubmissionPreview) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text("提交前核对")
+                    .font(.title2.bold())
+                Text("请确认以下内容与目标作业一致。只有点击“确认并提交”后才会执行真实提交。")
+                    .foregroundStyle(.secondary)
+            }
+
+            GroupBox("提交目标") {
+                Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 8) {
+                    metadataRow("课程", preview.subjectName)
+                    metadataRow("作业", preview.taskTitle)
+                    metadataRow("Task ID", preview.taskID)
+                    metadataRow("目标", preview.destination)
+                    metadataRow("方式", preview.modeLabel)
+                    if !preview.submissionID.isEmpty {
+                        metadataRow("现有提交记录", preview.submissionID)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 5)
+            }
+
+            GroupBox("将提交的完整正文") {
+                Text(preview.draftText.isEmpty ? "（空正文）" : preview.draftText)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 6)
+            }
+
+            GroupBox("保留的现有附件") {
+                if preview.retainedAttachments.isEmpty {
+                    Text("没有保留的附件。")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    VStack(alignment: .leading, spacing: 7) {
+                        ForEach(preview.retainedAttachments) { attachment in
+                            HStack {
+                                Label(attachment.fileName, systemImage: "paperclip")
+                                Spacer()
+                                if !attachment.fileSize.isEmpty {
+                                    Text("\(attachment.fileSize) bytes")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+
+            if !preview.note.isEmpty {
+                Label(preview.note, systemImage: "info.circle")
+                    .foregroundStyle(.orange)
+            }
+            if !preview.canSubmit {
+                Label(preview.reason.isEmpty ? "当前无法安全提交。" : preview.reason, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+            }
+        }
+    }
+
     private var actionBar: some View {
         HStack(spacing: 10) {
             if isPerformingAction {
@@ -381,15 +516,28 @@ private struct DraftDetailView: View {
 
             Spacer()
 
-            Button("保存正文", action: onSave)
-                .disabled(detail.isFinal || !hasUnsavedChanges || isPerformingAction || editableText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            if submissionPreview != nil {
+                Button("返回草稿", action: onCancelSubmission)
+                    .disabled(isPerformingAction)
+                Button("确认并提交", action: onSubmit)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isPerformingAction || submissionPreview?.canSubmit != true)
+            } else {
+                Button("保存正文", action: onSave)
+                    .disabled(detail.isFinal || !hasUnsavedChanges || isPerformingAction || editableText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
-            Button("驳回", role: .destructive, action: onReject)
-                .disabled(!detail.canReview || hasUnsavedChanges || isPerformingAction)
+                Button("驳回", role: .destructive, action: onReject)
+                    .disabled(!detail.canReview || hasUnsavedChanges || isPerformingAction)
 
-            Button("通过审核", action: onApprove)
-                .buttonStyle(.borderedProminent)
-                .disabled(!detail.canReview || hasUnsavedChanges || isPerformingAction)
+                Button("通过审核", action: onApprove)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!detail.canReview || hasUnsavedChanges || isPerformingAction)
+
+                if detail.status == "approved" {
+                    Button("准备提交", action: onPrepareSubmission)
+                        .disabled(!canPrepareSubmission)
+                }
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)

@@ -31,6 +31,7 @@ struct SubmissionDraftSummary: Identifiable, Hashable, Sendable {
     let createdAt: String
     let updatedAt: String
     let deliveryTarget: String
+    let deliveryAttemptStatus: String
     let warningCount: Int
     let missingInfoCount: Int
     let needsUserInput: Bool
@@ -53,6 +54,8 @@ struct SubmissionDraftSummary: Identifiable, Hashable, Sendable {
                 createdAt: item.firstString("createdAt"),
                 updatedAt: item.firstString("updatedAt"),
                 deliveryTarget: item.firstString("deliveryTarget", "preferredTarget").fallback("task"),
+                deliveryAttemptStatus: item["deliveryAttempt"]["status"].stringValue
+                    .fallback(item.firstString("deliveryAttemptStatus")),
                 warningCount: item["warningCount"].intValue ?? 0,
                 missingInfoCount: item["missingInfoCount"].intValue ?? 0,
                 needsUserInput: item["needsUserInput"].boolValue ?? false
@@ -74,6 +77,8 @@ struct SubmissionDraftDetail: Sendable {
     let reviewedAt: String
     let reviewNote: String
     let deliveryTarget: String
+    let deliveryAttemptStatus: String
+    let deliveryHistory: [DraftDeliveryHistoryEntry]
     let warnings: [String]
     let missingInfo: [String]
     let needsUserInput: Bool
@@ -105,9 +110,104 @@ struct SubmissionDraftDetail: Sendable {
             reviewedAt: source.firstString("reviewedAt", "rejectedAt"),
             reviewNote: source.firstString("reviewNote"),
             deliveryTarget: source.firstString("deliveryTarget", "preferredTarget").fallback("task"),
+            deliveryAttemptStatus: source["deliveryAttempt"]["status"].stringValue,
+            deliveryHistory: DraftDeliveryHistoryEntry.parseList(source["deliveryHistory"].arrayValue),
             warnings: source["warnings"].stringArray,
             missingInfo: source["missingInfo"].stringArray,
             needsUserInput: source["needsUserInput"].boolValue ?? false
+        )
+    }
+}
+
+struct DraftDeliveryHistoryEntry: Identifiable, Hashable, Sendable {
+    let id: String
+    let type: String
+    let status: String
+    let taskID: String
+    let modeLabel: String
+    let submissionID: String
+    let occurredAt: String
+    let error: String
+
+    var title: String {
+        let target = type == "teacher_private_message" ? "私信老师" : "提交作业"
+        switch status {
+        case "success": return "\(target)成功"
+        case "failed": return "\(target)失败"
+        case "unknown", "in_flight": return "\(target)结果待核对"
+        case "partial": return "\(target)部分完成"
+        default: return target
+        }
+    }
+
+    static func parseList(_ values: [JSONValue]) -> [Self] {
+        values.enumerated().map { index, item in
+            Self(
+                id: item.firstString("attemptId", "submittedAt", "sentAt", "failedAt").fallback(String(index)),
+                type: item.firstString("type"),
+                status: item.firstString("status"),
+                taskID: item.firstString("taskId"),
+                modeLabel: item.firstString("modeLabel"),
+                submissionID: item.firstString("submissionId"),
+                occurredAt: item.firstString("completedAt", "submittedAt", "sentAt", "failedAt", "startedAt"),
+                error: item.firstString("error")
+            )
+        }
+    }
+}
+
+struct DraftRetainedAttachment: Identifiable, Hashable, Sendable {
+    let id: String
+    let fileName: String
+    let fileSize: String
+
+    static func parseList(_ values: [JSONValue]) -> [Self] {
+        values.enumerated().map { index, item in
+            let fileID = item.firstString("fileId")
+            return Self(
+                id: fileID.isEmpty ? String(index) : fileID,
+                fileName: item.firstString("fileName", "name").fallback("未命名附件"),
+                fileSize: item.firstString("fileSize")
+            )
+        }
+    }
+}
+
+struct DraftSubmissionPreview: Sendable {
+    let draftID: String
+    let taskID: String
+    let taskTitle: String
+    let subjectName: String
+    let destination: String
+    let draftText: String
+    let mode: String
+    let modeLabel: String
+    let submissionID: String
+    let retainedAttachments: [DraftRetainedAttachment]
+    let canSubmit: Bool
+    let reason: String
+    let note: String
+    let confirmationToken: String
+
+    static func parse(_ value: JSONValue) -> Self? {
+        let taskID = value.firstString("taskId")
+        let token = value.firstString("confirmationToken")
+        guard !taskID.isEmpty, !token.isEmpty else { return nil }
+        return Self(
+            draftID: value.firstString("draftId"),
+            taskID: taskID,
+            taskTitle: value.firstString("taskTitle").fallback("未命名作业"),
+            subjectName: value.firstString("subjectName").fallback("未知课程"),
+            destination: value.firstString("destination").fallback("伴学邦作业提交"),
+            draftText: value.firstString("draftText"),
+            mode: value.firstString("mode"),
+            modeLabel: value.firstString("modeLabel").fallback("提交"),
+            submissionID: value.firstString("submissionId"),
+            retainedAttachments: DraftRetainedAttachment.parseList(value["retainedAttachments"].arrayValue),
+            canSubmit: value["canSubmit"].boolValue ?? false,
+            reason: value.firstString("reason"),
+            note: value.firstString("note"),
+            confirmationToken: token
         )
     }
 }
