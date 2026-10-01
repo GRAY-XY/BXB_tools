@@ -269,7 +269,7 @@ final class DraftViewModel {
                 let localRecordUpdated = result["localRecordUpdated"].boolValue ?? false
                 actionMessage = localRecordUpdated
                     ? "已向\(contact.peerName)发送 \(preview.chunks.count) 段私信，并保存了本地交付记录。"
-                    : "私信已发送，但本地状态仍待核对：\(result.firstString("localRecordError").fallback("请检查本机草稿状态。"))"
+                    : "私信已发送，但本地状态仍待核对：\(result.firstString("localRecordError").isEmpty ? "请检查本机草稿状态。" : result.firstString("localRecordError"))"
             } else {
                 let sentCount = result["sentCount"].intValue ?? 0
                 let failedIndex = result["failedChunkIndex"].intValue ?? preview.nextChunkIndex + 1
@@ -280,7 +280,8 @@ final class DraftViewModel {
                 } else if sentCount > 0 {
                     actionMessage = "已确认发送 \(sentCount) 段；第 \(failedIndex) 段被拒绝。重新准备并确认后会从未发送部分继续。"
                 } else {
-                    detailError = result.firstString("error").fallback("私信未发送，请检查联系人和消息内容后重试。")
+                    let error = result.firstString("error")
+                    detailError = error.isEmpty ? "私信未发送，请检查联系人和消息内容后重试。" : error
                 }
             }
         } catch {

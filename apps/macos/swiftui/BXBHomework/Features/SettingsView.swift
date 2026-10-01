@@ -707,7 +707,7 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .padding(.horizontal, 14)
-        .frame(minWidth: 760, minHeight: 680)
+        .frame(minWidth: 600, idealWidth: 760, minHeight: 500, idealHeight: 680)
         .preferredColorScheme(model.theme == "dark" ? .dark : model.theme == "light" ? .light : nil)
         .task { await model.load(using: backend) }
         .confirmationDialog("退出伴学邦？", isPresented: $showingSignOutConfirmation, titleVisibility: .visible) {

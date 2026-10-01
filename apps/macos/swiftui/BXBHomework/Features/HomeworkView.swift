@@ -83,8 +83,29 @@ struct HomeworkView: View {
     }
 
     private var controls: some View {
+        ViewThatFits(in: .horizontal) {
+            controlsRow
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 12) {
+                    coursePicker
+                    filterPicker
+                }
+                refreshControls
+            }
+        }
+    }
+
+    private var controlsRow: some View {
         HStack(spacing: 12) {
-            Picker("课程", selection: Binding(
+            coursePicker
+            filterPicker
+            Spacer(minLength: 8)
+            refreshControls
+        }
+    }
+
+    private var coursePicker: some View {
+        Picker("课程", selection: Binding(
                 get: { model.selectedCourseID },
                 set: { model.selectedCourseID = $0 }
             )) {
@@ -94,8 +115,10 @@ struct HomeworkView: View {
             }
             .frame(maxWidth: 320)
             .disabled(model.isLoadingCourses || model.courses.isEmpty)
+    }
 
-            Picker("筛选", selection: Binding(
+    private var filterPicker: some View {
+        Picker("筛选", selection: Binding(
                 get: { model.selectedFilter },
                 set: { model.selectedFilter = $0 }
             )) {
@@ -104,10 +127,11 @@ struct HomeworkView: View {
                 }
             }
             .pickerStyle(.segmented)
-            .frame(width: 210)
+            .frame(minWidth: 150, idealWidth: 190, maxWidth: 210)
+    }
 
-            Spacer()
-
+    private var refreshControls: some View {
+        HStack(spacing: 12) {
             if model.isLoadingCourses || model.isLoadingTasks {
                 ProgressView()
                     .controlSize(.small)
@@ -123,11 +147,12 @@ struct HomeworkView: View {
     }
 
     private var homeworkBrowser: some View {
-        HSplitView {
+        AdaptiveSplitView(primaryMinHeight: 180, secondaryMinHeight: 300) {
             taskList
-                .frame(minWidth: 300, idealWidth: 360, maxWidth: 460)
+                .frame(minWidth: 220, idealWidth: 320, maxWidth: 460)
+        } secondary: {
             detailPane
-                .frame(minWidth: 440, maxWidth: .infinity, maxHeight: .infinity)
+                .frame(minWidth: 360, maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 

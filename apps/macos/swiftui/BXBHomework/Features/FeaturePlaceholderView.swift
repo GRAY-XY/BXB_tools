@@ -5,19 +5,9 @@ struct FeaturePlaceholderView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
-            HStack(spacing: 16) {
-                Image(systemName: section.symbolName)
-                    .font(.system(size: 30, weight: .medium))
-                    .frame(width: 56, height: 56)
-                    .background(.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
-                    .foregroundStyle(.tint)
-
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(section.title)
-                        .font(.largeTitle.bold())
-                    Text(section.summary)
-                        .foregroundStyle(.secondary)
-                }
+            ViewThatFits(in: .horizontal) {
+                placeholderHeader(horizontal: true)
+                placeholderHeader(horizontal: false)
             }
 
             GroupBox("迁移状态") {
@@ -34,6 +24,39 @@ struct FeaturePlaceholderView: View {
         }
         .padding(32)
         .navigationTitle(section.title)
+    }
+
+    @ViewBuilder
+    private func placeholderHeader(horizontal: Bool) -> some View {
+        if horizontal {
+            HStack(spacing: 16) {
+                placeholderIcon
+                placeholderText
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 12) {
+                placeholderIcon
+                placeholderText
+            }
+        }
+    }
+
+    private var placeholderIcon: some View {
+            Image(systemName: section.symbolName)
+                .font(.system(size: 30, weight: .medium))
+                .frame(width: 56, height: 56)
+                .background(.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
+                .foregroundStyle(.tint)
+    }
+
+    private var placeholderText: some View {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(section.title)
+                    .font(.largeTitle.bold())
+                Text(section.summary)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
     }
 }
 

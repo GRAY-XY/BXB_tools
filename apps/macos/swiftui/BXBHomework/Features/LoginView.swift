@@ -77,7 +77,7 @@ struct LoginView: View {
             }
         }
         .padding(24)
-        .frame(width: 520)
+        .frame(minWidth: 360, idealWidth: 520, maxWidth: 640)
         .task {
             loadSavedCredentialOnce()
         }

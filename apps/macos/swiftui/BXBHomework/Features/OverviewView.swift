@@ -16,7 +16,8 @@ struct OverviewView: View {
                 sessionGrid
                 runtimeCard
             }
-            .padding(32)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 28)
             .frame(maxWidth: 980, alignment: .leading)
         }
         .navigationTitle("概览")
@@ -44,20 +45,27 @@ struct OverviewView: View {
     }
 
     private var header: some View {
-        HStack(alignment: .center, spacing: 16) {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: 16) { overviewHeaderIcon; overviewHeaderText }
+            VStack(alignment: .leading, spacing: 12) { overviewHeaderIcon; overviewHeaderText }
+        }
+    }
+
+    private var overviewHeaderIcon: some View {
             Image(systemName: "rectangle.grid.2x2")
                 .font(.system(size: 30, weight: .medium))
                 .frame(width: 56, height: 56)
                 .background(.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
                 .foregroundStyle(.tint)
+    }
 
+    private var overviewHeaderText: some View {
             VStack(alignment: .leading, spacing: 5) {
                 Text("概览")
                     .font(.largeTitle.bold())
                 Label(backend.statusText, systemImage: backend.statusSymbol)
                     .foregroundStyle(backend.state == .connected ? Color.secondary : Color.orange)
             }
-        }
     }
 
     private var sessionGrid: some View {

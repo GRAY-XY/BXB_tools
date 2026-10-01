@@ -47,11 +47,13 @@ struct MessagesView: View {
 
     private var threadLayout: some View {
         @Bindable var model = model
-        return HStack(spacing: 0) {
+        return AdaptiveSplitView(breakpoint: 700, primaryMinHeight: 180, secondaryMinHeight: 320) {
             ContactSidebar(model: model, backend: backend)
-                .frame(width: 260)
+                .frame(minWidth: 200, idealWidth: 240, maxWidth: 300)
+        } secondary: {
             Divider()
             ThreadDetail(model: model, backend: backend, currentUserID: backend.session?.user?.id)
+                .frame(minWidth: 320, maxWidth: .infinity)
         }
     }
 
@@ -419,6 +421,6 @@ private struct SendConfirmationSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 460)
+        .frame(minWidth: 360, idealWidth: 460, maxWidth: 600)
     }
 }

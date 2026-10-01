@@ -35,11 +35,12 @@ struct WorkspaceView: View {
 
             statusArea
 
-            HSplitView {
+            AdaptiveSplitView(primaryMinHeight: 180, secondaryMinHeight: 300) {
                 fileList
-                    .frame(minWidth: 290, idealWidth: 350, maxWidth: 460)
+                    .frame(minWidth: 220, idealWidth: 320, maxWidth: 460)
+            } secondary: {
                 previewPane
-                    .frame(minWidth: 440, maxWidth: .infinity, maxHeight: .infinity)
+                    .frame(minWidth: 360, maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .navigationTitle("文件")
@@ -100,7 +101,8 @@ struct WorkspaceView: View {
     }
 
     private var controls: some View {
-        HStack(spacing: 12) {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 12) {
             TextField("搜索文件名或路径", text: Binding(
                 get: { model.searchText },
                 set: { model.searchText = $0 }
@@ -161,7 +163,9 @@ struct WorkspaceView: View {
             } label: {
                 Label("刷新", systemImage: "arrow.clockwise")
             }
-            .disabled(model.isLoadingFiles || model.isBusy)
+                .disabled(model.isLoadingFiles || model.isBusy)
+            }
+            .padding(.horizontal, 20)
         }
     }
 

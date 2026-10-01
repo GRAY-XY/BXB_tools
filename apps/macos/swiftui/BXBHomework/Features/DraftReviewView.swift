@@ -22,11 +22,12 @@ struct DraftReviewView: View {
 
             Divider()
 
-            HSplitView {
+            AdaptiveSplitView(primaryMinHeight: 180, secondaryMinHeight: 340) {
                 draftList
-                    .frame(minWidth: 300, idealWidth: 360, maxWidth: 460)
+                    .frame(minWidth: 220, idealWidth: 320, maxWidth: 460)
+            } secondary: {
                 detailPane
-                    .frame(minWidth: 480, maxWidth: .infinity, maxHeight: .infinity)
+                    .frame(minWidth: 360, maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .navigationTitle("草稿审核")
@@ -83,8 +84,25 @@ struct DraftReviewView: View {
     }
 
     private var controls: some View {
+        ViewThatFits(in: .horizontal) {
+            controlsRow
+            VStack(alignment: .leading, spacing: 10) {
+                draftFilter
+                draftActions
+            }
+        }
+    }
+
+    private var controlsRow: some View {
         HStack(spacing: 12) {
-            Picker("状态", selection: Binding(
+            draftFilter
+            Spacer(minLength: 8)
+            draftActions
+        }
+    }
+
+    private var draftFilter: some View {
+        Picker("状态", selection: Binding(
                 get: { model.selectedFilter },
                 set: { model.selectedFilter = $0 }
             )) {
@@ -92,14 +110,15 @@ struct DraftReviewView: View {
                     Text(filter.title).tag(filter)
                 }
             }
-            .frame(width: 210)
+            .frame(minWidth: 150, idealWidth: 190, maxWidth: 210)
+    }
 
+    private var draftActions: some View {
+        HStack(spacing: 12) {
             if model.isLoadingList {
                 ProgressView()
                     .controlSize(.small)
             }
-
-            Spacer()
 
             Text("所有数据均保存在本机")
                 .font(.caption)

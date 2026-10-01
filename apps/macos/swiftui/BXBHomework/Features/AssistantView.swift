@@ -32,11 +32,12 @@ struct AssistantView: View {
 
             Divider()
 
-            HSplitView {
+            AdaptiveSplitView(primaryMinHeight: 180, secondaryMinHeight: 380) {
                 conversationSidebar
-                    .frame(minWidth: 260, idealWidth: 310, maxWidth: 380)
+                    .frame(minWidth: 220, idealWidth: 280, maxWidth: 380)
+            } secondary: {
                 conversationPane
-                    .frame(minWidth: 520, maxWidth: .infinity, maxHeight: .infinity)
+                    .frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .navigationTitle("智能助理")
@@ -607,7 +608,8 @@ private struct AssistantImagePicker: View {
                 }
             }
         }
-        .frame(width: 600, height: 520)
+        .frame(minWidth: 420, idealWidth: 600, maxWidth: 700,
+               minHeight: 380, idealHeight: 520, maxHeight: 650)
         .task { await model.loadWorkspaceImages(using: backend) }
     }
 }
