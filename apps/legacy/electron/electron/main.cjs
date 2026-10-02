@@ -684,7 +684,7 @@ async function loadModelConfig() {
     chatTemperature: 0.2,
     compactTemperature: 0.1,
     longPasteThreshold: 4000,
-    maxToolRounds: 6,
+    maxToolRounds: 50,
     systemPrompt: DEFAULT_SYSTEM_PROMPT,
   });
   return {
@@ -709,7 +709,7 @@ async function saveModelConfig(config) {
     chatTemperature: normalizeTemperature(config?.chatTemperature, 0.2),
     compactTemperature: normalizeTemperature(config?.compactTemperature, 0.1),
     longPasteThreshold: normalizeLongPasteThreshold(config?.longPasteThreshold, 4000),
-    maxToolRounds: Math.max(1, Number.parseInt(config?.maxToolRounds || 6, 10) || 6),
+    maxToolRounds: Math.max(1, Number.parseInt(config?.maxToolRounds || 50, 10) || 50),
     systemPrompt: normalizeSystemPrompt(config?.systemPrompt),
   };
   await writeJson(modelConfigPath, normalized);
@@ -1025,7 +1025,7 @@ async function runAgent({ text, requestId, conversationId }) {
     }
   };
 
-  const maxToolRounds = Math.max(1, Number.parseInt(config.maxToolRounds || 6, 10));
+  const maxToolRounds = Math.max(1, Number.parseInt(config.maxToolRounds || 50, 10));
   const messages = [
     {
       role: "system",

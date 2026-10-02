@@ -10,7 +10,7 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..\..")
 $repoRootPath = $repoRoot.Path
-$distRoot = Join-Path $repoRootPath "dist-winui-app"
+$distRoot = Join-Path $repoRootPath "release\artifacts\windows"
 $unpackedDir = Join-Path $distRoot "winui-unpacked"
 $resourcesDir = Join-Path $unpackedDir "resources"
 $payloadDir = Join-Path $resourcesDir "payload"
@@ -63,6 +63,19 @@ function Find-Makensis {
     return $fromPath.Source
   }
 
+  $programFilesX86 = [Environment]::GetFolderPath("ProgramFilesX86")
+  $programFiles = [Environment]::GetFolderPath("ProgramFiles")
+  foreach ($candidatePath in @(
+    (Join-Path $programFilesX86 "NSIS\Bin\makensis.exe"),
+    (Join-Path $programFilesX86 "NSIS\makensis.exe"),
+    (Join-Path $programFiles "NSIS\Bin\makensis.exe"),
+    (Join-Path $programFiles "NSIS\makensis.exe")
+  )) {
+    if (Test-Path -LiteralPath $candidatePath) {
+      return $candidatePath
+    }
+  }
+
   $cacheRoot = Join-Path $env:LOCALAPPDATA "electron-builder\Cache\nsis"
   if (Test-Path -LiteralPath $cacheRoot) {
     $candidate = Get-ChildItem -LiteralPath $cacheRoot -Recurse -Filter makensis.exe -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -84,6 +97,8 @@ $numericVersion = if ($numericVersionMatch.Success) {
 } else {
   "0.0.0.0"
 }
+
+& (Join-Path $repoRootPath "release\scripts\prepare-windows-assets.ps1")
 
 if (-not $SkipBuild) {
   & (Join-Path $PSScriptRoot "build.ps1") -Configuration $Configuration

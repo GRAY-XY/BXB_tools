@@ -603,7 +603,7 @@ class HomeworkUiApp:
         panel.pack(fill="x")
 
         ttk.Label(panel, text="最大工具调用轮次").grid(row=0, column=0, sticky="w", pady=8)
-        ttk.Spinbox(panel, from_=1, to=20, textvariable=self.max_tool_rounds_var, width=8).grid(
+        ttk.Entry(panel, textvariable=self.max_tool_rounds_var, width=10).grid(
             row=0,
             column=1,
             sticky="w",
@@ -612,7 +612,7 @@ class HomeworkUiApp:
         )
         ttk.Label(
             panel,
-            text="每次助手回复里，模型最多连续调用多少轮工具。范围 1-20。",
+            text="每次助手回复里，模型最多连续调用多少轮工具。默认 50，允许设置任意正整数。",
             style="Subtle.TLabel",
         ).grid(row=1, column=0, columnspan=2, sticky="w")
 

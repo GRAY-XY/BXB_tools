@@ -138,7 +138,7 @@ function chooseWindowsInstallerAsset(release, version) {
   );
 }
 
-function chooseWindowsSha256Asset(release, installerAsset) {
+function chooseSha256Asset(release, installerAsset) {
   const assets = Array.isArray(release?.assets) ? release.assets : [];
   const installerName = String(installerAsset?.name || "").toLowerCase();
   const expectedName = installerName ? `${installerName}.sha256` : "";
@@ -611,19 +611,24 @@ async function ensurePlaywrightBrowsers() {
   process.env.PLAYWRIGHT_BROWSERS_PATH = browserRoot;
   await fs.mkdir(browserRoot, { recursive: true });
 
-  // Use Playwright's standard browser installation
-  const { spawnSync } = require("node:child_process");
-  const npxPath = process.platform === "win32" ? "npx.cmd" : "npx";
-  
+  const playwrightCliPath = path.join(payloadRoot, "node_modules", "playwright", "cli.js");
+  if (!existsSync(playwrightCliPath)) {
+    throw new Error(`Packaged Playwright CLI was not found: ${playwrightCliPath}`);
+  }
+
   // Install chromium using Playwright CLI
   if (mainWindow) {
     mainWindow.webContents.send("browser:status", { status: "downloading", message: "正在下载 Chromium 浏览器..." });
   }
   const installResult = spawnSync(
-    npxPath,
-    ["playwright", "install", "chromium"],
+    process.execPath,
+    [playwrightCliPath, "install", "chromium"],
     {
-      env: { ...process.env, PLAYWRIGHT_BROWSERS_PATH: browserRoot },
+      env: {
+        ...process.env,
+        ELECTRON_RUN_AS_NODE: "1",
+        PLAYWRIGHT_BROWSERS_PATH: browserRoot,
+      },
       stdio: "inherit",
       windowsHide: true,
     }
@@ -746,7 +751,7 @@ async function loadModelConfig() {
     chatTemperature: 0.2,
     compactTemperature: 0.1,
     longPasteThreshold: 4000,
-    maxToolRounds: 6,
+    maxToolRounds: 50,
     systemPrompt: DEFAULT_SYSTEM_PROMPT,
   });
   return {
@@ -771,7 +776,7 @@ async function saveModelConfig(config) {
     chatTemperature: normalizeTemperature(config?.chatTemperature, 0.2),
     compactTemperature: normalizeTemperature(config?.compactTemperature, 0.1),
     longPasteThreshold: normalizeLongPasteThreshold(config?.longPasteThreshold, 4000),
-    maxToolRounds: Math.max(1, Number.parseInt(config?.maxToolRounds || 6, 10) || 6),
+    maxToolRounds: Math.max(1, Number.parseInt(config?.maxToolRounds || 50, 10) || 50),
     systemPrompt: normalizeSystemPrompt(config?.systemPrompt),
   };
   await writeJson(modelConfigPath, normalized);
@@ -1087,7 +1092,7 @@ async function runAgent({ text, requestId, conversationId }) {
     }
   };
 
-  const maxToolRounds = Math.max(1, Number.parseInt(config.maxToolRounds || 6, 10));
+  const maxToolRounds = Math.max(1, Number.parseInt(config.maxToolRounds || 50, 10));
   const messages = [
     {
       role: "system",
@@ -1424,7 +1429,7 @@ async function checkForUpdates() {
 
     const latestVersion = latest.version.raw;
     const asset = choosePlatformInstallerAsset(latest.release, latestVersion);
-    const sha256Asset = asset && process.platform !== "darwin" ? chooseWindowsSha256Asset(latest.release, asset) : null;
+    const sha256Asset = asset ? chooseSha256Asset(latest.release, asset) : null;
     const hasUpdate = currentParsed
       ? compareAppVersions(latest.version, currentParsed) > 0
       : latestVersion !== currentVersion;
@@ -1461,7 +1466,7 @@ async function checkForUpdates() {
     return {
       ok: false,
       currentVersion,
-      currentChannel: "Windows stable",
+      currentChannel: getPlatformUpdateChannel(),
       hasUpdate: false,
       message: error?.name === "AbortError" ? "Update check timed out." : error.message,
       releasesUrl: RELEASES_PAGE_URL,
@@ -1539,7 +1544,8 @@ async function downloadUpdate() {
   }
 
   if (!update.installerAsset?.downloadUrl || !update.installerAsset?.name) {
-    throw new Error("Release 中没有可下载的 Windows 安装包。");
+    const platformName = process.platform === "darwin" ? "macOS" : "Windows";
+    throw new Error(`Release 中没有可下载的 ${platformName} 安装包。`);
   }
   if (!update.sha256Asset?.downloadUrl) {
     throw new Error("Release 缺少 SHA256 校验文件，不能执行应用内安装。");

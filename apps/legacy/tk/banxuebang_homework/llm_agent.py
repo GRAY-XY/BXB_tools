@@ -33,7 +33,7 @@ class LlmConversationAgent:
         backend: BanxuebangUiBackend,
         *,
         max_turns: int = 6,
-        max_tool_rounds: int = 6,
+        max_tool_rounds: int = 50,
     ) -> None:
         self.backend = backend
         self.turns: deque[AgentTurn] = deque(maxlen=max_turns * 2)

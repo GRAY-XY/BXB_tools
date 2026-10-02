@@ -48,7 +48,7 @@ The user-facing WinUI build is packaged as a per-user NSIS installer. It include
 - `resources\payload` with `backend\src`, `backend\bridge`, root `package.json`, frontend version metadata, root `node_modules`, and the Playwright browser archive.
 - `resources\node\node.exe`, so end users do not need to install Node.js.
 
-Build the installer from the repository root:
+Install the root dependencies with `npm ci`, then build the installer from the repository root:
 
 ```powershell
 .\apps\windows\winui\package-winui.ps1 -Configuration Release
@@ -57,16 +57,18 @@ Build the installer from the repository root:
 Outputs:
 
 ```text
-<repo>\dist-winui-app\winui-unpacked\BxbHomework.WinUI.exe
-<repo>\dist-winui-app\BXB Homework Setup <version>.exe
-<repo>\dist-winui-app\BXB Homework Setup <version>.exe.sha256
+<repo>\release\artifacts\windows\winui-unpacked\BxbHomework.WinUI.exe
+<repo>\release\artifacts\windows\BXB Homework Setup <version>.exe
+<repo>\release\artifacts\windows\BXB Homework Setup <version>.exe.sha256
 ```
 
-The installer writes the app to:
+The package script prepares the required bundled Node runtime and updates the Playwright Chromium archive, then writes the app to:
 
 ```text
 %LOCALAPPDATA%\Programs\BXB Homework
 ```
+
+The installer and its SHA-256 sidecar are written to `release\artifacts\windows\`. See [`release/README.md`](../../../release/README.md) for versioning, release upload, and verification steps.
 
 It creates desktop and Start Menu shortcuts named `BXB Homework`. The app currently shares the existing application data directory under `%APPDATA%\bxb-homework-electron`.
 

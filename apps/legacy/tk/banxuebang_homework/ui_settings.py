@@ -10,7 +10,7 @@ SETTINGS_FILENAME = ".bxb_ui_settings.json"
 
 @dataclass
 class UiSettings:
-    max_tool_rounds: int = 6
+    max_tool_rounds: int = 50
     max_memory_turns: int = 6
     theme_mode: str = "light"
 
@@ -25,11 +25,11 @@ def load_ui_settings() -> UiSettings:
         return UiSettings()
 
     payload = json.loads(path.read_text(encoding="utf-8"))
-    max_tool_rounds = int(payload.get("max_tool_rounds", 6))
+    max_tool_rounds = int(payload.get("max_tool_rounds", 50))
     max_memory_turns = int(payload.get("max_memory_turns", 6))
     theme_mode = _normalize_theme_mode(str(payload.get("theme_mode", "light")))
     return UiSettings(
-        max_tool_rounds=_clamp_setting_value(max_tool_rounds),
+        max_tool_rounds=_positive_tool_rounds(max_tool_rounds),
         max_memory_turns=_clamp_setting_value(max_memory_turns),
         theme_mode=theme_mode,
     )
@@ -38,7 +38,7 @@ def load_ui_settings() -> UiSettings:
 def save_ui_settings(settings: UiSettings) -> Path:
     path = settings_path()
     payload = {
-        "max_tool_rounds": _clamp_setting_value(int(settings.max_tool_rounds)),
+        "max_tool_rounds": _positive_tool_rounds(int(settings.max_tool_rounds)),
         "max_memory_turns": _clamp_setting_value(int(settings.max_memory_turns)),
         "theme_mode": _normalize_theme_mode(settings.theme_mode),
     }
@@ -48,7 +48,7 @@ def save_ui_settings(settings: UiSettings) -> Path:
 
 def settings_as_dict(settings: UiSettings) -> dict[str, int | str]:
     payload = asdict(settings)
-    payload["max_tool_rounds"] = _clamp_setting_value(int(payload.get("max_tool_rounds", 6)))
+    payload["max_tool_rounds"] = _positive_tool_rounds(int(payload.get("max_tool_rounds", 50)))
     payload["max_memory_turns"] = _clamp_setting_value(int(payload.get("max_memory_turns", 6)))
     payload["theme_mode"] = _normalize_theme_mode(str(payload.get("theme_mode", "light")))
     return payload
@@ -56,6 +56,10 @@ def settings_as_dict(settings: UiSettings) -> dict[str, int | str]:
 
 def _clamp_setting_value(value: int) -> int:
     return max(1, min(20, int(value)))
+
+
+def _positive_tool_rounds(value: int) -> int:
+    return max(1, int(value))
 
 
 def _normalize_theme_mode(value: str) -> str:

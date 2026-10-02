@@ -61,7 +61,7 @@ private final class SettingsViewModel {
     var contextLength = "200000"
     var chatTemperature = "0.2"
     var compactTemperature = "0.1"
-    var maxToolRounds = "6"
+    var maxToolRounds = "50"
     var longPasteThreshold = "4000"
     var customInstructions = ""
     var theme = "system"
@@ -152,7 +152,7 @@ private final class SettingsViewModel {
             contextLength = config["contextLength"].stringValue.isEmpty ? "200000" : config["contextLength"].stringValue
             chatTemperature = config["chatTemperature"].stringValue.isEmpty ? "0.2" : config["chatTemperature"].stringValue
             compactTemperature = config["compactTemperature"].stringValue.isEmpty ? "0.1" : config["compactTemperature"].stringValue
-            maxToolRounds = config["maxToolRounds"].stringValue.isEmpty ? "6" : config["maxToolRounds"].stringValue
+            maxToolRounds = config["maxToolRounds"].stringValue.isEmpty ? "50" : config["maxToolRounds"].stringValue
             longPasteThreshold = config["longPasteThreshold"].stringValue.isEmpty ? "4000" : config["longPasteThreshold"].stringValue
             customInstructions = config["customInstructions"].stringValue
             theme = config.firstString("theme").fallback("system")
@@ -220,7 +220,7 @@ private final class SettingsViewModel {
                 "contextLength": .number(Double(Int(contextLength) ?? 200000)),
                 "chatTemperature": .number(Double(chatTemperature) ?? 0.2),
                 "compactTemperature": .number(Double(compactTemperature) ?? 0.1),
-                "maxToolRounds": .number(Double(Int(maxToolRounds) ?? 6)),
+                "maxToolRounds": .number(Double(Int(maxToolRounds) ?? 50)),
                 "longPasteThreshold": .number(Double(Int(longPasteThreshold) ?? 4000)),
                 "customInstructions": .string(customInstructions),
                 "theme": .string(theme),

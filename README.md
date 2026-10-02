@@ -63,7 +63,9 @@ Package the Windows desktop app:
 .\apps\windows\winui\package-winui.ps1 -Configuration Release
 ```
 
-The packaged Windows app is generated under `dist-winui-app/`.
+The packaged Windows installer and its checksum are generated under `release/artifacts/windows/`.
+
+The macOS Electron + React app can be packaged on macOS with `bash ./release/scripts/build-macos-release.sh bxb-homework-v<version>`; DMGs and checksums are generated under `release/artifacts/macos/`. See [`release/README.md`](release/README.md) for the complete release process.
 
 ## Local Tool Layer
 

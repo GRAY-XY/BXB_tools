@@ -535,7 +535,7 @@ function normalizeModelConfig(rawConfig) {
     chatTemperature: normalizeTemperature(source.chatTemperature, 0.2),
     compactTemperature: normalizeTemperature(source.compactTemperature, 0.1),
     longPasteThreshold: normalizeLongPasteThreshold(source.longPasteThreshold, 4000),
-    maxToolRounds: Math.max(1, Number.parseInt(source.maxToolRounds ?? 6, 10) || 6),
+    maxToolRounds: Math.max(1, Number.parseInt(source.maxToolRounds ?? 50, 10) || 50),
     theme: normalizeTheme(source.theme),
     customInstructions: normalizeCustomInstructions(source),
   };
@@ -1922,7 +1922,7 @@ async function runAgent({ text, attachments, conversationId, userMessageId, assi
       runtimeMessages = [{ role: "user", content: prompt }];
     }
     const contextRuntimeMessages = [{ role: "user", content: historyUserContent }];
-    const maxToolRounds = Math.max(1, Number.parseInt(config.maxToolRounds || 6, 10));
+    const maxToolRounds = Math.max(1, Number.parseInt(config.maxToolRounds || 50, 10));
     let autoCompressionFailed = false;
     let emergencyCompressionUsed = false;
     const requestModel = (messages) => requestChatCompletionWithRecovery({

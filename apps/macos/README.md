@@ -52,3 +52,19 @@ npm run check
 
 The native SwiftUI client shell lives under `apps/macos/swiftui/`. It migrates
 incrementally while the Electron client remains usable.
+
+## Package for release
+
+The release package is a DMG for Intel and Apple silicon. Install both dependency sets and run the release script from the repository root, using the tag of an existing GitHub Release:
+
+```sh
+npm ci
+npm ci --prefix apps/macos
+bash ./release/scripts/build-macos-release.sh bxb-homework-v<version>
+```
+
+The script checks that Windows and macOS app versions match the release tag, runs the publish scan, and writes DMGs with SHA-256 sidecars to `release/artifacts/macos/`. When a user first needs browser-backed tools, the app uses its bundled Electron runtime and Playwright CLI to download Chromium for that Mac's architecture; this first download requires an internet connection, but users do not need to install Node.js separately.
+
+The **Build macOS Release** GitHub Actions workflow performs the same package build and uploads those files to the existing Release.
+
+Developer ID signing and notarization are not configured yet. See [`release/README.md`](../../release/README.md) for the complete Windows and macOS release process.

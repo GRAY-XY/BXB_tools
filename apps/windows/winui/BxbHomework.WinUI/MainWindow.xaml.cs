@@ -1439,7 +1439,7 @@ public sealed partial class MainWindow : Window
         SettingsContextLengthBox.Text = GetString(config, "contextLength", "");
         SettingsChatTemperatureBox.Text = GetString(config, "chatTemperature", "0.2");
         SettingsCompactTemperatureBox.Text = GetString(config, "compactTemperature", "0.1");
-        SettingsMaxToolRoundsBox.Text = GetString(config, "maxToolRounds", "6");
+        SettingsMaxToolRoundsBox.Text = GetString(config, "maxToolRounds", "50");
         SettingsLongPasteThresholdBox.Text = GetString(config, "longPasteThreshold", "4000");
         SettingsCustomInstructionsBox.Text = GetString(config, "customInstructions", "");
         SelectSettingsTheme(GetString(config, "theme", "system"));

@@ -457,7 +457,7 @@ Security:
 Interface and Agent controls:
 
 - Theme: follow system/light/dark. New configurations default to follow system, while an explicitly saved light or dark preference remains unchanged.
-- Max tool rounds.
+- Max tool rounds (default 50; any positive integer is accepted, with no configured upper bound).
 - Agent custom-instructions textarea.
 - Clear custom instructions.
 - The backend-owned core Agent policy is always active and is not editable from Settings.

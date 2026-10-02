@@ -981,7 +981,7 @@ function App() {
     chatTemperature: 0.2,
     compactTemperature: 0.1,
     longPasteThreshold: 4000,
-    maxToolRounds: 6,
+    maxToolRounds: 50,
     systemPrompt: fallbackSystemPrompt,
     defaultSystemPrompt: fallbackSystemPrompt,
   });
@@ -2917,7 +2917,7 @@ function App() {
                     <option value="dark">深色</option>
                   </select>
                 </label>
-                <label>最大工具轮次<input value={modelConfig.maxToolRounds || 6} onChange={(event) => setModelConfig({ ...modelConfig, maxToolRounds: event.target.value })} /></label>
+                <label>最大工具轮次<input value={modelConfig.maxToolRounds || 50} onChange={(event) => setModelConfig({ ...modelConfig, maxToolRounds: event.target.value })} /></label>
                 <label>长文本粘贴阈值
                   <input
                     type="number"

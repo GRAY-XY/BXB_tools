@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Release tag to build and upload
+        description: Existing GitHub release tag to receive the macOS packages
         required: true
-        default: v1.0.2
+        type: string
 
 permissions:
   contents: write
@@ -16,53 +16,46 @@ jobs:
     runs-on: macos-14
 
     steps:
-      - name: Check out repository
+      - name: Check out the release tag
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.release_tag }}
           fetch-depth: 0
 
-      - name: Set up Node.js 22
+      - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version-file: .nvmrc
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            apps/macos/package-lock.json
 
-      - name: Install Node dependencies
-        run: npm ci
-
-      - name: Install Playwright Chromium
-        run: npx playwright install chromium
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
-
-      - name: Enable Flutter macOS desktop
-        working-directory: UI/banxuebang_flutter
-        run: flutter config --enable-macos-desktop
-
-      - name: Build macOS package
-        run: |
-          chmod +x ./UI/banxuebang_flutter/packaging/macos/build_macos_pkg.sh
-          ./UI/banxuebang_flutter/packaging/macos/build_macos_pkg.sh
-
-      - name: Resolve package path
-        id: pkg
-        shell: bash
-        run: |
-          pkg_path="$(ls -1 dist/banxuebang-flutter-release-*/BXB_Student_macOS_v*.pkg | head -n 1)"
-          echo "pkg_path=$pkg_path" >> "$GITHUB_OUTPUT"
-
-      - name: Upload workflow artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: BXB_Student_macOS_Package
-          path: ${{ steps.pkg.outputs.pkg_path }}
-
-      - name: Attach package to GitHub release
+      - name: Confirm the GitHub release exists
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ inputs.release_tag }}" "${{ steps.pkg.outputs.pkg_path }}" --clobber
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: gh release view "$RELEASE_TAG" >/dev/null
+
+      - name: Install root and macOS app dependencies
+        run: |
+          npm ci
+          npm ci --prefix apps/macos
+
+      - name: Build and checksum macOS packages
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: bash ./release/scripts/build-macos-release.sh "$RELEASE_TAG"
+
+      - name: Attach packages to the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          shopt -s nullglob
+          files=(release/artifacts/macos/*.dmg release/artifacts/macos/*.dmg.sha256)
+          if (( ${#files[@]} == 0 )); then
+            echo "No macOS release files were found." >&2
+            exit 1
+          fi
+          gh release upload "$RELEASE_TAG" "${files[@]}" --clobber
