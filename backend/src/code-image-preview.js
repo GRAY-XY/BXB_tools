@@ -3,33 +3,22 @@ import { mkdir, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createCanvas } from "@napi-rs/canvas";
 
-const WIDTH = 1580;
 const PAGE_LINES = 46;
 const MAX_CODE_CHARS = 120000;
 const MAX_CODE_LINES = PAGE_LINES * 8;
-const LINE_HEIGHT = 23;
-const HEADER_HEIGHT = 38;
-const TAB_HEIGHT = 34;
-const STATUS_HEIGHT = 24;
-const ACTIVITY_WIDTH = 50;
-const EXPLORER_WIDTH = 238;
-const GUTTER_WIDTH = 72;
-const CODE_PADDING = 25;
+const MIN_WIDTH = 240;
+const MAX_WIDTH = 2000;
+const LINE_HEIGHT = 20;
+const VERTICAL_PADDING = 8;
+const LEFT_PADDING = 10;
+const GUTTER_PADDING = 20;
+const CODE_GAP = 16;
+const RIGHT_PADDING = 14;
 
 const DARK_THEME = {
-  window: "#181818",
-  activity: "#333333",
-  activityMuted: "#858585",
-  explorer: "#252526",
   editor: "#1e1e1e",
-  tab: "#2d2d2d",
-  activeTab: "#1e1e1e",
   text: "#cccccc",
-  muted: "#858585",
   lineNumber: "#858585",
-  activeLine: "#252526",
-  border: "#383838",
-  status: "#007acc",
   keyword: "#569cd6",
   string: "#ce9178",
   comment: "#6a9955",
@@ -43,19 +32,9 @@ const DARK_THEME = {
 
 const LIGHT_THEME = {
   ...DARK_THEME,
-  window: "#f3f3f3",
-  activity: "#f3f3f3",
-  activityMuted: "#616161",
-  explorer: "#f3f3f3",
   editor: "#ffffff",
-  tab: "#ececec",
-  activeTab: "#ffffff",
   text: "#333333",
-  muted: "#6e6e6e",
   lineNumber: "#237893",
-  activeLine: "#f5f5f5",
-  border: "#d4d4d4",
-  status: "#007acc",
   keyword: "#0000ff",
   string: "#a31515",
   comment: "#008000",
@@ -97,8 +76,8 @@ const KEYWORDS = {
 
 const HASH_COMMENT_LANGUAGES = new Set(["python", "shell", "powershell", "yaml"]);
 const DASH_COMMENT_LANGUAGES = new Set(["sql"]);
-const CODE_FONT = '15px "Cascadia Code", Consolas, "Courier New", monospace';
-const UI_FONT = '12px "Segoe UI", "Microsoft YaHei UI", sans-serif';
+const LINE_NUMBER_FONT = '12px "Cascadia Code", Consolas, "Courier New", monospace';
+const CODE_FONT = '14px "Cascadia Code", Consolas, "Courier New", monospace';
 
 function normalizeFileName(value) {
   const source = String(value || "program.txt").trim().split(/[\\/]/).pop() || "program.txt";
@@ -245,123 +224,49 @@ function makeTokens(line, language, state, colors) {
   return tokens;
 }
 
-function drawCodePreviewPage({ codeLines, startLine, fileName, language, theme, pageNumber, pageCount }) {
+function drawCodePreviewPage({ codeLines, startLine, language, theme }) {
   const colors = theme === "light" ? LIGHT_THEME : DARK_THEME;
   const pageLineCount = codeLines.length;
-  const height = HEADER_HEIGHT + TAB_HEIGHT + pageLineCount * LINE_HEIGHT + STATUS_HEIGHT;
-  const canvas = createCanvas(WIDTH, height);
+  const measureContext = createCanvas(1, 1).getContext("2d");
+  measureContext.font = CODE_FONT;
+  const widestCodeLine = codeLines.reduce((width, line) => Math.max(width, measureContext.measureText(line).width), 0);
+  measureContext.font = LINE_NUMBER_FONT;
+  const lineNumberWidth = measureContext.measureText(String(startLine + pageLineCount - 1)).width;
+  const gutterWidth = Math.ceil(lineNumberWidth + GUTTER_PADDING);
+  const width = Math.max(
+    MIN_WIDTH,
+    Math.min(MAX_WIDTH, Math.ceil(LEFT_PADDING + gutterWidth + CODE_GAP + widestCodeLine + RIGHT_PADDING)),
+  );
+  const height = VERTICAL_PADDING * 2 + pageLineCount * LINE_HEIGHT;
+  const canvas = createCanvas(width, height);
   const context = canvas.getContext("2d");
   context.textBaseline = "middle";
-  context.font = UI_FONT;
-
-  context.fillStyle = colors.window;
-  context.fillRect(0, 0, WIDTH, height);
-  context.fillStyle = colors.window;
-  context.fillRect(0, 0, WIDTH, HEADER_HEIGHT);
-  context.fillStyle = "#007acc";
-  context.fillRect(12, 9, 20, 20);
-  context.fillStyle = "#ffffff";
-  context.font = 'bold 12px "Segoe UI", sans-serif';
-  context.fillText("<> ", 14, 20);
-  context.font = UI_FONT;
-  context.fillStyle = colors.text;
-  context.fillText("文件  编辑  选择  查看  转到  运行  终端  帮助", 44, 19);
-  context.fillStyle = colors.muted;
-  const title = `${fileName} — Visual Studio Code${pageCount > 1 ? ` (${pageNumber}/${pageCount})` : ""}`;
-  context.textAlign = "center";
-  context.fillText(title, WIDTH / 2, 19);
-  context.textAlign = "left";
-
-  const bodyTop = HEADER_HEIGHT;
-  const codePaneTop = HEADER_HEIGHT + TAB_HEIGHT;
-  const codePaneBottom = height - STATUS_HEIGHT;
-  context.fillStyle = colors.activity;
-  context.fillRect(0, bodyTop, ACTIVITY_WIDTH, codePaneBottom - bodyTop);
-  context.font = '20px "Segoe UI Symbol", "Segoe UI", sans-serif';
-  context.fillStyle = colors.text;
-  ["◈", "⌕", "⑂", "▷", "▦"].forEach((icon, index) => context.fillText(icon, 15, 70 + index * 48));
-  context.fillStyle = colors.activityMuted;
-  context.fillText("⚙", 15, codePaneBottom - 24);
-
-  context.fillStyle = colors.explorer;
-  context.fillRect(ACTIVITY_WIDTH, bodyTop, EXPLORER_WIDTH, codePaneBottom - bodyTop);
-  context.strokeStyle = colors.border;
-  context.lineWidth = 1;
-  context.beginPath();
-  context.moveTo(ACTIVITY_WIDTH + EXPLORER_WIDTH + 0.5, bodyTop);
-  context.lineTo(ACTIVITY_WIDTH + EXPLORER_WIDTH + 0.5, codePaneBottom);
-  context.stroke();
-  context.font = '11px "Segoe UI", sans-serif';
-  context.fillStyle = colors.text;
-  context.fillText("资源管理器", ACTIVITY_WIDTH + 18, bodyTop + 20);
-  context.font = 'bold 11px "Segoe UI", sans-serif';
-  context.fillText("打开的编辑器", ACTIVITY_WIDTH + 18, bodyTop + 51);
-  context.font = UI_FONT;
-  context.fillText(fileName, ACTIVITY_WIDTH + 30, bodyTop + 75);
-  context.font = 'bold 11px "Segoe UI", sans-serif';
-  context.fillText("工作区", ACTIVITY_WIDTH + 18, bodyTop + 108);
-  context.fillStyle = colors.muted;
-  context.font = UI_FONT;
-  context.fillText("⌄  BXB Homework", ACTIVITY_WIDTH + 18, bodyTop + 132);
-  context.fillStyle = "#e8ab53";
-  context.fillText("▸", ACTIVITY_WIDTH + 38, bodyTop + 158);
-  context.fillStyle = colors.text;
-  context.fillText(fileName, ACTIVITY_WIDTH + 54, bodyTop + 158);
-
-  const editorLeft = ACTIVITY_WIDTH + EXPLORER_WIDTH + 1;
-  const editorWidth = WIDTH - editorLeft;
-  context.fillStyle = colors.tab;
-  context.fillRect(editorLeft, bodyTop, editorWidth, TAB_HEIGHT);
-  context.fillStyle = colors.activeTab;
-  context.fillRect(editorLeft, bodyTop, Math.min(editorWidth, Math.max(190, context.measureText(fileName).width + 70)), TAB_HEIGHT);
-  context.fillStyle = "#e8ab53";
-  context.font = '13px "Segoe UI", sans-serif';
-  context.fillText("●", editorLeft + 15, bodyTop + 17);
-  context.font = UI_FONT;
-  context.fillStyle = colors.text;
-  context.fillText(fileName, editorLeft + 36, bodyTop + 17);
-  context.fillStyle = colors.border;
-  context.fillRect(editorLeft, bodyTop + TAB_HEIGHT - 1, editorWidth, 1);
-
   context.fillStyle = colors.editor;
-  context.fillRect(editorLeft, codePaneTop, editorWidth, codePaneBottom - codePaneTop);
+  context.fillRect(0, 0, width, height);
   context.font = CODE_FONT;
-  const codeStartX = editorLeft + GUTTER_WIDTH + CODE_PADDING;
-  const gutterRight = editorLeft + GUTTER_WIDTH + 7;
+  const codeStartX = LEFT_PADDING + gutterWidth + CODE_GAP;
+  const gutterRight = LEFT_PADDING + gutterWidth - 6;
   const lineState = { blockComment: false, tripleString: "" };
   for (let index = 0; index < codeLines.length; index += 1) {
-    const lineTop = codePaneTop + index * LINE_HEIGHT;
+    const lineTop = VERTICAL_PADDING + index * LINE_HEIGHT;
     const baseline = lineTop + LINE_HEIGHT / 2;
-    if (index === 0) {
-      context.fillStyle = colors.activeLine;
-      context.fillRect(editorLeft, lineTop, editorWidth, LINE_HEIGHT);
-    }
     context.textAlign = "right";
     context.fillStyle = colors.lineNumber;
+    context.font = LINE_NUMBER_FONT;
     context.fillText(String(startLine + index), gutterRight, baseline);
     context.textAlign = "left";
+    context.font = CODE_FONT;
     const tokens = makeTokens(codeLines[index], language, lineState, colors);
     let x = codeStartX;
     for (const token of tokens) {
       context.fillStyle = token.color;
       context.fillText(token.text, x, baseline);
       x += context.measureText(token.text).width;
-      if (x > WIDTH - 14) break;
+      if (x > width - RIGHT_PADDING) break;
     }
   }
 
-  const statusTop = height - STATUS_HEIGHT;
-  context.fillStyle = colors.status;
-  context.fillRect(0, statusTop, WIDTH, STATUS_HEIGHT);
-  context.font = '11px "Segoe UI", sans-serif';
-  context.fillStyle = "#ffffff";
-  context.fillText("⑂ main*", 12, statusTop + 12);
-  context.fillText("0 errors  0 warnings", 100, statusTop + 12);
-  context.textAlign = "right";
-  context.fillText(`第 ${pageNumber}/${pageCount} 页  ·  ${language}  ·  UTF-8  ·  LF  ·  ${startLine}–${startLine + pageLineCount - 1} 行`, WIDTH - 14, statusTop + 12);
-  context.textAlign = "left";
-
-  return canvas.toBuffer("image/png");
+  return { buffer: canvas.toBuffer("image/png"), width, height };
 }
 
 export async function renderCodeAsVscodeImages({ fileName, code, language: requestedLanguage, theme = "dark", workspaceDir } = {}) {
@@ -395,28 +300,25 @@ export async function renderCodeAsVscodeImages({ fileName, code, language: reque
   for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
     const firstIndex = pageIndex * PAGE_LINES;
     const codeLines = sourceLines.slice(firstIndex, firstIndex + PAGE_LINES);
-    const buffer = drawCodePreviewPage({
+    const page = drawCodePreviewPage({
       codeLines,
       startLine: firstIndex + 1,
-      fileName: safeFileName,
       language,
       theme: safeTheme,
-      pageNumber: pageIndex + 1,
-      pageCount,
     });
     const suffix = pageCount > 1 ? `-${String(pageIndex + 1).padStart(2, "0")}` : "";
     const imageName = `${path.parse(safeFileName).name}-vscode-preview-${id}${suffix}.png`;
     const imagePath = path.join(previewDirectory, imageName);
-    await writeFile(imagePath, buffer, { flag: "wx" });
+    await writeFile(imagePath, page.buffer, { flag: "wx" });
     images.push({
       fileName: imageName,
       path: imagePath,
       relativePath: path.relative(workspaceDir, imagePath).replaceAll("\\", "/"),
-      width: WIDTH,
-      height: HEADER_HEIGHT + TAB_HEIGHT + codeLines.length * LINE_HEIGHT + STATUS_HEIGHT,
+      width: page.width,
+      height: page.height,
       firstLine: firstIndex + 1,
       lastLine: firstIndex + codeLines.length,
-      sizeBytes: buffer.byteLength,
+      sizeBytes: page.buffer.byteLength,
     });
   }
 

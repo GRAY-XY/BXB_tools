@@ -1466,7 +1466,7 @@ function safeToolSchemas() {
     },
     {
       name: "render_code_as_vscode_image",
-      description: "将助手编写的程序代码排版成 VS Code 风格 PNG 草稿，保存到本机工作区并显示在对话中；不上传或提交。",
+      description: "将助手编写的程序代码排版成仅含代码区与行号的 VS Code 风格 PNG 草稿，保存到本机工作区并显示在对话中；不含侧栏等编辑器界面，不上传或提交。",
       parameters: {
         type: "object",
         properties: {
