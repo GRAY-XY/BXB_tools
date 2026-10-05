@@ -4,7 +4,7 @@ This directory contains the desktop release instructions, packaging scripts, and
 
 ## Before a release
 
-1. Choose one version for the Windows and macOS desktop apps. Update `apps/legacy/electron/package.json` (the version source used by the WinUI installer) and `apps/macos/package.json`; update their lockfiles if the package manager changes them.
+1. Choose a version for the platform being released. Windows and macOS versions are independent: update `apps/legacy/electron/package.json` for Windows or `apps/macos/package.json` for macOS, and keep that app's lockfile in sync.
 2. Run the repository checks and the publish scan:
 
    ```sh
@@ -13,10 +13,10 @@ This directory contains the desktop release instructions, packaging scripts, and
    npm run scan:publish
    ```
 
-3. Commit the release source and tag it with the same version, preferably `bxb-homework-v<version>` (for example, `bxb-homework-v1.2.0`). The macOS packaging script also accepts `v<version>` tags.
-4. Create the GitHub Release for that tag and add the release notes before uploading platform packages.
+3. Commit the release source and create the platform-specific tag and GitHub Release. Use `bxb-homework-v<version>` for Windows (for example, `bxb-homework-v1.2.0`) and `bxb-homework-macos-v<version>` for macOS (for example, `bxb-homework-macos-v1.2.0`).
+4. Use a platform-specific release title and add the English release notes before uploading that platform's package.
 
-The Windows installer version comes from `apps/legacy/electron/package.json`; the macOS app version comes from `apps/macos/package.json`. Keep them aligned because the updater reads the version from the shared GitHub Release title.
+The Windows installer version comes from `apps/legacy/electron/package.json`; the macOS app version comes from `apps/macos/package.json`. Windows releases use the title `BXB Homework v<version>`, and macOS releases use `BXB Homework macOS v<version>`. The updater reads only its platform's title prefix, so each app can keep its own version.
 
 ## Windows (WinUI)
 
@@ -57,10 +57,10 @@ For a local build on macOS, install Node.js from `.nvmrc`, then install dependen
 ```sh
 npm ci
 npm ci --prefix apps/macos
-bash ./release/scripts/build-macos-release.sh bxb-homework-v<version>
+bash ./release/scripts/build-macos-release.sh bxb-homework-macos-v<version>
 ```
 
-The script checks that the Windows and macOS app versions match each other and the tag, runs the publish scan, builds x64 and arm64 DMGs, and writes a `.sha256` sidecar for each DMG. The packaged app uses its bundled Electron runtime and Playwright CLI to download Chromium for the user's architecture on first use, so the DMG does not include a build-machine-specific browser archive; that first download requires internet access. Output is placed in:
+The script checks that the macOS app version matches its platform-specific tag, runs the publish scan, builds x64 and arm64 DMGs, and writes a `.sha256` sidecar for each DMG. The packaged app uses its bundled Electron runtime and Playwright CLI to download Chromium for the user's architecture on first use, so the DMG does not include a build-machine-specific browser archive; that first download requires internet access. Output is placed in:
 
 ```text
 release/artifacts/macos/

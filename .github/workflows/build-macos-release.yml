@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Existing GitHub release tag to receive the macOS packages
+        description: Existing macOS GitHub release tag to receive the macOS packages
         required: true
         type: string
 
