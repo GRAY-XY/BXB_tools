@@ -106,8 +106,13 @@ jobs:
 
       - name: Verify the bundled runtime and package the test app
         run: |
-          app="$VALIDATION_ROOT/DerivedData/Build/Products/Release/BXBHomework.app"
-          test -x "$app/Contents/MacOS/BXBHomework"
+          apps=("$VALIDATION_ROOT/DerivedData/Build/Products/Release/"*.app)
+          test "${#apps[@]}" -eq 1
+          app="${apps[0]}"
+          test -f "$app/Contents/Info.plist"
+          executable="$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$app/Contents/Info.plist")"
+          printf 'Verifying app: %s; executable: %s\n' "$app" "$executable"
+          test -x "$app/Contents/MacOS/$executable"
           test -x "$app/Contents/Helpers/node"
           codesign --force --deep --sign - "$app"
           codesign --verify --deep --strict "$app"
