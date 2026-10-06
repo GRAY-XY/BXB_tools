@@ -185,6 +185,7 @@
 				D10000000000000000000001 /* Sources */,
 				D20000000000000000000001 /* Frameworks */,
 				D30000000000000000000001 /* Resources */,
+				D40000000000000000000001 /* Bundle Node backend runtime */,
 			);
 			buildRules = (
 			);
@@ -236,6 +237,32 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		D40000000000000000000001 /* Bundle Node backend runtime */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/../../../release/scripts/package-swiftui-runtime.sh",
+				"$(SRCROOT)/../../../.nvmrc",
+				"$(SRCROOT)/../../../package.json",
+				"$(SRCROOT)/../../../backend",
+				"$(SRCROOT)/../../../node_modules",
+				"$(SRCROOT)/Runtime/macos-backend.js",
+			);
+			name = "Bundle Node backend runtime";
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/node",
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/BXBRuntime",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "\"${SRCROOT}/../../../release/scripts/package-swiftui-runtime.sh\" \"${SRCROOT}/../../..\" \"${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}\" \"${ARCHS}\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		D10000000000000000000001 /* Sources */ = {
