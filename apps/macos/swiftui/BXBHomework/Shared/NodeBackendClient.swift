@@ -2,6 +2,7 @@ import Foundation
 
 enum BackendBridgeError: LocalizedError, Sendable {
     case repositoryNotFound
+    case packagedRuntimeIncomplete
     case nodeNotFound
     case scriptNotFound(String)
     case processLaunch(String)
@@ -18,8 +19,10 @@ enum BackendBridgeError: LocalizedError, Sendable {
         switch self {
         case .repositoryNotFound:
             "找不到 BXB 仓库根目录。"
+        case .packagedRuntimeIncomplete:
+            "应用内置后端运行时不完整，请重新构建或安装应用。"
         case .nodeNotFound:
-            "找不到项目要求的 Node.js 运行时。"
+            "找不到项目要求的 Node.js 运行时；请重新构建应用或检查本地开发环境。"
         case .scriptNotFound(let path):
             "找不到 macOS 后端启动脚本：\(path)"
         case .processLaunch(let message):
@@ -64,6 +67,28 @@ private struct BackendRuntime {
     let bridgeScript: URL
 
     static func locate() throws -> BackendRuntime {
+        if let bundledRuntimeRoot = locateBundledRuntimeRoot() {
+            let nodeExecutable = Bundle.main.bundleURL.appending(path: "Contents/Helpers/node")
+            let bridgeScript = bundledRuntimeRoot.appending(path: "Runtime/macos-backend.js")
+            let bridgeEntrypoint = bundledRuntimeRoot.appending(path: "backend/bridge/winui-backend.js")
+            let packageManifest = bundledRuntimeRoot.appending(path: "package.json")
+            let modulesDirectory = bundledRuntimeRoot.appending(path: "node_modules", directoryHint: .isDirectory)
+
+            guard FileManager.default.isExecutableFile(atPath: nodeExecutable.path),
+                  FileManager.default.fileExists(atPath: bridgeScript.path),
+                  FileManager.default.fileExists(atPath: bridgeEntrypoint.path),
+                  FileManager.default.fileExists(atPath: packageManifest.path),
+                  FileManager.default.fileExists(atPath: modulesDirectory.path) else {
+                throw BackendBridgeError.packagedRuntimeIncomplete
+            }
+
+            return BackendRuntime(
+                repositoryRoot: bundledRuntimeRoot,
+                nodeExecutable: nodeExecutable,
+                bridgeScript: bridgeScript
+            )
+        }
+
         guard let repositoryRoot = locateRepositoryRoot() else {
             throw BackendBridgeError.repositoryNotFound
         }
@@ -83,6 +108,12 @@ private struct BackendRuntime {
             nodeExecutable: nodeExecutable,
             bridgeScript: bridgeScript
         )
+    }
+
+    private static func locateBundledRuntimeRoot() -> URL? {
+        guard let resourceURL = Bundle.main.resourceURL else { return nil }
+        let runtimeRoot = resourceURL.appending(path: "BXBRuntime", directoryHint: .isDirectory)
+        return FileManager.default.fileExists(atPath: runtimeRoot.path) ? runtimeRoot : nil
     }
 
     private static func locateRepositoryRoot() -> URL? {
@@ -240,6 +271,7 @@ actor NodeBackendClient {
         process.standardError = stderrPipe
 
         var environment = ProcessInfo.processInfo.environment
+        environment["BXB_RUNTIME_ROOT"] = runtime.repositoryRoot.path
         environment["APPDATA"] = FileManager.default.homeDirectoryForCurrentUser
             .appending(path: "Library/Application Support")
             .path

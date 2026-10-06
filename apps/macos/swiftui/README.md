@@ -10,6 +10,25 @@ Open `BXBHomework.xcodeproj`, select the `BXBHomework` scheme, and run the app o
 
 ## Command-line build
 
+The app build bundles the Node executable, the shared backend bridge and source,
+and the repository's installed Node dependencies into the `.app`. Install the
+repository dependencies first:
+
+```sh
+npm ci
+```
+
+The build script uses the Node version from `.nvmrc` when available (Node 22 or
+newer) and requires it to include the architecture being built. You can override
+the detected executable with `BXB_NODE_EXECUTABLE`. The packaged app starts this
+bundled runtime and does not need the repository checkout or a separately
+installed Node.js. User data continues to live under
+`~/Library/Application Support/bxb-homework-electron`.
+
+Playwright's Chromium browser is not bundled in this first packaging step; the
+browser-backed login still needs its browser dependency to be present or
+downloaded separately.
+
 ```sh
 xcodebuild \
   -project BXBHomework.xcodeproj \
@@ -19,6 +38,10 @@ xcodebuild \
   CODE_SIGNING_ALLOWED=NO \
   build
 ```
+
+The command above produces an app for the current build architecture. A
+universal or other-architecture release also needs a matching Node.js binary
+and architecture-compatible native Node modules before building that target.
 
 The native shell starts the shared Node JSONL bridge, reads app/session status,
 and exposes a user-triggered native login form. Credentials are sent only to the
