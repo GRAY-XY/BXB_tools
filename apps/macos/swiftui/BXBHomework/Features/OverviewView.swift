@@ -13,6 +13,7 @@ struct OverviewView: View {
                     errorCard(errorMessage)
                 }
 
+                if backend.session?.ready == true { termPicker }
                 sessionGrid
                 runtimeCard
             }
@@ -21,6 +22,7 @@ struct OverviewView: View {
             .frame(maxWidth: 980, alignment: .leading)
         }
         .navigationTitle("概览")
+        .task(id: backend.session?.ready) { await backend.loadTerms() }
         .sheet(isPresented: $showingLogin) {
             LoginView()
                 .environment(backend)
@@ -68,6 +70,43 @@ struct OverviewView: View {
             }
     }
 
+    private var termPicker: some View {
+        GroupBox("学期") {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Picker("当前学期", selection: Binding(
+                        get: { backend.session?.currentTermId ?? "" },
+                        set: { id in Task { await backend.switchTerm(termID: id) } }
+                    )) {
+                        ForEach(backend.availableTerms, id: \.id) { term in
+                            Text(term.name ?? term.id ?? "学期").tag(term.id ?? "")
+                        }
+                    }
+                    .disabled(!backend.canSwitchTerm)
+                    if backend.isSwitchingTerm || backend.isLoadingTerms {
+                        ProgressView().controlSize(.small)
+                    }
+                    Button("刷新学期") { Task { await backend.loadTerms() } }
+                        .disabled(!backend.canSwitchTerm)
+                }
+                if backend.isSwitchingTerm {
+                    Text("正在切换学期并更新课程…").foregroundStyle(.secondary)
+                } else if !backend.canSwitchTerm {
+                    Text("课程相关操作完成后即可切换学期。").foregroundStyle(.secondary)
+                }
+                if let error = backend.termErrorMessage {
+                    Text(error).foregroundStyle(.orange)
+                    Button("重新确认当前学期") { Task { await backend.refreshSession() } }
+                        .disabled(backend.isSwitchingTerm)
+                }
+                if let error = backend.pendingCountError {
+                    Text("待完成数量暂不可用：\(error)").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
     private var sessionGrid: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 190), spacing: 14)], spacing: 14) {
             SummaryCard(
@@ -82,12 +121,12 @@ struct OverviewView: View {
             )
             SummaryCard(
                 title: "课程",
-                value: backend.session?.ready == true ? "\(backend.session?.courseCount ?? 0)" : "—",
+                value: backend.academicContextReady ? "\(backend.session?.courseCount ?? 0)" : "—",
                 symbol: "books.vertical"
             )
             SummaryCard(
                 title: "待完成",
-                value: backend.session?.ready == true ? "\(backend.session?.pendingCount ?? 0)" : "—",
+                value: backend.academicContextReady ? (backend.isLoadingPendingCount ? "加载中" : backend.pendingHomeworkCount.map(String.init) ?? "暂不可用") : "—",
                 symbol: "checklist"
             )
         }

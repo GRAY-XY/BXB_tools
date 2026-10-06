@@ -15,7 +15,143 @@ final class BackendConnectionModel {
     private(set) var appInfo: BackendAppInfo?
     private(set) var session: BackendSessionStatus?
     private(set) var themePreference = "system"
-    private let client = NodeBackendClient()
+    private let client: NodeBackendClient
+    private(set) var contextRevision = 0
+    private(set) var isLoadingTerms = false
+    private(set) var isSwitchingTerm = false
+    private(set) var termErrorMessage: String?
+    private(set) var pendingHomeworkCount: Int?
+    private(set) var isLoadingPendingCount = false
+    private(set) var pendingCountError: String?
+    private var needsContextRefresh = false
+    private var sessionActivities: Set<UUID> = []
+
+    init(client: NodeBackendClient = NodeBackendClient()) { self.client = client }
+
+    var academicContextReady: Bool {
+        session?.ready == true && !isSwitchingTerm && !needsContextRefresh
+    }
+
+    var contextKey: String {
+        "\(session?.user?.id ?? "")|\(session?.currentClass?.id ?? "")|\(session?.currentTermId ?? "")|\(contextRevision)|\(academicContextReady)"
+    }
+
+    var availableTerms: [BackendSessionStatus.Term] {
+        var seen = Set<String>()
+        return (session?.availableTerms ?? []).filter {
+            guard let id = $0.id, !($0.name ?? "").isEmpty else { return false }
+            return seen.insert(id).inserted
+        }
+    }
+
+    var canSwitchTerm: Bool {
+        academicContextReady && !isLoadingTerms && sessionActivities.isEmpty
+    }
+
+    func beginSessionActivity(requiresSession: Bool = true) throws -> UUID {
+        guard !isSwitchingTerm, !needsContextRefresh else {
+            throw BackendBridgeError.remote("请等待学期切换完成，或先刷新学期状态。")
+        }
+        guard !requiresSession || session?.ready == true else {
+            throw BackendBridgeError.remote("请先登录办学帮。")
+        }
+        let token = UUID()
+        sessionActivities.insert(token)
+        return token
+    }
+
+    func endSessionActivity(_ token: UUID) { sessionActivities.remove(token) }
+
+    private func applySession(_ value: BackendSessionStatus) {
+        let changed = session?.user?.id != value.user?.id
+            || session?.currentClass?.id != value.currentClass?.id
+            || session?.currentTermId != value.currentTermId
+            || session?.ready != value.ready
+        session = value
+        if changed {
+            contextRevision += 1
+            pendingHomeworkCount = nil
+            pendingCountError = nil
+            isLoadingPendingCount = false
+        }
+    }
+
+    func loadTerms() async {
+        guard academicContextReady, !isLoadingTerms else { return }
+        let key = contextKey
+        isLoadingTerms = true
+        defer { isLoadingTerms = false }
+        do {
+            let result = try await callTool("list_terms")
+            guard key == contextKey else { return }
+            applySession(try result["context"].decoded(BackendSessionStatus.self))
+            termErrorMessage = nil
+            if key != contextKey { await refreshPendingCount() }
+        } catch {
+            guard key == contextKey else { return }
+            termErrorMessage = error.localizedDescription
+        }
+    }
+
+    func refreshPendingCount() async {
+        guard academicContextReady else { pendingHomeworkCount = nil; return }
+        let key = contextKey
+        isLoadingPendingCount = true
+        pendingHomeworkCount = nil
+        pendingCountError = nil
+        do {
+            let token = try beginSessionActivity()
+            defer { endSessionActivity(token) }
+            let result = try await client.invoke("home.pendingCount")
+            guard key == contextKey else { return }
+            guard result["currentTermId"].stringValue == session?.currentTermId,
+                  let count = result["pendingTaskCount"].intValue, count >= 0 else {
+                throw BackendBridgeError.protocolFailure("待完成数量与当前学期不一致。")
+            }
+            pendingHomeworkCount = count
+        } catch {
+            if key == contextKey { pendingCountError = error.localizedDescription }
+        }
+        if key == contextKey { isLoadingPendingCount = false }
+    }
+
+    func switchTerm(termID: String) async {
+        guard termID != session?.currentTermId else { return }
+        guard canSwitchTerm else {
+            termErrorMessage = "有课程相关操作尚未结束，请等待完成后重试。"
+            return
+        }
+        guard session?.availableTerms?.contains(where: { $0.id == termID }) == true else {
+            termErrorMessage = "所选学期已不可用，请刷新学期列表。"
+            return
+        }
+        isSwitchingTerm = true
+        contextRevision += 1
+        pendingHomeworkCount = nil
+        isLoadingPendingCount = false
+        termErrorMessage = nil
+        do {
+            let value = try await client.invoke("session.switchTerm", params: ["termId": .string(termID)], as: BackendSessionStatus.self)
+            guard value.ready, value.currentTermId == termID else {
+                throw BackendBridgeError.protocolFailure("学期切换返回了不同的上下文。")
+            }
+            applySession(value)
+            needsContextRefresh = false
+        } catch {
+            termErrorMessage = error.localizedDescription
+            do {
+                let actual = try await client.invoke("session.status", as: BackendSessionStatus.self)
+                applySession(actual)
+                needsContextRefresh = false
+            } catch {
+                needsContextRefresh = true
+                termErrorMessage = "无法确认当前学期，请刷新后再操作。"
+            }
+        }
+        isSwitchingTerm = false
+        contextRevision += 1
+        await refreshPendingCount()
+    }
 
     var statusText: String {
         switch state {
@@ -44,12 +180,14 @@ final class BackendConnectionModel {
         state = .connecting
         do {
             appInfo = try await client.invoke("app.info", as: BackendAppInfo.self)
-            session = try await client.invoke("session.status", as: BackendSessionStatus.self)
+            applySession(try await client.invoke("session.status", as: BackendSessionStatus.self))
             if let config = try? await client.invoke("modelConfig.load") {
                 let preference = config["theme"].stringValue
                 themePreference = preference.isEmpty ? "system" : preference
             }
             state = .connected
+            needsContextRefresh = false
+            await refreshPendingCount()
         } catch {
             state = .failed(error.localizedDescription)
         }
@@ -60,21 +198,37 @@ final class BackendConnectionModel {
             await connect()
             return
         }
+        guard !isSwitchingTerm else { return }
+        let revision = contextRevision
         do {
-            session = try await client.invoke("session.status", as: BackendSessionStatus.self)
+            let value = try await client.invoke("session.status", as: BackendSessionStatus.self)
+            guard revision == contextRevision else { return }
+            applySession(value)
+            needsContextRefresh = false
+            termErrorMessage = nil
             state = .connected
+            await refreshPendingCount()
         } catch {
-            state = .failed(error.localizedDescription)
+            guard revision == contextRevision else { return }
+            termErrorMessage = error.localizedDescription
         }
     }
 
     func refreshSessionContext() async throws {
-        session = try await client.invoke("session.refresh", as: BackendSessionStatus.self)
+        let token = try beginSessionActivity()
+        defer { endSessionActivity(token) }
+        applySession(try await client.invoke("session.refresh", as: BackendSessionStatus.self))
+        needsContextRefresh = false
+        await refreshPendingCount()
         state = .connected
     }
 
     func signOut() async throws {
-        session = try await client.invoke("session.logout", as: BackendSessionStatus.self)
+        guard !isSwitchingTerm, sessionActivities.isEmpty else {
+            throw BackendBridgeError.remote("请等待课程相关操作完成后退出。")
+        }
+        applySession(try await client.invoke("session.logout", as: BackendSessionStatus.self))
+        pendingHomeworkCount = nil
         state = .connected
     }
 
@@ -108,8 +262,10 @@ final class BackendConnectionModel {
             guard result.ready else {
                 throw BackendBridgeError.remote("登录未完成，请检查账号和密码后重试。")
             }
-            session = result
+            applySession(result)
+            needsContextRefresh = false
             state = .connected
+            await refreshPendingCount()
         } catch let error as BackendBridgeError {
             switch error {
             case .remote, .remoteCoded:
@@ -129,16 +285,21 @@ final class BackendConnectionModel {
         arguments: [String: JSONValue] = [:],
         requiresSession: Bool = true
     ) async throws -> JSONValue {
-        guard !requiresSession || session?.ready == true else {
-            throw BackendBridgeError.remote("请先登录办学帮。")
-        }
-        return try await client.invoke(
+        let token = requiresSession ? try beginSessionActivity() : nil
+        defer { if let token { endSessionActivity(token) } }
+        let context = contextKey
+        let result = try await client.invoke(
             "tool.call",
             params: [
                 "name": .string(name),
                 "args": .object(arguments),
             ]
         )
+        if requiresSession, context == contextKey, result["context"]["ready"].boolValue != nil {
+            applySession(try result["context"].decoded(BackendSessionStatus.self))
+            if context != contextKey { await refreshPendingCount() }
+        }
+        return result
     }
 
     func invoke(

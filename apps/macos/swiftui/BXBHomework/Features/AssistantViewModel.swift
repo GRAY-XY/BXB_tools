@@ -218,6 +218,11 @@ final class AssistantViewModel {
             return
         }
 
+        let activity: UUID
+        do { activity = try backend.beginSessionActivity(requiresSession: false) }
+        catch { errorMessage = error.localizedDescription; return }
+        defer { backend.endSessionActivity(activity) }
+
         let userMessageID = UUID().uuidString
         let assistantMessageID = UUID().uuidString
         draftText = ""

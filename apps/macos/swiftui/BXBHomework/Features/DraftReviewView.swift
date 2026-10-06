@@ -34,6 +34,7 @@ struct DraftReviewView: View {
         .task {
             await model.loadDrafts(using: backend)
         }
+        .onChange(of: backend.contextKey) { model.invalidateDeliveryPreview() }
         .onChange(of: model.selectedFilter) {
             Task { await model.loadDrafts(using: backend) }
         }

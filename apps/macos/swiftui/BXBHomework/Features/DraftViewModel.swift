@@ -168,18 +168,27 @@ final class DraftViewModel {
         actionMessage = nil
         defer { isPerformingAction = false }
 
+        let context = backend.contextKey
         do {
             let result = try await backend.callTool(
                 "prepare_draft_submission",
                 arguments: ["draft_id": .string(detail.id)]
             )
+            guard context == backend.contextKey else { return }
             guard let preview = DraftSubmissionPreview.parse(result) else {
                 throw BackendBridgeError.protocolFailure("提交预览缺少 task 信息或确认令牌。")
             }
             submissionPreview = preview
         } catch {
+            guard context == backend.contextKey else { return }
             detailError = error.localizedDescription
         }
+    }
+
+    func invalidateDeliveryPreview() {
+        submissionPreview = nil
+        privateMessagePreview = nil
+        selectedPrivateMessageContactKey = nil
     }
 
     func cancelSubmissionPreview() {
@@ -197,16 +206,19 @@ final class DraftViewModel {
         actionMessage = nil
         defer { isPerformingAction = false }
 
+        let context = backend.contextKey
         do {
             let result = try await backend.callTool(
                 "prepare_draft_private_message",
                 arguments: ["draft_id": .string(detail.id)]
             )
+            guard context == backend.contextKey else { return }
             guard let preview = DraftPrivateMessagePreview.parse(result) else {
                 throw BackendBridgeError.protocolFailure("私信预览缺少 task 信息或确认令牌。")
             }
             privateMessagePreview = preview
         } catch {
+            guard context == backend.contextKey else { return }
             detailError = error.localizedDescription
         }
     }
@@ -220,6 +232,7 @@ final class DraftViewModel {
         detailError = nil
         defer { isPerformingAction = false }
 
+        let context = backend.contextKey
         do {
             let result = try await backend.callTool(
                 "prepare_draft_private_message",
@@ -228,11 +241,13 @@ final class DraftViewModel {
                     "contact": contact.rawValue,
                 ]
             )
+            guard context == backend.contextKey else { return }
             guard let refreshedPreview = DraftPrivateMessagePreview.parse(result) else {
                 throw BackendBridgeError.protocolFailure("所选联系人对应的私信预览无效。")
             }
             privateMessagePreview = refreshedPreview
         } catch {
+            guard context == backend.contextKey else { return }
             selectedPrivateMessageContactKey = previousContactKey
             detailError = error.localizedDescription
         }

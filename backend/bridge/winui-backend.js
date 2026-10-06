@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { fetch as undiciFetch, ProxyAgent } from "undici";
+import { AcademicContextCoordinator } from "../src/academic-context-coordinator.js";
 import { BanxuebangClient } from "../src/banxuebang-client.js";
 import { compactAgentToolResult } from "../src/agent-tool-results.js";
 import { requestChatCompletionWithRecovery } from "../src/chat-completion-stream.js";
@@ -98,6 +99,24 @@ const toolDefinitions = createToolDefinitions(client);
 let conversationStatePromise = null;
 const conversationLocks = new Map();
 const activeAgentRuns = new Map();
+const academicContext = new AcademicContextCoordinator();
+const nativeAcademicOperation = (operation) => process.env.BXB_MACOS_NATIVE === "1"
+  ? academicContext.runOperation(operation) : operation();
+const nativeAcademicSwitch = (operation) => process.env.BXB_MACOS_NATIVE === "1"
+  ? academicContext.runSwitch(operation) : operation();
+const academicTools = new Set([
+  "session_status", "refresh_context", "set_current_subject", "list_terms", "list_courses",
+  "list_homework", "list_tasks", "get_achievement_overview", "get_current_subject_gpa",
+  "get_private_message_contacts", "get_private_message_thread", "send_private_message_text",
+  "open_task", "read_task_content", "download_task_attachment", "read_task_attachment",
+  "collect_task_submission_context", "draft_task_submission", "prepare_draft_submission",
+  "submit_approved_draft", "prepare_draft_private_message", "send_approved_draft_private_message",
+  "upload_submission_file", "submit_task_result", "browser_capture_achievement_page",
+]);
+const sessionMutationTools = new Set([
+  "set_current_term", "clear_session", "interactive_login", "login_in_browser",
+  "login_with_credentials", "import_browser_storage",
+]);
 let updateState = {
   status: "idle",
   update: null,
@@ -1075,7 +1094,14 @@ async function deleteConversation(conversationId) {
   return listConversations();
 }
 
-async function callTool(name, args = {}, { signal } = {}) {
+async function callTool(name, args = {}, options = {}) {
+  const operation = () => callToolUncoordinated(name, args, options);
+  if (sessionMutationTools.has(name)) return nativeAcademicSwitch(operation);
+  if (academicTools.has(name)) return nativeAcademicOperation(operation);
+  return operation();
+}
+
+async function callToolUncoordinated(name, args = {}, { signal } = {}) {
   if (
     [
       "interactive_login",
@@ -2750,24 +2776,30 @@ async function handleRequest(request, emitProgress) {
   if (method === "app.openPath" || method === "app:open-path") return openAppPath(params.key || params.path || "workspaceDir");
   if (method === "session.loginWithCredentials" || method === "session:login") {
     await ensurePlaywrightBrowsers();
-    return client.loginWithCredentials({
+    return nativeAcademicSwitch(() => client.loginWithCredentials({
       username: String(params.username || ""),
       password: String(params.password || ""),
       headless: true,
       timeoutMs: Number(params.timeoutMs || 60000),
       agreeTerms: params.agreeTerms !== false,
-    });
+    }));
+  }
+  if (method === "session.switchTerm") {
+    if (process.env.BXB_MACOS_NATIVE !== "1") throw new Error("Native macOS method only.");
+    return nativeAcademicSwitch(() => client.setCurrentTerm(params.termId));
   }
   if (method === "session.refresh") {
-    return client.refreshContext();
+    return nativeAcademicOperation(() => client.refreshContext());
   }
   if (method === "session.logout") {
-    await client.clearSession();
-    return client.summarizeSession(await client.getSession());
+    return nativeAcademicSwitch(async () => {
+      await client.clearSession();
+      return client.summarizeSession(await client.getSession());
+    });
   }
   if (method === "tool.call" || method === "bxb:tool") return callTool(String(params.name || ""), params.args || {});
   if (method === "session.status" || method === "bxb:session") return callTool("session_status", {});
-  if (method === "home.pendingCount" || method === "home:pending-count") return client.getPendingHomeworkSummary();
+  if (method === "home.pendingCount" || method === "home:pending-count") return nativeAcademicOperation(() => client.getPendingHomeworkSummary());
   if (method === "modelConfig.load" || method === "config:model:load") return loadModelConfig();
   if (method === "modelConfig.migrateLegacyKeys") {
     if (process.env.BXB_MACOS_NATIVE !== "1") throw new Error("Legacy key migration is only available in the native macOS client.");
@@ -2805,7 +2837,7 @@ async function handleRequest(request, emitProgress) {
     };
     activeAgentRuns.set(runId, run);
     try {
-      return await withConversationLock(params.conversationId, () => runAgent(params, { emitProgress, signal: controller.signal }));
+      return await nativeAcademicOperation(() => withConversationLock(params.conversationId, () => runAgent(params, { emitProgress, signal: controller.signal })));
     } finally {
       if (activeAgentRuns.get(runId) === run) activeAgentRuns.delete(runId);
     }

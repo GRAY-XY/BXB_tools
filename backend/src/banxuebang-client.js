@@ -1156,6 +1156,7 @@ export class BanxuebangClient {
     this.submittingTaskIds = new Set();
     this.sendingDraftMessageIds = new Set();
     this.sendingTaskContactKeys = new Set();
+    this.pendingTermSwitches = new WeakMap();
   }
 
   async getSession() {
@@ -1856,7 +1857,15 @@ export class BanxuebangClient {
       obtainedAt: new Date().toISOString(),
     };
     session.storage.tokens = stringifyStorageValue(session.auth);
-    await this.saveSession(session);
+    const previousContext = this.pendingTermSwitches.get(session);
+    if (previousContext) {
+      // Persist renewed credentials without publishing an unfinished term switch.
+      previousContext.auth = session.auth;
+      previousContext.storage.tokens = session.storage.tokens;
+      await this.saveSession(previousContext);
+    } else {
+      await this.saveSession(session);
+    }
     return session;
   }
 
@@ -1914,7 +1923,7 @@ export class BanxuebangClient {
     return payload;
   }
 
-  async refreshContext(existingSession = null) {
+  async refreshContext(existingSession = null, { expectedTermId = null } = {}) {
     const session = existingSession || (await this.requireSession());
     const userInfo = ensureObject(session.context?.userInfo);
 
@@ -1950,6 +1959,9 @@ export class BanxuebangClient {
       null;
 
     const currentTermId = currentTerm ? currentTerm.id : null;
+    if (expectedTermId !== null && normalizeId(currentTermId) !== normalizeId(expectedTermId)) {
+      throw new Error("所选学期已不可用，请刷新学期列表后重试。");
+    }
 
     let subjectList = [];
     if (currentClass?.id && currentTermId) {
@@ -2003,11 +2015,21 @@ export class BanxuebangClient {
       throw new Error(`Term ${termId} was not found in the current session.`);
     }
 
-    session.context.currTermId = target.id;
-    session.storage.currTermId = String(target.id);
-    await this.saveSession(session);
-
-    return this.refreshContext(session);
+    if (normalizeId(session.context.currTermId) === normalizeId(target.id)) {
+      return this.summarizeSession(session);
+    }
+    // Publish the selection only after its courses have loaded successfully.
+    // A failed refresh must not persist a new term with the old term's courses.
+    const candidate = structuredClone(session);
+    candidate.context.currTermId = target.id;
+    candidate.context.curSubject = buildAllSubject();
+    candidate.storage.currTermId = String(target.id);
+    this.pendingTermSwitches.set(candidate, session);
+    try {
+      return await this.refreshContext(candidate, { expectedTermId: target.id });
+    } finally {
+      this.pendingTermSwitches.delete(candidate);
+    }
   }
 
   async setCurrentTermByName(termName) {
