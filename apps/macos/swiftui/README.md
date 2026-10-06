@@ -202,3 +202,28 @@ The Swift runner accepts additional compiler arguments (for example a module
 cache path) after the script name. It uses an isolated Node fixture and never
 logs in, sends a message, submits homework, or reads the real session.
 Full Xcode build and UI checks are still required before release.
+
+
+## Cloud validation and downloadable test app
+
+The Validate macOS SwiftUI workflow runs automatically for relevant pull requests,
+including draft PRs, on a GitHub-hosted macOS 15 Apple Silicon runner. It installs
+the Node version in .nvmrc, runs backend and Swift smoke tests, builds the complete
+native app with Xcode, and verifies its bundled bridge with isolated user data.
+No local Xcode installation or account credentials are needed for these checks.
+
+Open the PR's Checks tab, then the workflow run. A successful run offers:
+
+- BXBHomework-macos-arm64-test-RUN_ID: a ZIP containing the app ZIP, SHA-256 checksum
+  and build notes. Extract the inner app ZIP to preserve executable permissions.
+- macos-swiftui-validation-logs-RUN_ID: test logs, toolchain information and Xcode
+  build results, including failed runs.
+
+Artifacts are retained for seven days. The test app requires macOS 15 or newer
+on Apple Silicon, is ad hoc signed and is not a notarized release. Browser-backed
+login still needs the existing separate Chromium dependency. Automated success
+does not replace checking the real term picker and homework screens with a
+legitimate test account. The workflow never logs in, submits work or sends messages.
+
+After the workflow is merged to the default branch it can also be started from
+Actions using Run workflow. The existing Electron release workflow is separate.

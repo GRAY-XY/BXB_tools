@@ -125,3 +125,19 @@ bash apps/macos/swiftui/Runtime/check-academic-context.sh
 9. 仅执行查看与预览；学期切换不能调用提交或发送接口。
 
 #30 在原生 UI 验收通过前保持开放；其他成员的 issue 不在本轮关闭或修改。
+
+
+## 7. 云端验证（本地无需 Xcode）
+
+已新增 Validate macOS SwiftUI 工作流，通过 PR #35 的后续提交触发。
+它使用 GitHub 托管的 macOS 15 / arm64、项目指定的 Node 和完整 Xcode：
+依次执行后端回归、发布扫描、Swift 解析及状态 smoke、完整 Release 构建、
+打包后桥接验证，并上传应用测试包和诊断日志。
+
+应用包为临时签名的测试版本，适用于 Apple Silicon / macOS 15 及以上。
+它不属于正式签名公证发行，登录所需 Chromium 仍沿用已有独立依赖。
+云端验证使用隔离数据目录，不执行真实账号登录或交付。
+
+工作流具体执行结果以 PR Checks / Actions 对应 commit 的结果为准。
+完整 Xcode 构建可由云端完成，不再要求本机安装 Xcode；第 6 节的手动
+界面、账号及窗口尺寸检查仍由下载测试应用后的验收完成。
