@@ -17,28 +17,28 @@ final class HomeworkViewModel {
     var selectedFilter: HomeworkFilter = .all
     var selectedTaskID: String?
 
+    private var courseRequestID = UUID()
     private var taskRequestID = UUID()
     private var detailRequestID = UUID()
 
     func loadCourses(using backend: BackendConnectionModel) async {
-        guard backend.session?.ready == true else {
-            courses = []
-            tasks = []
-            detail = nil
-            return
-        }
-
+        guard backend.academicContextReady else { invalidateContext(); return }
+        let requestID = UUID()
+        let context = backend.contextKey
+        courseRequestID = requestID
         isLoadingCourses = true
         errorMessage = nil
-        defer { isLoadingCourses = false }
+        defer { if courseRequestID == requestID && context == backend.contextKey { isLoadingCourses = false } }
         do {
             let result = try await backend.callTool("list_courses")
+            guard courseRequestID == requestID, context == backend.contextKey else { return }
             courses = HomeworkCourse.parseList(result)
             if !courses.contains(where: { $0.id == selectedCourseID }) {
                 selectedCourseID = courses.first(where: \.allSubjects)?.id ?? courses.first?.id ?? "__all_courses__"
             }
             await loadTasks(using: backend)
         } catch {
+            guard courseRequestID == requestID, context == backend.contextKey else { return }
             errorMessage = error.localizedDescription
             courses = []
             tasks = []
@@ -47,12 +47,15 @@ final class HomeworkViewModel {
     }
 
     func loadTasks(using backend: BackendConnectionModel) async {
-        guard backend.session?.ready == true else { return }
+        guard backend.academicContextReady else { return }
+        let context = backend.contextKey
         let requestID = UUID()
         taskRequestID = requestID
         isLoadingTasks = true
         errorMessage = nil
         selectedTaskID = nil
+        detailRequestID = UUID()
+        isLoadingDetail = false
         detail = nil
 
         var arguments: [String: JSONValue] = [
@@ -74,12 +77,12 @@ final class HomeworkViewModel {
 
         do {
             let result = try await backend.callTool("list_tasks", arguments: arguments)
-            guard taskRequestID == requestID else { return }
+            guard taskRequestID == requestID, context == backend.contextKey else { return }
             tasks = HomeworkTask.parseList(result)
             isLoadingTasks = false
             await backend.refreshSession()
         } catch {
-            guard taskRequestID == requestID else { return }
+            guard taskRequestID == requestID, context == backend.contextKey else { return }
             isLoadingTasks = false
             tasks = []
             errorMessage = error.localizedDescription
@@ -87,12 +90,14 @@ final class HomeworkViewModel {
     }
 
     func loadSelectedTask(using backend: BackendConnectionModel) async {
-        guard let selectedTaskID else {
-            detail = nil
-            return
-        }
         let requestID = UUID()
         detailRequestID = requestID
+        let context = backend.contextKey
+        guard backend.academicContextReady, let selectedTaskID else {
+            detail = nil
+            isLoadingDetail = false
+            return
+        }
         isLoadingDetail = true
         errorMessage = nil
         detail = nil
@@ -105,11 +110,11 @@ final class HomeworkViewModel {
                     "max_chars": .number(6_000),
                 ]
             )
-            guard detailRequestID == requestID else { return }
+            guard detailRequestID == requestID, context == backend.contextKey, self.selectedTaskID == selectedTaskID else { return }
             detail = HomeworkDetail.parse(result)
             isLoadingDetail = false
         } catch {
-            guard detailRequestID == requestID else { return }
+            guard detailRequestID == requestID, context == backend.contextKey, self.selectedTaskID == selectedTaskID else { return }
             isLoadingDetail = false
             errorMessage = error.localizedDescription
         }
@@ -122,6 +127,7 @@ final class HomeworkViewModel {
 
     func downloadAttachment(_ attachment: HomeworkAttachment, using backend: BackendConnectionModel) async {
         guard let taskID = selectedTaskID, detail?.taskID == taskID else { return }
+        let context = backend.contextKey
         let key = downloadKey(taskID: taskID, fileID: attachment.id)
         guard attachmentDownloadStates[key] != .downloading else { return }
         attachmentDownloadStates[key] = .downloading
@@ -137,10 +143,28 @@ final class HomeworkViewModel {
             guard let downloaded = HomeworkAttachmentDownload.parse(result) else {
                 throw BackendBridgeError.protocolFailure("下载结果缺少文件名或保存路径。")
             }
+            guard context == backend.contextKey else { return }
             attachmentDownloadStates[key] = .downloaded(downloaded)
         } catch {
+            guard context == backend.contextKey else { return }
             attachmentDownloadStates[key] = .failed(error.localizedDescription)
         }
+    }
+
+    func invalidateContext() {
+        courseRequestID = UUID()
+        taskRequestID = UUID()
+        detailRequestID = UUID()
+        courses = []
+        tasks = []
+        detail = nil
+        selectedCourseID = "__all_courses__"
+        selectedTaskID = nil
+        attachmentDownloadStates = [:]
+        isLoadingCourses = false
+        isLoadingTasks = false
+        isLoadingDetail = false
+        errorMessage = nil
     }
 
     private func downloadKey(taskID: String, fileID: String) -> String {

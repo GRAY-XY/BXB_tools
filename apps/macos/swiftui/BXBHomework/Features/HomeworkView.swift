@@ -22,6 +22,12 @@ struct HomeworkView: View {
 
             if backend.session?.ready != true {
                 loginRequired
+            } else if !backend.academicContextReady {
+                ContentUnavailableView(
+                    backend.isSwitchingTerm ? "正在切换学期" : "请刷新学期状态",
+                    systemImage: "calendar",
+                    description: Text(backend.termErrorMessage ?? "课程和作业将在切换完成后重新加载。")
+                )
             } else {
                 controls
                     .padding(.horizontal, 20)
@@ -36,16 +42,17 @@ struct HomeworkView: View {
             LoginView()
                 .environment(backend)
         }
-        .task(id: backend.session?.ready) {
-            if backend.session?.ready == true {
+        .task(id: backend.contextKey) {
+            model.invalidateContext()
+            if backend.academicContextReady {
                 await model.loadCourses(using: backend)
             }
         }
         .onChange(of: model.selectedCourseID) {
-            Task { await model.loadTasks(using: backend) }
+            Task { if !model.isLoadingCourses { await model.loadTasks(using: backend) } }
         }
         .onChange(of: model.selectedFilter) {
-            Task { await model.loadTasks(using: backend) }
+            Task { if !model.isLoadingCourses { await model.loadTasks(using: backend) } }
         }
         .onChange(of: model.selectedTaskID) {
             Task { await model.loadSelectedTask(using: backend) }

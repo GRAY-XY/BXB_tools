@@ -26,12 +26,26 @@ struct BackendSessionStatus: Decodable, Sendable {
         let id: String?
         let name: String?
         let loginName: String?
+
+        init(from decoder: Decoder) throws {
+            let value = try JSONValue(from: decoder)
+            id = value["id"].nullableString
+            name = value["name"].nullableString
+            loginName = value["loginName"].nullableString
+        }
     }
 
     struct CurrentClass: Decodable, Sendable {
         let id: String?
         let name: String?
         let campusId: String?
+
+        init(from decoder: Decoder) throws {
+            let value = try JSONValue(from: decoder)
+            id = value["id"].nullableString
+            name = value["name"].nullableString
+            campusId = value["campusId"].nullableString
+        }
     }
 
     struct Subject: Decodable, Sendable {
@@ -40,12 +54,28 @@ struct BackendSessionStatus: Decodable, Sendable {
         let name: String?
         let allSubjects: Bool?
         let unSubmitCount: Int?
+
+        init(from decoder: Decoder) throws {
+            let value = try JSONValue(from: decoder)
+            id = value["id"].nullableString
+            classId = value["classId"].nullableString
+            name = value["name"].nullableString
+            allSubjects = value["allSubjects"].boolValue
+            unSubmitCount = value["unSubmitCount"].intValue
+        }
     }
 
     struct Term: Decodable, Sendable {
         let id: String?
         let name: String?
         let status: Bool?
+
+        init(from decoder: Decoder) throws {
+            let value = try JSONValue(from: decoder)
+            id = value["id"].nullableString
+            name = value["name"].nullableString
+            status = value["status"].boolValue
+        }
     }
 
     let ready: Bool
@@ -54,10 +84,28 @@ struct BackendSessionStatus: Decodable, Sendable {
     let user: User?
     let currentClass: CurrentClass?
     let currentTermId: String?
-    let currentTermName: String?
+    var currentTermName: String? {
+        availableTerms?.first { $0.id == currentTermId }?.name
+    }
     let currentSubject: Subject?
     let availableTerms: [Term]?
     let availableSubjects: [Subject]?
+
+    init(from decoder: Decoder) throws {
+        let value = try JSONValue(from: decoder)
+        guard let ready = value["ready"].boolValue else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Session response is missing ready"))
+        }
+        self.ready = ready
+        capturedAt = value["capturedAt"].nullableString
+        loginSource = value["loginSource"].nullableString
+        user = value["user"] == .null ? nil : try value["user"].decoded(User.self)
+        currentClass = value["currentClass"] == .null ? nil : try value["currentClass"].decoded(CurrentClass.self)
+        currentTermId = value["currentTermId"].nullableString
+        currentSubject = value["currentSubject"] == .null ? nil : try value["currentSubject"].decoded(Subject.self)
+        availableTerms = try value["availableTerms"].arrayValue.map { try $0.decoded(Term.self) }
+        availableSubjects = try value["availableSubjects"].arrayValue.map { try $0.decoded(Subject.self) }
+    }
 
     var courseCount: Int {
         availableSubjects?.count ?? 0
@@ -66,4 +114,8 @@ struct BackendSessionStatus: Decodable, Sendable {
     var pendingCount: Int {
         availableSubjects?.compactMap(\.unSubmitCount).reduce(0, +) ?? 0
     }
+}
+
+private extension JSONValue {
+    var nullableString: String? { stringValue.isEmpty ? nil : stringValue }
 }

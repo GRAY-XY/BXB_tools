@@ -175,3 +175,55 @@ xcrun swiftc -parse-as-library \
   -o /tmp/bxb-assistant-parsing-smoke
 /tmp/bxb-assistant-parsing-smoke
 ```
+
+## Academic term switching
+
+The Overview screen includes a term picker for logged-in accounts. The current
+term is resolved by its ID, including numeric IDs returned by the backend.
+Switching loads and persists the new courses before publishing the selection;
+a failed request rechecks the real session rather than guessing whether it committed.
+Homework lists, detail requests, and attachment display state are invalidated
+when the account, class, or term changes. Draft text remains editable locally,
+while delivery previews must be prepared again in the new context.
+
+Switching is disabled during account operations or an assistant run. The native
+bridge enforces the same rule for direct requests, including submission and
+teacher messaging. The pending card uses the paginated home.pendingCount
+summary, with explicit loading and unavailable states.
+
+Run the account-free parser and state smoke tests from the repository root:
+
+~~~sh
+bash apps/macos/swiftui/Runtime/check-academic-context.sh
+npm run check
+~~~
+
+The Swift runner accepts additional compiler arguments (for example a module
+cache path) after the script name. It uses an isolated Node fixture and never
+logs in, sends a message, submits homework, or reads the real session.
+Full Xcode build and UI checks are still required before release.
+
+
+## Cloud validation and downloadable test app
+
+The Validate macOS SwiftUI workflow runs automatically for relevant pull requests,
+including draft PRs, on a GitHub-hosted macOS 15 Apple Silicon runner. It installs
+the Node version in .nvmrc, runs backend and Swift smoke tests, builds the complete
+native app with Xcode, and verifies its bundled bridge with isolated user data.
+No local Xcode installation or account credentials are needed for these checks.
+
+Open the PR's Checks tab, then the workflow run. A successful run offers:
+
+- BXBHomework-macos-arm64-test-RUN_ID: a ZIP containing the app ZIP, SHA-256 checksum
+  and build notes. Extract the inner app ZIP to preserve executable permissions.
+- macos-swiftui-validation-logs-RUN_ID: test logs, toolchain information and Xcode
+  build results, including failed runs.
+
+Artifacts are retained for seven days. The test app requires macOS 15 or newer
+on Apple Silicon, is ad hoc signed and is not a notarized release. Browser-backed
+login still needs the existing separate Chromium dependency. Automated success
+does not replace checking the real term picker and homework screens with a
+legitimate test account. The workflow never logs in, submits work or sends messages.
+
+After the workflow is merged to the default branch it can also be started from
+Actions using Run workflow. The existing Electron release workflow is separate.

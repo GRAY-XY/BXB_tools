@@ -1,0 +1,186 @@
+name: Validate macOS SwiftUI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/validate-macos-swiftui.yml'
+      - 'apps/macos/swiftui/**'
+      - 'backend/**'
+      - 'release/scripts/package-swiftui-runtime.sh'
+      - 'release/scripts/publish-scan.js'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.nvmrc'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: swiftui-validation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-validation:
+    name: SwiftUI tests and Xcode build (arm64)
+    runs-on: macos-15
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Prepare validation output
+        run: |
+          validation_root="$RUNNER_TEMP/bxb-swiftui-validation"
+          mkdir -p "$validation_root/logs" "$validation_root/artifacts"
+          echo "VALIDATION_ROOT=$validation_root" >> "$GITHUB_ENV"
+
+      - name: Check out the exact candidate commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up the project Node version
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .nvmrc
+          architecture: arm64
+          cache: npm
+
+      - name: Record the toolchain
+        run: |
+          test "$(uname -m)" = arm64
+          {
+            git rev-parse HEAD
+            uname -m
+            node --version
+            xcodebuild -version
+            xcrun swiftc --version
+          } | tee "$VALIDATION_ROOT/logs/toolchain.txt"
+
+      - name: Install dependencies
+        run: npm ci 2>&1 | tee "$VALIDATION_ROOT/logs/npm-install.log"
+
+      - name: Run backend regression and publish scan
+        run: |
+          npm run check 2>&1 | tee "$VALIDATION_ROOT/logs/backend-tests.log"
+          npm run scan:publish 2>&1 | tee "$VALIDATION_ROOT/logs/publish-scan.log"
+
+      - name: Run Swift parser and bridge state tests
+        run: |
+          export BXB_NODE_EXECUTABLE="$(command -v node)"
+          bash apps/macos/swiftui/Runtime/check-academic-context.sh 2>&1 |
+            tee "$VALIDATION_ROOT/logs/academic-context.log"
+          for feature in Homework Workspace Draft Assistant; do
+            xcrun swiftc -swift-version 6 -target arm64-apple-macos15.0 -parse-as-library \
+              apps/macos/swiftui/BXBHomework/Shared/JSONValue.swift \
+              "apps/macos/swiftui/BXBHomework/Features/${feature}Models.swift" \
+              "apps/macos/swiftui/Runtime/${feature}ParsingSmoke.swift" \
+              -o "$VALIDATION_ROOT/${feature}-parser"
+            "$VALIDATION_ROOT/${feature}-parser" 2>&1 |
+              tee "$VALIDATION_ROOT/logs/${feature}-parser.log"
+          done
+          xcrun swiftc -swift-version 6 -target arm64-apple-macos15.0 -parse-as-library \
+            apps/macos/swiftui/BXBHomework/Shared/JSONValue.swift \
+            apps/macos/swiftui/BXBHomework/Shared/NodeBackendClient.swift \
+            apps/macos/swiftui/Runtime/BridgeStreamSmoke.swift \
+            -o "$VALIDATION_ROOT/bridge-stream"
+          "$VALIDATION_ROOT/bridge-stream" 2>&1 |
+            tee "$VALIDATION_ROOT/logs/bridge-stream.log"
+
+      - name: Build the complete native app with Xcode
+        run: |
+          export BXB_NODE_EXECUTABLE="$(command -v node)"
+          xcodebuild \
+            -project apps/macos/swiftui/BXBHomework.xcodeproj \
+            -scheme BXBHomework \
+            -configuration Release \
+            -destination 'platform=macOS,arch=arm64' \
+            -derivedDataPath "$VALIDATION_ROOT/DerivedData" \
+            -resultBundlePath "$VALIDATION_ROOT/logs/Build.xcresult" \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO \
+            build 2>&1 | tee "$VALIDATION_ROOT/logs/xcode-build.log"
+
+      - name: Verify the bundled runtime and package the test app
+        run: |
+          apps=("$VALIDATION_ROOT/DerivedData/Build/Products/Release/"*.app)
+          test "${#apps[@]}" -eq 1
+          app="${apps[0]}"
+          test -f "$app/Contents/Info.plist"
+          executable="$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$app/Contents/Info.plist")"
+          printf 'Verifying app: %s; executable: %s\n' "$app" "$executable"
+          test -x "$app/Contents/MacOS/$executable"
+          test -x "$app/Contents/Helpers/node"
+          codesign --force --deep --sign - "$app"
+          codesign --verify --deep --strict "$app"
+          export BXB_TEST_APP="$app"
+          node --input-type=module <<'JS' 2>&1 | tee "$VALIDATION_ROOT/logs/bundled-bridge.log"
+          import assert from "node:assert/strict";
+          import fs from "node:fs";
+          import path from "node:path";
+          import { spawnSync } from "node:child_process";
+          const app = process.env.BXB_TEST_APP;
+          const runtime = path.join(app, "Contents/Resources/BXBRuntime");
+          const isolated = fs.mkdtempSync(path.join(process.env.RUNNER_TEMP, "bxb-bundle-smoke-"));
+          try {
+            const requests = [
+              { id: "info", method: "app.info" },
+              { id: "session", method: "session.status" },
+            ];
+            const result = spawnSync(path.join(app, "Contents/Helpers/node"), [
+              path.join(runtime, "Runtime/macos-backend.js"),
+            ], {
+              cwd: isolated,
+              env: { ...process.env, APPDATA: isolated, BXB_RUNTIME_ROOT: runtime },
+              input: requests.map((request) => JSON.stringify(request)).join("\n") + "\n",
+              encoding: "utf8",
+              timeout: 30000,
+            });
+            assert.equal(result.status, 0, result.error?.message || result.stderr);
+            const replies = result.stdout.trim().split("\n").map((line) => JSON.parse(line));
+            assert.equal(replies.length, 2);
+            const info = replies.find((reply) => reply.id === "info");
+            const session = replies.find((reply) => reply.id === "session");
+            assert.equal(info?.ok, true);
+            assert.equal(info.result.platform, "darwin");
+            assert.ok(info.result.workspaceDir.startsWith(isolated + path.sep));
+            assert.equal(session?.ok, true);
+            assert.equal(session.result.ready, false);
+            console.log("bundled-bridge=ok isolated-data packaged-node packaged-dependencies");
+          } finally {
+            fs.rmSync(isolated, { recursive: true, force: true });
+          }
+          JS
+          package="$VALIDATION_ROOT/artifacts/BXBHomework-macos-arm64-test.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$app" "$package"
+          shasum -a 256 "$package" > "$package.sha256"
+          {
+            echo "BXBHomework test build"
+            echo "Commit: $(git rev-parse HEAD)"
+            echo "Requires macOS 15 or newer on Apple Silicon."
+            echo "Ad hoc signed test app; not a notarized release."
+            echo "Extract the app ZIP inside this artifact before opening."
+            echo "Browser-backed login still requires the separate Chromium dependency."
+            echo "Use the read-only term-switching acceptance steps in docs/implementation/2026-10-06-macos-term-switching.md."
+          } > "$VALIDATION_ROOT/artifacts/README.txt"
+
+      - name: Upload the downloadable test app
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: BXBHomework-macos-arm64-test-${{ github.run_id }}
+          path: ${{ env.VALIDATION_ROOT }}/artifacts/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+      - name: Upload validation logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: macos-swiftui-validation-logs-${{ github.run_id }}
+          path: ${{ env.VALIDATION_ROOT }}/logs/
+          if-no-files-found: warn
+          retention-days: 7
