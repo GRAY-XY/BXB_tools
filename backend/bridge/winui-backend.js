@@ -2656,8 +2656,59 @@ async function loadPendingUpdateState() {
     totalBytes: pending.size || 0,
     percent: 100,
     filePath: installerPath,
-    message: "更新已下载并通过校验。",
+    message: await getPreviousUpdateInstallFailure() || "更新已下载并通过校验。",
   });
+}
+
+const updateInstallLogPath = path.join(updateDir, "install-launch.log");
+
+async function getPreviousUpdateInstallFailure() {
+  try {
+    const log = await fs.readFile(updateInstallLogPath, "utf8");
+    const failure = log.split(/\r?\n/).reverse().find((line) => line.includes("ERROR:"));
+    return failure ? `上次安装未完成：${failure.slice(failure.indexOf("ERROR:") + 6).trim()}` : "";
+  } catch {
+    return "";
+  }
+}
+
+function toPowerShellLiteral(value) {
+  return `'${String(value).replaceAll("'", "''")}'`;
+}
+
+async function waitForProcessSpawn(child, timeoutMs = 10000) {
+  await new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      child.off("spawn", onSpawn);
+      child.off("error", onError);
+      child.off("exit", onExit);
+      if (error) reject(error);
+      else resolve();
+    };
+    const onSpawn = () => finish();
+    const onError = (error) => finish(new Error(`无法启动更新安装器辅助进程：${error.message}`));
+    const onExit = (code, signal) => finish(new Error(`更新安装器辅助进程在启动确认前退出（code=${code ?? "null"}, signal=${signal ?? "null"}）。`));
+    const timeout = setTimeout(() => finish(new Error("启动更新安装器辅助进程超时。")), timeoutMs);
+    child.once("spawn", onSpawn);
+    child.once("error", onError);
+    child.once("exit", onExit);
+  });
+}
+
+async function waitForFile(filePath, child, timeoutMs = 10000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (existsSync(filePath)) return;
+    if (child.exitCode !== null) {
+      throw new Error(`更新安装器辅助进程提前退出（code=${child.exitCode}）。`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error("更新安装器辅助进程未能确认已就绪，请重试。");
 }
 
 async function installUpdate() {
@@ -2666,15 +2717,57 @@ async function installUpdate() {
   const installerPath = assertUpdateCacheFile(state.filePath);
   if (!existsSync(installerPath)) throw new Error("更新安装包不存在，请重新下载。");
 
-  const escapedInstallerPath = installerPath.replaceAll("'", "''");
-  const command = `Start-Sleep -Milliseconds 1500; Start-Process -FilePath '${escapedInstallerPath}'`;
+  await fs.mkdir(updateDir, { recursive: true });
+  await fs.writeFile(updateInstallLogPath, "", "utf8");
+  const parentPid = process.ppid;
+  const readyPath = path.join(updateDir, `install-launch-${crypto.randomUUID()}.ready`);
+  const command = [
+    "$ErrorActionPreference = 'Stop'",
+    `$logPath = ${toPowerShellLiteral(updateInstallLogPath)}`,
+    `$readyPath = ${toPowerShellLiteral(readyPath)}`,
+    `$installerPath = ${toPowerShellLiteral(installerPath)}`,
+    `$pendingPath = ${toPowerShellLiteral(pendingUpdatePath)}`,
+    `$parentPid = ${parentPid}`,
+    "$exitCode = 0",
+    "function Write-UpdateLog([string]$message) { Add-Content -LiteralPath $logPath -Value ('[' + [DateTime]::UtcNow.ToString('o') + '] ' + $message) -Encoding UTF8 }",
+    "try {",
+    "  Write-UpdateLog ('Launcher ready; waiting for app process ' + $parentPid + ' to exit.')",
+    "  Set-Content -LiteralPath $readyPath -Value 'ready' -NoNewline -Encoding ascii",
+    "  $deadline = [DateTime]::UtcNow.AddSeconds(120)",
+    "  while (Get-Process -Id $parentPid -ErrorAction SilentlyContinue) {",
+    "    if ([DateTime]::UtcNow -ge $deadline) { throw 'Timed out waiting for the app to close.' }",
+    "    Start-Sleep -Milliseconds 250",
+    "  }",
+    "  Write-UpdateLog 'App process exited; starting installer.'",
+    "  $installer = Start-Process -FilePath $installerPath -WorkingDirectory (Split-Path -LiteralPath $installerPath -Parent) -PassThru -Wait",
+    "  Write-UpdateLog ('Installer exited with code ' + $installer.ExitCode + '.')",
+    "  if ($installer.ExitCode -ne 0) { throw ('Installer exited with code ' + $installer.ExitCode + '.') }",
+    "  if (Test-Path -LiteralPath $pendingPath) { throw 'The installer exited without completing the update.' }",
+    "} catch {",
+    "  $exitCode = 1",
+    "  try { Write-UpdateLog ('ERROR: ' + $_.Exception.Message) } catch { }",
+    "} finally {",
+    "  Remove-Item -LiteralPath $readyPath -Force -ErrorAction SilentlyContinue",
+    "}",
+    "exit $exitCode",
+  ].join("\r\n");
+  const powershellPath = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  const encodedCommand = Buffer.from(command, "utf16le").toString("base64");
   const child = spawn(
-    "powershell.exe",
-    ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", command],
+    powershellPath,
+    ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", encodedCommand],
     { detached: true, stdio: "ignore", windowsHide: true },
   );
+  try {
+    await waitForProcessSpawn(child);
+    await waitForFile(readyPath, child);
+  } catch (error) {
+    child.kill();
+    await fs.rm(readyPath, { force: true });
+    throw error;
+  }
   child.unref();
-  return setUpdateState({ status: "installing", message: "应用即将退出并启动安装器..." });
+  return setUpdateState({ status: "installing", message: "安装器已就绪，应用关闭后将开始安装..." });
 }
 
 async function appPathTargets() {
