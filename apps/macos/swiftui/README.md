@@ -227,3 +227,32 @@ legitimate test account. The workflow never logs in, submits work or sends messa
 
 After the workflow is merged to the default branch it can also be started from
 Actions using Run workflow. The existing Electron release workflow is separate.
+
+### 助手首次设置引导
+
+后端连接及旧密钥迁移完成后，没有有效 chat 提供商和 Keychain 凭据的用户会看到两页引导。
+可以选择已有提供商或共享服务预设、输入 Key、读取模型列表，也可以直接填写模型 ID。
+“测试模型回复”发送一次固定短文本到所选服务，不携带聊天或课程信息，不调用助手工具，可能产生少量费用。
+测试通过后才能完成配置；修改连接字段会使测试结果失效。Key 只在完成时保存到本机 Keychain，输入框不会回填已保存值。
+
+“稍后设置”不会保存候选配置，并记住跳过选择。设置页的“助手设置引导”和助手页的“设置智能助理”可重新进入。
+读取配置或 Keychain 失败会显示重试，不能误判为新安装。保存结果不明确时先“确认保存结果”，避免覆盖原凭据。
+
+状态测试（内存 Keychain 替身及隔离 UserDefaults，不读取真实用户数据）：
+
+```bash
+bash apps/macos/swiftui/Runtime/check-assistant-setup.sh
+node --test backend/test/model-config-setup.test.js
+```
+
+原生 UI 测试启动时，直接启动下载产物的可执行文件，并同时设置三个隔离变量：
+
+```bash
+BXB_TEST_APPDATA=/tmp/bxb-setup-acceptance \
+BXB_TEST_KEYCHAIN_SERVICE=com.grayxy.bxbhomework.setup-acceptance \
+BXB_TEST_DEFAULTS_SUITE=com.grayxy.bxbhomework.setup-acceptance \
+  '/path/to/BXB Homework.app/Contents/MacOS/BXB Homework'
+```
+
+可执行文件名以应用 Info.plist 中 CFBundleExecutable 为准。正常启动不设置这些变量，继续使用现有数据路径、Keychain service 和偏好设置。
+详细验收与限制见 `docs/implementation/2026-10-13-macos-assistant-setup.md`。

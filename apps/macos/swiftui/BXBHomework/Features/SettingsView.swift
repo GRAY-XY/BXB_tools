@@ -9,32 +9,8 @@ private enum SettingsModelRole: String, CaseIterable, Identifiable {
     var title: String { self == .chat ? "对话模型" : "图片转述模型" }
 }
 
-private struct SettingsProvider: Identifiable, Equatable {
-    let id: String
-    let name: String
-    let type: String
-    let baseURL: String
-    let modelName: String
-    let hasAPIKey: Bool
-    let availableModels: [String]
-
-    init(_ value: JSONValue) {
-        id = value.firstString("id", "providerId")
-        name = value.firstString("name", "providerName").fallback("默认提供商")
-        type = value.firstString("type", "providerType").fallback("openai")
-        baseURL = value.firstString("baseUrl", "apiBaseUrl")
-        modelName = value.firstString("modelName", "model")
-        hasAPIKey = value["hasApiKey"].boolValue ?? false
-        availableModels = value["availableModels"].arrayValue.map(\.stringValue).filter { !$0.isEmpty }
-    }
-}
-
-private struct SettingsProviderPreset: Identifiable {
-    let id: String
-    let name: String
-    let baseURL: String
-    let model: String
-}
+private typealias SettingsProvider = ModelProvider
+private typealias SettingsProviderPreset = ModelProviderPreset
 
 @MainActor
 @Observable
@@ -69,13 +45,7 @@ private final class SettingsViewModel {
 
     private let keychain = ModelAPIKeychainStore()
 
-    static let presets = [
-        SettingsProviderPreset(id: "moonshot", name: "Moonshot", baseURL: "https://api.moonshot.cn/v1", model: "kimi-k2.5"),
-        SettingsProviderPreset(id: "deepseek", name: "DeepSeek", baseURL: "https://api.deepseek.com/v1", model: "deepseek-chat"),
-        SettingsProviderPreset(id: "openai", name: "OpenAI", baseURL: "https://api.openai.com/v1", model: "gpt-4o-mini"),
-        SettingsProviderPreset(id: "qwen", name: "通义千问", baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-plus"),
-        SettingsProviderPreset(id: "custom", name: "自定义 OpenAI 兼容", baseURL: "", model: ""),
-    ]
+    static let presets = ModelProviderPreset.all
 
     var providers: [SettingsProvider] {
         let roleValue = config["modelRoles"][role.rawValue]["providers"]
@@ -275,7 +245,7 @@ private final class SettingsViewModel {
         do {
             let key = try currentAPIKey(for: provider)
             let keyWasEntered = !apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            let result = try await backend.invoke("modelConfig.test", params: ["config": .object(candidate(provider: provider, apiKey: key))])
+            let result = try await backend.modelConfiguration.request("modelConfig.test", role: role.rawValue, provider: .object(candidate(provider: provider, apiKey: key))["provider"], apiKey: key)
             let message = result.firstString("message").fallback("模型服务连接成功。")
             if result["ok"].boolValue == true {
                 if keyWasEntered {
@@ -302,7 +272,7 @@ private final class SettingsViewModel {
         defer { isListingModels = false }
         do {
             let key = try currentAPIKey(for: provider)
-            let result = try await backend.invoke("modelConfig.list", params: ["config": .object(candidate(provider: provider, apiKey: key))])
+            let result = try await backend.modelConfiguration.request("modelConfig.list", role: role.rawValue, provider: .object(candidate(provider: provider, apiKey: key))["provider"], apiKey: key)
             availableModels = result["modelIds"].arrayValue.map(\.stringValue).filter { !$0.isEmpty }
             statusMessage = result.firstString("message").fallback("模型列表已更新。")
             errorMessage = nil
@@ -416,10 +386,7 @@ private final class SettingsViewModel {
     }
 
     private func currentAPIKey(for provider: SettingsProvider) throws -> String {
-        let draft = apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !draft.isEmpty { return draft }
-        if let saved = try keychain.load(role: role.rawValue, providerID: provider.id), !saved.isEmpty { return saved }
-        throw SettingsKeyError.missing
+        try ModelConfigurationService.apiKeyFromStore(keychain, role: role.rawValue, providerID: provider.id, draft: apiKeyDraft)
     }
 
     private func candidate(provider: SettingsProvider, apiKey: String) -> [String: JSONValue] {
@@ -451,32 +418,14 @@ private final class SettingsViewModel {
 
     private func migrateLegacyKeys(using backend: BackendConnectionModel) async throws {
         guard !legacyKeyMigrationComplete else { return }
-        let result = try await backend.invoke("modelConfig.migrateLegacyKeys")
-        let secrets = result["secrets"].arrayValue
-        for secret in secrets {
-            let role = secret.firstString("role")
-            let providerID = secret.firstString("providerId")
-            let apiKey = secret.firstString("apiKey")
-            guard !role.isEmpty, !providerID.isEmpty, !apiKey.isEmpty else { continue }
-            try keychain.save(apiKey, role: role, providerID: providerID)
-        }
-        if !secrets.isEmpty { _ = try await backend.invoke("modelConfig.scrubLegacyKeys") }
+        try await backend.modelConfiguration.migrateLegacyKeys()
         legacyKeyMigrationComplete = true
-    }
-}
-
-private enum SettingsKeyError: LocalizedError {
-    case missing
-
-    var errorDescription: String? {
-        switch self {
-        case .missing: "请先输入 API Key，或将已保存的 Key 写入钥匙串。"
-        }
     }
 }
 
 struct SettingsView: View {
     @Environment(BackendConnectionModel.self) private var backend
+    @Environment(AssistantSetupModel.self) private var setup
     @State private var model = SettingsViewModel()
     @State private var showingSignOutConfirmation = false
     @State private var showingDeleteProviderConfirmation = false
@@ -485,6 +434,12 @@ struct SettingsView: View {
         @Bindable var model = model
 
         Form {
+            Section("智能助理首次设置") {
+                Button("助手设置引导") { Task { await setup.open() } }
+                    .disabled(model.isWorking || setup.isWorking || setup.wantsPresentation || setup.hasUnconfirmedSave)
+                Text("选择模型服务并测试回复，API Key 保存在本机钥匙串。")
+                    .foregroundStyle(.secondary)
+            }
             Section {
                 HStack(spacing: 12) {
                     Image(systemName: backend.statusSymbol)
@@ -705,11 +660,15 @@ struct SettingsView: View {
                 }
             }
         }
+        .disabled(setup.isWorking || setup.wantsPresentation || setup.hasUnconfirmedSave)
         .formStyle(.grouped)
         .padding(.horizontal, 14)
         .frame(minWidth: 600, idealWidth: 760, minHeight: 500, idealHeight: 680)
         .preferredColorScheme(model.theme == "dark" ? .dark : model.theme == "light" ? .light : nil)
         .task { await model.load(using: backend) }
+        .onChange(of: setup.configurationRevision) { _, _ in
+            Task { await model.load(using: backend) }
+        }
         .confirmationDialog("退出伴学邦？", isPresented: $showingSignOutConfirmation, titleVisibility: .visible) {
             Button("退出登录", role: .destructive) { Task { await model.signOut(using: backend) } }
             Button("取消", role: .cancel) {}

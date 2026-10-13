@@ -11,6 +11,7 @@ private struct AssistantScrollMetrics: Equatable {
 
 struct AssistantView: View {
     @Environment(BackendConnectionModel.self) private var backend
+    @Environment(AssistantSetupModel.self) private var setup
     @State private var model = AssistantViewModel()
     @State private var showingImagePicker = false
     @State private var showingRenameAlert = false
@@ -26,6 +27,14 @@ struct AssistantView: View {
         @Bindable var model = model
 
         VStack(spacing: 0) {
+            if setup.needsSetup {
+                HStack {
+                    Text("设置模型服务后即可使用智能助理。")
+                    Spacer()
+                    Button("设置智能助理") { Task { await setup.open() } }
+                        .disabled(setup.isWorking || setup.wantsPresentation)
+                }.padding().background(.regularMaterial)
+            }
             header
                 .padding(.horizontal, 24)
                 .padding(.vertical, 18)
@@ -44,6 +53,7 @@ struct AssistantView: View {
         .task {
             await model.load(using: backend)
         }
+        .onChange(of: setup.configurationRevision) { _, _ in Task { await model.load(using: backend) } }
         .sheet(isPresented: $showingImagePicker) {
             AssistantImagePicker(model: model)
                 .environment(backend)
@@ -639,7 +649,8 @@ private struct AssistantImageThumbnail: View {
 }
 
 #Preview {
+    let backend = BackendConnectionModel()
     AssistantView()
-        .environment(BackendConnectionModel())
-        .frame(width: 1100, height: 720)
+        .environment(backend)
+        .environment(AssistantSetupModel(service: backend.modelConfiguration))
 }

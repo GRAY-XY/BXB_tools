@@ -1,8 +1,11 @@
 import Foundation
 import Security
 
-struct ModelAPIKeychainStore {
-    private let service = "com.grayxy.bxbhomework.macos.model-api-key"
+struct ModelAPIKeychainStore: ModelAPIKeyStore {
+    private let service: String
+    init(service: String = ProcessInfo.processInfo.environment["BXB_TEST_KEYCHAIN_SERVICE"] ?? "com.grayxy.bxbhomework.macos.model-api-key") {
+        self.service = service
+    }
 
     func load(role: String, providerID: String) throws -> String? {
         var query = baseQuery(role: role, providerID: providerID)

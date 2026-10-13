@@ -272,7 +272,7 @@ actor NodeBackendClient {
 
         var environment = ProcessInfo.processInfo.environment
         environment["BXB_RUNTIME_ROOT"] = runtime.repositoryRoot.path
-        environment["APPDATA"] = FileManager.default.homeDirectoryForCurrentUser
+        environment["APPDATA"] = environment["BXB_TEST_APPDATA"] ?? FileManager.default.homeDirectoryForCurrentUser
             .appending(path: "Library/Application Support")
             .path
         process.environment = environment

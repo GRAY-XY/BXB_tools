@@ -15,7 +15,7 @@ xcrun swiftc -swift-version 6 -target "$(uname -m)-apple-macos15.0" "$@" -parse-
 "$validation_root/term-parser"
 
 xcrun swiftc -swift-version 6 -target "$(uname -m)-apple-macos15.0" "$@" -parse-as-library \
-  apps/macos/swiftui/BXBHomework/Shared/{JSONValue,BackendModels,NodeBackendClient,ModelAPIKeychainStore,BackendConnectionModel}.swift \
+  apps/macos/swiftui/BXBHomework/Shared/{JSONValue,BackendModels,NodeBackendClient,ModelAPIKeychainStore,ModelConfigurationModels,ModelConfigurationService,BackendConnectionModel}.swift \
   apps/macos/swiftui/BXBHomework/Features/{HomeworkModels,HomeworkViewModel,DraftModels,DraftViewModel}.swift \
   apps/macos/swiftui/Runtime/AcademicContextSmoke.swift \
   -o "$validation_root/academic-context"
