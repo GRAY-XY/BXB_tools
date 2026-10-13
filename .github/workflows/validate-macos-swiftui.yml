@@ -118,6 +118,8 @@ jobs:
           test -x "$app/Contents/Helpers/node"
           codesign --force --deep --sign - "$app"
           codesign --verify --deep --strict "$app"
+          bash apps/macos/swiftui/Runtime/check-setup-app-launch.sh "$app" 2>&1 |
+            tee "$VALIDATION_ROOT/logs/setup-app-launch.log"
           export BXB_TEST_APP="$app"
           node --input-type=module <<'JS' 2>&1 | tee "$VALIDATION_ROOT/logs/bundled-bridge.log"
           import assert from "node:assert/strict";
