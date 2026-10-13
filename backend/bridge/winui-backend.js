@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import crypto from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { createReadStream, createWriteStream, existsSync } from "node:fs";
@@ -622,11 +623,19 @@ function redactModelConfigSecrets(config) {
 }
 
 async function persistModelConfig(config) {
-  await writeJson(modelConfigPath, redactModelConfigSecrets(config));
+  const temporary = `${modelConfigPath}.${safeId()}.tmp`;
+  try {
+    await writeJson(temporary, redactModelConfigSecrets(config));
+    await fs.rename(temporary, modelConfigPath);
+  } finally { await fs.rm(temporary, { force: true }); }
 }
 
 async function readModelConfigInternal() {
-  return normalizeModelConfig(await readJson(modelConfigPath, {}));
+  try { return normalizeModelConfig(await readJson(modelConfigPath, {})); }
+  catch (error) {
+    if (process.env.BXB_MACOS_NATIVE === "1") throw new Error("无法读取模型配置，请检查文件权限或修复配置文件后重试。原配置未修改。");
+    throw error;
+  }
 }
 
 async function loadModelConfig() {
@@ -869,10 +878,17 @@ async function listModelOptions(config) {
   if (!candidate.baseUrl) throw new Error("请先填写调用链接。");
   const headers = { Accept: "application/json" };
   if (candidate.apiKey) headers.Authorization = `Bearer ${candidate.apiKey}`;
-  const response = await fetch(deriveModelsUrl(candidate.baseUrl), { headers });
-  const text = await response.text();
-  if (!response.ok) throw new Error(`模型服务返回 HTTP ${response.status}: ${text.slice(0, 800)}`);
-  const modelIds = extractModelIds(text ? JSON.parse(text) : {});
+  let response;
+  let modelIds;
+  if (process.env.BXB_MACOS_NATIVE === "1") {
+    const payload = await nativeModelRequest(deriveModelsUrl(candidate.baseUrl), { headers }, config?.timeoutMs);
+    modelIds = extractModelIds(payload);
+  } else {
+    response = await fetch(deriveModelsUrl(candidate.baseUrl), { headers });
+    const text = await response.text();
+    if (!response.ok) throw new Error(`模型服务返回 HTTP ${response.status}: ${text.slice(0, 800)}`);
+    modelIds = extractModelIds(text ? JSON.parse(text) : {});
+  }
   return {
     modelsUrl: deriveModelsUrl(candidate.baseUrl),
     modelsCount: modelIds.length,
@@ -880,6 +896,60 @@ async function listModelOptions(config) {
     sampleModels: modelIds.slice(0, 20),
     message: modelIds.length ? `已读取 ${modelIds.length} 个模型。` : "连接成功，但没有读取到模型名称。",
   };
+}
+
+// Never forward server bodies, fetch exceptions or candidate values to JSONL errors.
+async function nativeModelRequest(url, options, timeoutMs = 15000) {
+  try {
+    const endpoint = new URL(url);
+    if (!["https:", "http:"].includes(endpoint.protocol) || endpoint.username || endpoint.password) {
+      throw new Error("invalid endpoint");
+    }
+    const response = await fetch(endpoint, {
+      ...options, redirect: "error",
+      signal: AbortSignal.timeout(Math.min(30000, Math.max(100, Number(timeoutMs) || 15000))),
+    });
+    if (!response.ok) {
+      const error = new Error(`模型服务返回 HTTP ${response.status}。请检查凭据、模型权限或服务额度。`);
+      error.safeModelError = true;
+      await response.body?.cancel();
+      throw error;
+    }
+    return await response.json();
+  } catch (error) {
+    if (error.safeModelError) throw error;
+    throw new Error(error.name === "TimeoutError" || error.name === "AbortError"
+      ? "模型服务请求超时，请重试。" : "无法读取模型服务响应，请检查调用链接与网络连接。");
+  }
+}
+
+async function probeModelConfig(config) {
+  if (process.env.BXB_MACOS_NATIVE !== "1") throw new Error("Native macOS method only.");
+  const candidate = resolveModelCandidate(await readModelConfigInternal(), config);
+  if (!candidate.apiKey || !candidate.baseUrl || !candidate.modelName) throw new Error("请填写 API Key、调用链接和模型名称。");
+  const payload = await nativeModelRequest(deriveChatUrl(candidate.baseUrl), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${candidate.apiKey}` },
+    body: JSON.stringify({ model: candidate.modelName, messages: [{ role: "user", content: "Reply with OK." }], stream: false }),
+  }, config?.timeoutMs);
+  const content = payload?.choices?.[0]?.message?.content;
+  if (typeof content !== "string" || !content.trim()) throw new Error("模型未返回有效文本回复，请检查模型 ID 或服务兼容性。");
+  return { ok: true, message: "已收到模型文本回复，可以完成配置。" };
+}
+
+async function saveSetupConfig(params) {
+  if (process.env.BXB_MACOS_NATIVE !== "1") throw new Error("Native macOS method only.");
+  const current = await loadModelConfig();
+  if (!isDeepStrictEqual(current.modelRoles.chat, params.expectedChat)) {
+    throw new Error("对话模型配置已变化，请重新打开引导后测试。旧配置已保留。");
+  }
+  // Explicit allowlist: a setup commit cannot alter image roles or advanced settings.
+  const provider = params.config?.provider;
+  if (!provider?.id || !provider.baseUrl || !provider.modelName) throw new Error("引导配置不完整。");
+  return saveModelConfig({ modelRole: "chat", activate: true, provider: {
+    id: provider.id, name: provider.name, type: provider.type,
+    baseUrl: provider.baseUrl, modelName: provider.modelName,
+  } });
 }
 
 async function testModelConfig(config) {
@@ -2893,6 +2963,8 @@ async function handleRequest(request, emitProgress) {
   if (method === "tool.call" || method === "bxb:tool") return callTool(String(params.name || ""), params.args || {});
   if (method === "session.status" || method === "bxb:session") return callTool("session_status", {});
   if (method === "home.pendingCount" || method === "home:pending-count") return nativeAcademicOperation(() => client.getPendingHomeworkSummary());
+  if (method === "modelConfig.probe") return probeModelConfig(params.config || params);
+  if (method === "modelConfig.setupSave") return saveSetupConfig(params);
   if (method === "modelConfig.load" || method === "config:model:load") return loadModelConfig();
   if (method === "modelConfig.migrateLegacyKeys") {
     if (process.env.BXB_MACOS_NATIVE !== "1") throw new Error("Legacy key migration is only available in the native macOS client.");
@@ -2987,6 +3059,7 @@ async function handleRequest(request, emitProgress) {
   throw new Error(`Unknown WinUI backend method: ${method}`);
 }
 
+let modelConfigurationQueue = Promise.resolve();
 let pending = "";
 let activeRequests = 0;
 let stdinEnded = false;
@@ -3002,7 +3075,12 @@ async function handleRequestLine(line) {
   try {
     request = JSON.parse(line);
     const emitProgress = (result) => writeResponse({ id: request.id ?? null, method: request.method ?? "", event: "progress", result });
-    const result = await handleRequest(request, emitProgress);
+    const isConfiguration = /^(modelConfig\.|config:model:)/.test(request.method || "")
+      && !["modelConfig.list", "modelConfig.probe", "config:model:list"].includes(request.method);
+    const operation = () => handleRequest(request, emitProgress);
+    const resultPromise = isConfiguration ? modelConfigurationQueue.then(operation) : operation();
+    if (isConfiguration) modelConfigurationQueue = resultPromise.catch(() => {});
+    const result = await resultPromise;
     writeResponse({ id: request.id ?? null, ok: true, result });
   } catch (error) {
     writeResponse({
