@@ -15,9 +15,9 @@ struct BXBHomeworkApp: App {
     var body: some Scene {
         WindowGroup {
             AppShellView()
+                .modifier(AssistantSetupPresenter())
                 .environment(backend)
                 .environment(setup)
-                .modifier(AssistantSetupPresenter())
                 .task {
                     await backend.connect()
                     if backend.state == .connected { await setup.prepare() }
@@ -32,9 +32,9 @@ struct BXBHomeworkApp: App {
 
         Settings {
             SettingsView()
+                .modifier(AssistantSetupPresenter())
                 .environment(backend)
                 .environment(setup)
-                .modifier(AssistantSetupPresenter())
         }
     }
 }
