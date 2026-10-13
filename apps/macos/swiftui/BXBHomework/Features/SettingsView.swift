@@ -439,6 +439,10 @@ struct SettingsView: View {
                     .disabled(model.isWorking || setup.isWorking || setup.wantsPresentation || setup.hasUnconfirmedSave)
                 Text("选择模型服务并测试回复，API Key 保存在本机钥匙串。")
                     .foregroundStyle(.secondary)
+                if let error = setup.errorMessage, !setup.wantsPresentation {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+                }
             }
             Section {
                 HStack(spacing: 12) {
