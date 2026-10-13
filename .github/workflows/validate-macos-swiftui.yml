@@ -74,6 +74,8 @@ jobs:
           export BXB_NODE_EXECUTABLE="$(command -v node)"
           bash apps/macos/swiftui/Runtime/check-academic-context.sh 2>&1 |
             tee "$VALIDATION_ROOT/logs/academic-context.log"
+          bash apps/macos/swiftui/Runtime/check-assistant-setup.sh 2>&1 |
+            tee "$VALIDATION_ROOT/logs/assistant-setup.log"
           for feature in Homework Workspace Draft Assistant; do
             xcrun swiftc -swift-version 6 -target arm64-apple-macos15.0 -parse-as-library \
               apps/macos/swiftui/BXBHomework/Shared/JSONValue.swift \
