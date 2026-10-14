@@ -20,13 +20,18 @@ async function fixture(t, native = true) {
     if (mode === 'timeout') return;
     if (/^\d+$/.test(mode)) { res.writeHead(Number(mode)); res.end(secret); return; }
     if (req.url.endsWith('/models')) { res.end(JSON.stringify({ data: mode === 'empty' ? [] : [{ id: 'test-model' }] })); return; }
+    if (body && JSON.parse(body).stream === true) {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.end('data: {"choices":[{"delta":{"content":"fixture assistant reply"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
+      return;
+    }
     res.end(mode === 'invalid' ? '{bad' : JSON.stringify({ choices: [{ message: { content: mode === 'blank' ? '' : 'OK' } }] }));
   });
   await new Promise(r => server.listen(0, '127.0.0.1', r));
   const child = spawn(process.execPath, ['backend/bridge/winui-backend.js'], { env: { ...process.env, APPDATA: root, BXB_MACOS_NATIVE: native ? '1' : '0' } });
   let seq = 0; let stderr = ''; const pending = new Map();
   child.stderr.on('data', b => stderr += b);
-  readline.createInterface({ input: child.stdout }).on('line', line => { const r = JSON.parse(line); pending.get(r.id)?.(r); pending.delete(r.id); });
+  readline.createInterface({ input: child.stdout }).on('line', line => { const r = JSON.parse(line); if (r.event === 'progress') return; pending.get(r.id)?.(r); pending.delete(r.id); });
   const invoke = (method, params = {}) => new Promise(resolve => { const id = String(++seq); pending.set(id, resolve); child.stdin.write(JSON.stringify({ id, method, params }) + '\n'); });
   t.after(async () => { child.kill(); server.closeAllConnections(); await new Promise(r => server.close(r)); await fs.rm(root, { recursive: true, force: true }); });
   return { invoke, calls, secret, root, get stderr() { return stderr; }, setMode(m) { mode = m; }, candidate: { apiKey: secret, baseUrl: `http://127.0.0.1:${server.address().port}/v1`, modelName: 'test-model', provider: { id: 'setup-test', name: 'Test' } } };
@@ -90,4 +95,22 @@ test('native configuration parse failures hide malformed legacy secrets', { time
   assert.equal(JSON.stringify(r).includes(f.secret), false);
   assert.match(r.error.message, /配置/);
   assert.equal(await fs.readFile(target, 'utf8'), '{"apiKey":"' + f.secret + '" bad json');
+});
+
+test('saved native setup can chat using an ephemeral Keychain key without storing it in conversations', { timeout: 10000 }, async t => {
+  const f = await fixture(t);
+  const before = (await f.invoke('modelConfig.load')).result;
+  const provider = { id: 'setup-chat', name: 'Fixture Chat', type: 'openai', baseUrl: f.candidate.baseUrl, modelName: 'test-model' };
+  assert.equal((await f.invoke('modelConfig.setupSave', { config: { provider }, expectedChat: before.modelRoles.chat })).ok, true);
+  const r = await f.invoke('agent.chat', { text: 'fixture conversation', conversationId: 'setup-conversation',
+    userMessageId: 'fixture-user', assistantMessageId: 'fixture-assistant', apiKeys: { chat: { 'setup-chat': f.secret } } });
+  assert.equal(r.ok, true);
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.calls[0].key, `Bearer ${f.secret}`);
+  assert.equal(f.calls[0].body.model, 'test-model');
+  assert.equal(f.calls[0].body.messages.at(-1).content, 'fixture conversation');
+  assert.equal(JSON.stringify(r).includes('fixture assistant reply'), true);
+  for (const file of ['model-config.json', 'agent-conversations.json']) {
+    assert.equal((await fs.readFile(path.join(f.root, 'bxb-homework-electron', file), 'utf8')).includes(f.secret), false);
+  }
 });
