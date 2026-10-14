@@ -25,8 +25,13 @@ enum KeychainCredentialStoreError: LocalizedError {
 }
 
 struct KeychainCredentialStore {
-    private let service = "com.grayxy.bxbhomework.macos.banxuebang"
+    private let service: String
     private let account = "default"
+
+    init(service: String = ProcessInfo.processInfo.environment["BXB_TEST_KEYCHAIN_SERVICE"]
+         .map { $0 + ".login-credentials" } ?? "com.grayxy.bxbhomework.macos.banxuebang") {
+        self.service = service
+    }
 
     func load() throws -> SavedLoginCredential? {
         var query = baseQuery

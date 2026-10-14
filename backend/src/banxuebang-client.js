@@ -17,6 +17,7 @@ import { constants as fsConstants, existsSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { chromium } from "playwright";
+import { nativeBrowserCacheCandidates, prepareNativeChromium } from "./playwright-runtime.js";
 import { DraftStore } from "./draft-store.js";
 
 const BASE_URL = "https://student.banxuebang.com";
@@ -281,6 +282,12 @@ function computeCountdown(endTime) {
 }
 
 async function launchBrowser(headless) {
+  if (process.platform === "darwin") {
+    const roots = nativeBrowserCacheCandidates(null);
+    const executablePath = await prepareNativeChromium({ roots, installRoot: roots[0] });
+    try { return await chromium.launch({ headless, executablePath }); }
+    catch { throw new Error("登录浏览器无法启动，请重试或重新安装应用。请保留原有账号和配置。"); }
+  }
   const browserRootCandidates = [
     process.env.PLAYWRIGHT_BROWSERS_PATH,
     process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "ms-playwright") : null,

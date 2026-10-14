@@ -15,6 +15,10 @@ final class BackendConnectionModel {
     private(set) var appInfo: BackendAppInfo?
     private(set) var session: BackendSessionStatus?
     private(set) var themePreference = "system"
+    @ObservationIgnored lazy var modelConfiguration = ModelConfigurationService { [weak self] method, params in
+        guard let self else { throw BackendBridgeError.remote("本地后端已断开。") }
+        return try await self.invoke(method, params: params)
+    }
     private let client: NodeBackendClient
     private(set) var contextRevision = 0
     private(set) var isLoadingTerms = false
@@ -313,6 +317,9 @@ final class BackendConnectionModel {
         _ method: String,
         params: [String: JSONValue] = [:]
     ) async throws -> AsyncThrowingStream<BackendStreamEvent, Error> {
+        if method == "agent.chat", modelConfiguration.hasUnconfirmedSave {
+            throw BackendBridgeError.remote("请先确认助手配置的保存结果。")
+        }
         var streamParams = params
         if method == "agent.chat", streamParams["apiKeys"] == nil {
             if let config = try? await client.invoke("modelConfig.load") {

@@ -50,6 +50,11 @@ struct LoginView: View {
             }
             .formStyle(.grouped)
 
+            if isLoggingIn {
+                ProgressView("正在准备登录浏览器并登录。首次使用可能需要下载浏览器。")
+                    .font(.callout)
+            }
+
             if let message {
                 Label(message, systemImage: loginCompleted ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                     .font(.callout)

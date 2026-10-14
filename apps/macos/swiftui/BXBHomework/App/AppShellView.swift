@@ -44,6 +44,7 @@ struct AdaptiveSplitView<Primary: View, Secondary: View>: View {
 
 struct AppShellView: View {
     @Environment(BackendConnectionModel.self) private var backend
+    @Environment(AssistantSetupModel.self) private var setup
     @State private var selection: AppSection? = .overview
     @State private var pendingWorkspaceRelativePath: String?
 
@@ -88,6 +89,15 @@ struct AppShellView: View {
         }
         .frame(minWidth: 760, minHeight: 500)
         .preferredColorScheme(backend.themePreference == "dark" ? .dark : backend.themePreference == "light" ? .light : nil)
+        .safeAreaInset(edge: .top) {
+            if let error = setup.errorMessage, !setup.wantsPresentation {
+                HStack {
+                    Label(error, systemImage: "exclamationmark.triangle").fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                    Button("重试读取助手配置") { Task { await setup.prepare() } }.disabled(setup.isPreparing)
+                }.padding().background(.regularMaterial)
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .status) {
                 Label(backend.statusText, systemImage: backend.statusSymbol)
@@ -98,6 +108,8 @@ struct AppShellView: View {
 }
 
 #Preview {
+    let backend = BackendConnectionModel()
     AppShellView()
-        .environment(BackendConnectionModel())
+        .environment(backend)
+        .environment(AssistantSetupModel(service: backend.modelConfiguration))
 }
