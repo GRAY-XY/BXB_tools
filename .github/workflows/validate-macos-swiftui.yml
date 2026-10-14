@@ -120,6 +120,9 @@ jobs:
           codesign --verify --deep --strict "$app"
           bash apps/macos/swiftui/Runtime/check-setup-app-launch.sh "$app" 2>&1 |
             tee "$VALIDATION_ROOT/logs/setup-app-launch.log"
+          "$app/Contents/Helpers/node" apps/macos/swiftui/Runtime/BrowserRuntimeSmoke.mjs \
+            "$app" "$VALIDATION_ROOT/browser-cache" 2>&1 |
+            tee "$VALIDATION_ROOT/logs/packaged-browser.log"
           export BXB_TEST_APP="$app"
           node --input-type=module <<'JS' 2>&1 | tee "$VALIDATION_ROOT/logs/bundled-bridge.log"
           import assert from "node:assert/strict";
@@ -167,7 +170,7 @@ jobs:
             echo "Requires macOS 15 or newer on Apple Silicon."
             echo "Ad hoc signed test app; not a notarized release."
             echo "Extract the app ZIP inside this artifact before opening."
-            echo "Browser-backed login still requires the separate Chromium dependency."
+            echo "First login downloads matching Chromium if no compatible cache is available."
             echo "Use the read-only term-switching acceptance steps in docs/implementation/2026-10-06-macos-term-switching.md."
           } > "$VALIDATION_ROOT/artifacts/README.txt"
 
