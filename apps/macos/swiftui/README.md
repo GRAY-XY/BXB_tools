@@ -256,3 +256,8 @@ BXB_TEST_DEFAULTS_SUITE=com.grayxy.bxbhomework.setup-acceptance \
 
 可执行文件名以应用 Info.plist 中 CFBundleExecutable 为准。正常启动不设置这些变量，继续使用现有数据路径、Keychain service 和偏好设置。
 详细验收与限制见 `docs/implementation/2026-10-13-macos-assistant-setup.md`。
+
+macOS 登录时会复用与当前 Playwright 版本匹配的 Chromium 缓存；缺失时自动下载，登录页显示准备提示。
+下载保留其他版本缓存，失败后可重试。缓存就绪以当前架构的可执行文件存在为准，空目录或旧版本目录不算就绪。
+`BXB_TEST_KEYCHAIN_SERVICE` 同时隔离模型 Key 和登录凭据（登录 service 增加 `.login-credentials` 后缀）。
+CI 使用 `Runtime/BrowserRuntimeSmoke.mjs` 验证打包运行时的真实浏览器启动，不提交真实账号。

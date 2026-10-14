@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { fetch as undiciFetch, ProxyAgent } from "undici";
 import { AcademicContextCoordinator } from "../src/academic-context-coordinator.js";
 import { BanxuebangClient } from "../src/banxuebang-client.js";
+import { nativeBrowserCacheCandidates, findChromiumExecutable, prepareNativeChromium } from "../src/playwright-runtime.js";
 import { compactAgentToolResult } from "../src/agent-tool-results.js";
 import { requestChatCompletionWithRecovery } from "../src/chat-completion-stream.js";
 import { renderCodeAsVscodeImages } from "../src/code-image-preview.js";
@@ -273,6 +274,7 @@ function maskKey(value) {
 }
 
 function browserCacheCandidates() {
+  if (process.platform === "darwin") return nativeBrowserCacheCandidates(electronUserDataRoot);
   return [
     path.join(electronUserDataRoot, "ms-playwright"),
     path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "ms-playwright"),
@@ -281,6 +283,7 @@ function browserCacheCandidates() {
 }
 
 async function hasChromiumCache(root) {
+  if (process.platform === "darwin") return Boolean(findChromiumExecutable([root]));
   if (!root || !existsSync(root)) return false;
   try {
     const entries = await fs.readdir(root, { withFileTypes: true });
@@ -315,6 +318,11 @@ async function ensurePlaywrightBrowsers() {
   }
 
   const browserRoot = path.join(electronUserDataRoot, "ms-playwright");
+  if (process.platform === "darwin") {
+    await prepareNativeChromium({ roots: browserCacheCandidates(), installRoot: browserRoot });
+    process.env.PLAYWRIGHT_BROWSERS_PATH = browserRoot;
+    return getBrowserDependencyStatus();
+  }
   process.env.PLAYWRIGHT_BROWSERS_PATH = browserRoot;
   const zipCandidates = [
     path.join(repoRoot, "runtime", "ms-playwright-browsers.zip"),
