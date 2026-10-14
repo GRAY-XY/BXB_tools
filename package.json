@@ -18,7 +18,8 @@
     "tool": "node backend/cli/call-tool.js",
     "tool:direct": "node backend/cli/direct-tool.js",
     "tool:mcp": "node backend/cli/call-tool.js",
-    "scan:publish": "node release/scripts/publish-scan.js"
+    "scan:publish": "node release/scripts/publish-scan.js",
+    "check:macos-release": "node --check release/scripts/stage-macos-runtime.js && node --check release/scripts/smoke-macos-runtime.js && node --test release/test/*.test.js && bash -n release/scripts/build-swiftui-release.sh release/scripts/test-macos-bundle.sh && python3 -m py_compile release/scripts/sign-macos-app.py"
   },
   "engines": {
     "node": ">=22"

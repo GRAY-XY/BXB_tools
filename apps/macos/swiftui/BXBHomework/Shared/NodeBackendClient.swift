@@ -65,6 +65,8 @@ private struct BackendRuntime {
     let repositoryRoot: URL
     let nodeExecutable: URL
     let bridgeScript: URL
+    let isBundled: Bool
+    let browserRoot: URL?
 
     static func locate() throws -> BackendRuntime {
         if let bundledRuntimeRoot = locateBundledRuntimeRoot() {
@@ -85,9 +87,18 @@ private struct BackendRuntime {
             return BackendRuntime(
                 repositoryRoot: bundledRuntimeRoot,
                 nodeExecutable: nodeExecutable,
-                bridgeScript: bridgeScript
+                bridgeScript: bridgeScript,
+                isBundled: true,
+                browserRoot: Bundle.main.resourceURL.map { $0.appending(path: "Playwright") }
+                    .flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
             )
         }
+
+        #if !DEBUG
+        if Bundle.main.bundleURL.pathExtension == "app" {
+            throw BackendBridgeError.packagedRuntimeIncomplete
+        }
+        #endif
 
         guard let repositoryRoot = locateRepositoryRoot() else {
             throw BackendBridgeError.repositoryNotFound
@@ -106,7 +117,9 @@ private struct BackendRuntime {
         return BackendRuntime(
             repositoryRoot: repositoryRoot,
             nodeExecutable: nodeExecutable,
-            bridgeScript: bridgeScript
+            bridgeScript: bridgeScript,
+            isBundled: false,
+            browserRoot: nil
         )
     }
 
@@ -275,6 +288,20 @@ actor NodeBackendClient {
         environment["APPDATA"] = environment["BXB_TEST_APPDATA"] ?? FileManager.default.homeDirectoryForCurrentUser
             .appending(path: "Library/Application Support")
             .path
+        if runtime.isBundled {
+            let userDataRoot = URL(filePath: environment["APPDATA"]!, directoryHint: .isDirectory)
+                .appending(path: "bxb-homework-electron", directoryHint: .isDirectory)
+            try FileManager.default.createDirectory(at: userDataRoot, withIntermediateDirectories: true)
+            process.currentDirectoryURL = userDataRoot
+            environment["BXB_MACOS_PACKAGED"] = "1"
+            if let browserRoot = runtime.browserRoot {
+                environment["PLAYWRIGHT_BROWSERS_PATH"] = browserRoot.path
+            }
+            environment.removeValue(forKey: "BXB_REPO_ROOT")
+            environment.removeValue(forKey: "BXB_NODE_EXECUTABLE")
+            environment.removeValue(forKey: "NODE_OPTIONS")
+            environment.removeValue(forKey: "NODE_PATH")
+        }
         process.environment = environment
 
         let outputHandle = stdoutPipe.fileHandleForReading
