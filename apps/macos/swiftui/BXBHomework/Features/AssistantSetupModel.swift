@@ -56,7 +56,11 @@ final class AssistantSetupModel {
     }
     func releasePresentation(_ owner: UUID) {
         guard presentationOwner == owner else { return }
-        if !isSaving && !hasUnconfirmedSave { skip() }
+        if isSaving || hasUnconfirmedSave {
+            // The transaction belongs to the shared model, not to a window.
+            // Release only the presentation lease so another window can recover.
+            presentationOwner = nil
+        } else { skip() }
     }
 
     func prepare() async {

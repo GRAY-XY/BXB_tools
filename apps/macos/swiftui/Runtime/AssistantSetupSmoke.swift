@@ -103,6 +103,14 @@ struct AssistantSetupSmoke {
         let beforeSaves = fixture.saves
         await restarted.finish()
         precondition(restarted.hasUnconfirmedSave && restarted.wantsPresentation)
+        let closingOwner = UUID(), recoveryOwner = UUID()
+        restarted.claimPresentation(closingOwner)
+        restarted.releasePresentation(closingOwner)
+        restarted.claimPresentation(recoveryOwner)
+        precondition(restarted.presentationOwner == recoveryOwner,
+                     "closing the pending-save window must let another window present recovery")
+        precondition(restarted.hasUnconfirmedSave && restarted.apiKeyDraft == "replacement-secret",
+                     "presentation transfer must retain the pending transaction")
         restarted.skip()
         precondition(restarted.wantsPresentation, "uncertain save cannot discard recovery")
         fixture.failLoad = false
@@ -120,6 +128,33 @@ struct AssistantSetupSmoke {
         configured.releasePresentation(secondOwner)
         precondition(configured.wantsPresentation)
         configured.skip()
+        await configured.open()
+        fixture.delayProbe = true
+        let oldProbe = Task { await configured.testConnection() }
+        while fixture.holdProbe == nil { await Task.yield() }
+        configured.skip()
+        await configured.open()
+        configured.apiKeyDraft = "fresh-after-reopen"
+        fixture.holdProbe?.resume(returning: .object(["ok": .bool(true)])); fixture.holdProbe = nil
+        await oldProbe.value
+        precondition(configured.wantsPresentation && !configured.canFinish && configured.apiKeyDraft == "fresh-after-reopen",
+                     "a reply from the previous presentation cannot alter the reopened guide")
+        configured.skip(); fixture.delayProbe = false
+        let imageOnly = FixtureBackend()
+        imageOnly.config = .object(["modelRoles": .object([
+            "chat": .object(["providers": .array([])]),
+            "image_caption": .object(["activeProviderId": .string("image"), "providers": .array([
+                .object(["id": .string("image"), "baseUrl": .string("https://fixture.invalid/v1"), "modelName": .string("vision")])
+            ])]),
+        ])])
+        keys.values["image_caption:image"] = "image-secret"
+        let imageDefaults = UserDefaults(suiteName: suite + "-image")!
+        defer { imageDefaults.removePersistentDomain(forName: suite + "-image") }
+        let chatGuide = AssistantSetupModel(service: ModelConfigurationService(keys: keys, invoke: imageOnly.invoke), defaults: imageDefaults)
+        await chatGuide.prepare()
+        precondition(chatGuide.needsSetup && chatGuide.wantsPresentation && keys.values["image_caption:image"] == "image-secret",
+                     "image-only configuration still needs chat setup and keeps the image key")
+        chatGuide.skip()
         fixture.failLoad = true
         let broken = AssistantSetupModel(service: service, defaults: defaults)
         await broken.prepare()

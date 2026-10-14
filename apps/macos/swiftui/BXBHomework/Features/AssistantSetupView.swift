@@ -119,15 +119,26 @@ struct AssistantSetupView: View {
 struct AssistantSetupPresenter: ViewModifier {
     @Environment(AssistantSetupModel.self) private var model
     @State private var owner = UUID()
+    @State private var isVisible = false
     func body(content: Content) -> some View {
         content
-            .onChange(of: model.wantsPresentation, initial: true) { _, wants in
-                if wants { model.claimPresentation(owner) }
+            .onAppear {
+                isVisible = true
+                model.claimPresentation(owner)
+            }
+            .onChange(of: model.wantsPresentation) { _, wants in
+                if isVisible && wants { model.claimPresentation(owner) }
+            }
+            .onChange(of: model.presentationOwner) { _, currentOwner in
+                if isVisible && currentOwner == nil { model.claimPresentation(owner) }
             }
             .sheet(isPresented: Binding(
                 get: { model.wantsPresentation && model.presentationOwner == owner },
                 set: { if !$0 { model.skip() } }
             )) { AssistantSetupView(model: model) }
-            .onDisappear { model.releasePresentation(owner) }
+            .onDisappear {
+                isVisible = false
+                model.releasePresentation(owner)
+            }
     }
 }
