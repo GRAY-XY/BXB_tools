@@ -43,6 +43,18 @@ private final class DelayedProgressFixture {
     }
 }
 
+@MainActor
+private final class DelayedStatusErrorFixture {
+    let update = UpdateFixture()
+    var started = false
+    func invoke(_ method: String, _ params: [String: JSONValue]) async throws -> JSONValue {
+        if method != "macosUpdate.status" { return try await update.invoke(method, params) }
+        started = true
+        try await Task.sleep(for: .milliseconds(100))
+        throw NSError(domain: "UpdateFixture", code: 1)
+    }
+}
+
 @main
 @MainActor
 struct UpdateFlowSmoke {
@@ -78,6 +90,12 @@ struct UpdateFlowSmoke {
         await progressModel.check(); await progressModel.download()
         try await Task.sleep(for: .milliseconds(400))
         precondition(progressModel.state.phase == .ready, "Late progress must not overwrite the verified ready state")
+        let stale = DelayedStatusErrorFixture()
+        let staleModel = MacOSUpdateModel(currentVersion: "1.0.0", architecture: "arm64", invoke: stale.invoke, openInstaller: { _ in false }, quit: {})
+        let refresh = Task { await staleModel.refreshStatus() }
+        while !stale.started { await Task.yield() }
+        await staleModel.check(); await staleModel.download(); await refresh.value
+        precondition(staleModel.state.phase == .ready, "A stale status error must not invalidate a newer download")
         print("update-flow=ok: check/download/cancel-confirmation never install; confirmed handoff revalidates before open and quit")
     }
 }

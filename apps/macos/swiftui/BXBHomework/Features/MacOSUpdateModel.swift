@@ -80,7 +80,7 @@ final class MacOSUpdateModel {
             guard revision == stateRevision else { return }
             state = MacOSUpdateSnapshot(value)
         }
-        catch { fail(error) }
+        catch { if revision == stateRevision { fail(error) } }
     }
 
     func check() async {

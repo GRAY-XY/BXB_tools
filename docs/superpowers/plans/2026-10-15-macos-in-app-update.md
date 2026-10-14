@@ -35,4 +35,16 @@ model and Settings section. Keep Windows updater behavior unchanged.
   replacement and quitting. Run the smoke in existing native CI before build.
 - [x] Document release naming and installation behavior; review the diff and
   run backend tests, updater smoke, publish scan and workflow validation.
-- [ ] Commit, create/attach an independent PR for #33, and verify native CI.
+- [x] Commit, create/attach an independent PR for #33, and verify native CI.
+
+## Verification
+
+95 Node tests (86 existing plus 9 updater/IPC tests) pass. Swift update smoke
+verifies confirmation, failed opening, failed integrity, stale progress and
+stale status errors without opening a real installer or quitting. Native
+model/view type checks, workflow validation, project validation and publish
+scan pass. PR #38 is independent of release PR #37. Hosted native validation
+run 38600102353 passed full Xcode build and packaged-app first launch; the final
+state-error guard is revalidated in the subsequent PR run. Live release
+discovery reports no public SwiftUI stable release, so it correctly disables
+download and installation until #34 publishes a matching artifact.
