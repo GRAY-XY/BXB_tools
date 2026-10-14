@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { fetch as undiciFetch, ProxyAgent } from "undici";
 import { AcademicContextCoordinator } from "../src/academic-context-coordinator.js";
+import { MacOSUpdateManager } from "../src/macos-updater.js";
 import { BanxuebangClient } from "../src/banxuebang-client.js";
 import { nativeBrowserCacheCandidates, findChromiumExecutable, prepareNativeChromium } from "../src/playwright-runtime.js";
 import { compactAgentToolResult } from "../src/agent-tool-results.js";
@@ -46,6 +47,7 @@ const dataRoot = path.join(electronUserDataRoot, ".banxuebang");
 const workspaceDir = path.join(dataRoot, "workspace");
 const draftDir = path.join(dataRoot, "drafts");
 const updateDir = path.join(electronUserDataRoot, "updates");
+const macosUpdater = new MacOSUpdateManager({ cacheDir: path.join(updateDir, "macos"), fetchImpl: fetchUpdateUrl });
 const pendingUpdatePath = path.join(updateDir, "pending-update.json");
 const modelConfigPath = path.join(electronUserDataRoot, "model-config.json");
 const conversationsPath = path.join(electronUserDataRoot, "agent-conversations.json");
@@ -2943,6 +2945,17 @@ async function appInfo() {
 async function handleRequest(request, emitProgress) {
   const method = String(request?.method || "");
   const params = request?.params && typeof request.params === "object" ? request.params : {};
+  if (method.startsWith("macosUpdate.")) {
+    if (process.env.BXB_MACOS_NATIVE !== "1") throw new Error("Native macOS method only.");
+    switch (method) {
+      case "macosUpdate.check": return macosUpdater.check(params);
+      case "macosUpdate.status": return macosUpdater.status();
+      case "macosUpdate.download": return macosUpdater.download();
+      case "macosUpdate.cancel": return macosUpdater.cancel();
+      case "macosUpdate.prepareInstall": return macosUpdater.prepareInstall(params);
+      default: throw new Error("Unknown macOS update method.");
+    }
+  }
   if (method === "app.info" || method === "app:info") return appInfo();
   if (method === "app.openPath" || method === "app:open-path") return openAppPath(params.key || params.path || "workspaceDir");
   if (method === "session.loginWithCredentials" || method === "session:login") {

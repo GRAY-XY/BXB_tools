@@ -426,6 +426,7 @@ private final class SettingsViewModel {
 struct SettingsView: View {
     @Environment(BackendConnectionModel.self) private var backend
     @Environment(AssistantSetupModel.self) private var setup
+    @Environment(MacOSUpdateModel.self) private var updater
     @State private var model = SettingsViewModel()
     @State private var showingSignOutConfirmation = false
     @State private var showingDeleteProviderConfirmation = false
@@ -641,8 +642,10 @@ struct SettingsView: View {
                 }
             }
 
+            MacOSUpdateView(model: updater)
+
             Section("本地数据与版本") {
-                LabeledContent("应用版本", value: model.appInfo.map { "\($0.version) · \($0.platform)" } ?? "读取中")
+                LabeledContent("应用版本", value: MacOSUpdateModel.installedVersion)
                 LabeledContent("运行环境", value: runtimeSummary)
                 LabeledContent("Node.js", value: model.appInfo?.nodeVersion ?? "—")
                 ForEach(model.pathRows, id: \.key) { row in
