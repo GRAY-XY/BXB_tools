@@ -64,7 +64,8 @@ test("checking fetches only release metadata; installation requires confirmation
   assert.equal(ready.filePath, undefined);
   assert.equal(ready.percent, 100);
   assert.deepEqual(await fs.readFile(f.target), payload);
-  assert.equal((await fs.stat(f.target)).mode & 0o777, 0o600);
+  // Windows does not implement POSIX owner-only mode bits.
+  if (process.platform !== "win32") assert.equal((await fs.stat(f.target)).mode & 0o777, 0o600);
   await assert.rejects(f.manager.prepareInstall({ confirmed: false }), /确认/);
   assert.equal((await f.manager.prepareInstall({ confirmed: true })).filePath, f.target);
   await fs.writeFile(f.target, "tampered");

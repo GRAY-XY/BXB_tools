@@ -26,7 +26,7 @@ test('Chromium resolution uses the requested platform, architecture and revision
 test('Mac cache candidates include the native Playwright user cache without Windows defaults', () => {
   assert.equal(typeof runtime.nativeBrowserCacheCandidates, 'function', 'native cache locator is missing');
   const roots = runtime.nativeBrowserCacheCandidates('/app/data', { homeDir: '/fixture-user', platform: 'darwin', env: {} });
-  assert.deepEqual(roots, ['/app/data/ms-playwright', '/fixture-user/Library/Caches/ms-playwright']);
+  assert.deepEqual(roots, [path.join('/app/data', 'ms-playwright'), path.join('/fixture-user', 'Library/Caches/ms-playwright')]);
 });
 
 test('browser preparation shares an install and verifies its result before marking ready', async t => {

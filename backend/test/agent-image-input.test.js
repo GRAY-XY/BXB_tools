@@ -4,8 +4,11 @@ import http from "node:http";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import readline from "node:readline";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { createCanvas, loadImage } from "@napi-rs/canvas";
+import { normalizeModelImage } from "../src/model-image.js";
 
 const testDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(testDir, "..", "..");
@@ -14,6 +17,33 @@ const onePixelPng = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
   "base64",
 );
+
+function twoPixelBmp() {
+  const buffer = Buffer.alloc(62);
+  buffer.write("BM");
+  buffer.writeUInt32LE(buffer.length, 2);
+  buffer.writeUInt32LE(54, 10);
+  buffer.writeUInt32LE(40, 14);
+  buffer.writeInt32LE(2, 18);
+  buffer.writeInt32LE(1, 22);
+  buffer.writeUInt16LE(1, 26);
+  buffer.writeUInt16LE(24, 28);
+  buffer.writeUInt32LE(8, 34);
+  buffer.set([0, 0, 255, 0, 255, 0, 0, 0], 54);
+  return buffer;
+}
+
+async function assertRedGreenPng(dataUrl) {
+  assert.match(dataUrl, /^data:image\/png;base64,/);
+  const bytes = Buffer.from(dataUrl.split(",")[1], "base64");
+  assert.equal(bytes.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
+  const image = await loadImage(bytes);
+  assert.equal(image.width, 2);
+  assert.equal(image.height, 1);
+  const context = createCanvas(2, 1).getContext("2d");
+  context.drawImage(image, 0, 0);
+  assert.deepEqual([...context.getImageData(0, 0, 2, 1).data], [255, 0, 0, 255, 0, 255, 0, 255]);
+}
 
 async function startMockModel() {
   const requests = [];
@@ -50,14 +80,14 @@ function provider(id, name, baseUrl, modelName) {
   return { id, type: "openai", name, apiKey: "test-key", baseUrl, modelName };
 }
 
-async function runImageChat(modelConfig) {
+async function runImageChat(modelConfig, { fileName = "sample.png", bytes = onePixelPng, pasteMimeType } = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "bxb-image-input-"));
   const appData = path.join(root, "AppData", "Roaming");
   const userDataRoot = path.join(appData, "bxb-homework-electron");
   const workspace = path.join(userDataRoot, ".banxuebang", "workspace");
-  const imagePath = path.join(workspace, "pasted", "sample.png");
+  let imagePath = path.join(workspace, "pasted", fileName);
   await fs.mkdir(path.dirname(imagePath), { recursive: true });
-  await fs.writeFile(imagePath, onePixelPng);
+  if (!pasteMimeType) await fs.writeFile(imagePath, bytes);
   await fs.writeFile(path.join(userDataRoot, "model-config.json"), JSON.stringify(modelConfig, null, 2));
 
   const child = spawn(process.execPath, [bridgePath], {
@@ -66,64 +96,63 @@ async function runImageChat(modelConfig) {
     stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true,
   });
-  const stdout = [];
+  const closed = new Promise((resolve) => child.once("close", resolve));
   const stderr = [];
   const progress = [];
-  child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
   child.stderr.on("data", (chunk) => stderr.push(chunk));
-  const requestLine = `${JSON.stringify({
-    id: "image-test",
-    method: "agent:chat",
-    params: {
+  const replies = new Map();
+  let sequence = 0;
+  child.once("close", (code) => {
+    for (const reply of [...replies.values()]) {
+      reply({ ok: false, error: { message: `bridge exited (${code}): ${stderr.join("")}` } });
+    }
+  });
+  readline.createInterface({ input: child.stdout }).on("line", (line) => {
+    const response = JSON.parse(line);
+    if (response.event === "progress") progress.push(response.result);
+    else replies.get(response.id)?.(response);
+  });
+  const invoke = (method, params) => new Promise((resolve, reject) => {
+    const id = String(++sequence);
+    const timer = setTimeout(() => {
+      replies.delete(id);
+      reject(new Error(`bridge timed out: ${stderr.join("")}`));
+    }, 15000);
+    replies.set(id, (response) => {
+      clearTimeout(timer);
+      replies.delete(id);
+      resolve(response);
+    });
+    child.stdin.write(`${JSON.stringify({ id, method, params })}\n`);
+  });
+
+  try {
+    let saved;
+    if (pasteMimeType) {
+      const pasted = await invoke("workspace:save-pastes", {
+        items: [{ kind: "image", name: fileName, mimeType: pasteMimeType, base64: bytes.toString("base64") }],
+      });
+      assert.equal(pasted.ok, true, pasted.error?.message);
+      saved = pasted.result.saved[0];
+      imagePath = saved.path;
+    }
+    const preview = await invoke("workspace:image-data-url", { filePath: imagePath });
+    assert.equal(preview.ok, true, preview.error?.message);
+    const final = await invoke("agent:chat", {
       text: "请说明图片内容",
       conversationId: "image-test-conversation",
       userMessageId: "user-image-test",
       assistantMessageId: "assistant-image-test",
       attachments: [{ path: imagePath }],
-    },
-  })}\n`;
-
-  const final = await new Promise((resolve, reject) => {
-    let pending = "";
-    const timer = setTimeout(() => {
-      child.kill();
-      reject(new Error(`bridge timed out: ${stderr.join("")}`));
-    }, 15000);
-    child.stdout.on("data", (chunk) => {
-      stdout.push(chunk);
-      pending += chunk;
-      const lines = pending.split(/\r?\n/);
-      pending = lines.pop() || "";
-      for (const line of lines.filter(Boolean)) {
-        const response = JSON.parse(line);
-        if (response.id === "image-test" && response.event === "progress") {
-          progress.push(response.result);
-        }
-        if (response.id === "image-test" && response.event !== "progress") {
-          clearTimeout(timer);
-          resolve(response);
-        }
-      }
     });
-    child.once("error", (error) => {
-      clearTimeout(timer);
-      reject(error);
-    });
-    child.once("close", () => {
-      if (pending) stdout.push(pending);
-    });
-    child.stdin.write(requestLine);
-  });
-
-  try {
     assert.equal(final?.ok, true, final?.error?.message || stderr.join(""));
     assert.equal(final.result.message, "已读取图片。");
     const conversationText = await fs.readFile(path.join(userDataRoot, "agent-conversations.json"), "utf8");
-    return { final, imagePath, conversationText, progress };
+    return { final, imagePath, conversationText, progress, saved, preview: preview.result, fileBytes: await fs.readFile(imagePath) };
   } finally {
     child.kill();
-    await new Promise((resolve) => child.once("close", resolve));
+    await closed;
     await fs.rm(root, { recursive: true, force: true });
   }
 }
@@ -158,6 +187,88 @@ test("disabled image transcription sends pasted images directly to the chat mode
     assert.ok(result.progress.some((event) => event.type === "agent-text" && event.text === "已读取图片。"));
     assert.doesNotMatch(result.conversationText, /data:image\/png;base64/);
     assert.match(result.conversationText, /sample\.png/);
+  } finally {
+    await mock.close();
+  }
+});
+
+for (const { name, pasteMimeType, fileName, caption } of [
+  { name: "BMP clipboard images are saved as PNG and sent to chat", pasteMimeType: "image/bmp", fileName: "pasted-image.bmp", caption: false },
+  { name: "mislabeled BMP clipboard streams are encoded as PNG", pasteMimeType: "image/png", fileName: "pasted-image.png", caption: false },
+  { name: "existing BMP workspace files are converted for image captioning", fileName: "old-image.bmp", caption: true },
+]) {
+  test(name, async () => {
+    const mock = await startMockModel();
+    try {
+      const chat = provider("chat", "Chat", mock.baseUrl, "chat-model");
+      const vision = provider("vision", "Vision", mock.baseUrl, "vision-model");
+      const result = await runImageChat({
+        activeProviderId: chat.id,
+        providers: [chat],
+        modelRoles: {
+          chat: { enabled: true, activeProviderId: chat.id, providers: [chat] },
+          image_caption: { enabled: caption, activeProviderId: vision.id, providers: [vision] },
+        },
+      }, { fileName, bytes: twoPixelBmp(), pasteMimeType });
+
+      const imageRequest = mock.requests.find((request) => request.model === (caption ? "vision-model" : "chat-model"));
+      const dataUrl = lastUserMessage(imageRequest).content.find((item) => item.type === "image_url").image_url.url;
+      await assertRedGreenPng(dataUrl);
+      await assertRedGreenPng(result.preview.dataUrl);
+      assert.equal(result.preview.mimeType, "image/png");
+      assert.doesNotMatch(result.conversationText, /data:image\//);
+      if (pasteMimeType) {
+        assert.match(result.saved.name, /\.png$/);
+        assert.equal(result.saved.mimeType, "image/png");
+        assert.equal(result.saved.sizeBytes, result.fileBytes.length);
+        assert.deepEqual(result.fileBytes, Buffer.from(dataUrl.split(",")[1], "base64"));
+      } else {
+        assert.deepEqual(result.fileBytes, twoPixelBmp(), "Existing workspace files are not overwritten");
+      }
+      if (caption) {
+        assert.equal(mock.requests.length, 2);
+        assert.equal(typeof lastUserMessage(mock.requests.find((request) => request.model === "chat-model")).content, "string");
+      }
+    } finally {
+      await mock.close();
+    }
+  });
+}
+
+test("AVIF image bytes are converted to decodable PNG", async () => {
+  const canvas = createCanvas(2, 1);
+  canvas.getContext("2d").fillRect(0, 0, 2, 1);
+  const normalized = await normalizeModelImage(await canvas.encode("avif"));
+  assert.equal(normalized.mimeType, "image/png");
+  const image = await loadImage(normalized.buffer);
+  assert.equal(image.width, 2);
+  assert.equal(image.height, 1);
+});
+
+test("model-supported formats keep their original encoded bytes", async () => {
+  const canvas = createCanvas(1, 1);
+  const fixtures = [
+    [onePixelPng, "image/png"],
+    [await canvas.encode("jpeg"), "image/jpeg"],
+    [await canvas.encode("webp"), "image/webp"],
+    [Buffer.from("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", "base64"), "image/gif"],
+  ];
+  for (const [buffer, mimeType] of fixtures) {
+    const normalized = await normalizeModelImage(buffer);
+    assert.equal(normalized.mimeType, mimeType);
+    assert.deepEqual(normalized.buffer, buffer);
+  }
+});
+
+test("unreadable images fail locally before any model request", async () => {
+  const mock = await startMockModel();
+  try {
+    const chat = provider("chat", "Chat", mock.baseUrl, "chat-model");
+    await assert.rejects(
+      runImageChat({ activeProviderId: chat.id, providers: [chat] }, { fileName: "broken.bmp", bytes: Buffer.from("BM invalid bitmap") }),
+      /无法读取图片/,
+    );
+    assert.equal(mock.requests.length, 0);
   } finally {
     await mock.close();
   }

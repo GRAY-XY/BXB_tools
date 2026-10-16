@@ -14,6 +14,7 @@ import { nativeBrowserCacheCandidates, findChromiumExecutable, prepareNativeChro
 import { compactAgentToolResult } from "../src/agent-tool-results.js";
 import { requestChatCompletionWithRecovery } from "../src/chat-completion-stream.js";
 import { renderCodeAsVscodeImages } from "../src/code-image-preview.js";
+import { normalizeModelImage } from "../src/model-image.js";
 import { DraftStore, migrateDraftFiles } from "../src/draft-store.js";
 import {
   contextBudget,
@@ -2235,6 +2236,7 @@ async function saveWorkspacePastes(items) {
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
     let fileName;
     let buffer;
+    let savedMimeType = "text/plain";
     if (kind === "image") {
       const mimeType = String(entry?.mimeType || "").toLowerCase();
       const extension = PASTED_IMAGE_EXTENSION_BY_MIME.get(mimeType);
@@ -2243,8 +2245,11 @@ async function saveWorkspacePastes(items) {
         ? Buffer.from(entry.base64, "base64")
         : Buffer.from(entry?.bytes || []);
       if (!buffer.length || buffer.byteLength > MAX_PASTED_FILE_BYTES) throw new Error("粘贴图片为空或超过 25 MB。");
+      const normalized = await normalizeModelImage(buffer);
+      buffer = normalized.buffer;
+      savedMimeType = normalized.mimeType;
       const requestedName = sanitizeWorkspaceName(entry?.name || `pasted-image-${timestamp}${extension}`);
-      fileName = `${path.parse(requestedName).name || `pasted-image-${timestamp}`}${extension}`;
+      fileName = `${path.parse(requestedName).name || `pasted-image-${timestamp}`}${normalized.extension}`;
     } else if (kind === "text") {
       const text = String(entry?.text || "");
       if (!text) throw new Error("粘贴文本为空。");
@@ -2264,7 +2269,7 @@ async function saveWorkspacePastes(items) {
       relativePath: path.relative(workspaceDir, targetPath).replaceAll("\\", "/"),
       sizeBytes: buffer.byteLength,
       charCount: kind === "text" ? String(entry.text || "").length : null,
-      mimeType: kind === "image" ? String(entry.mimeType || "") : "text/plain",
+      mimeType: savedMimeType,
     });
   }
   return { saved };
@@ -2286,12 +2291,12 @@ function assertWorkspacePath(filePath) {
 async function getLocalImageDataUrl(filePath) {
   const resolved = path.resolve(String(filePath || ""));
   const extension = path.extname(resolved).toLowerCase();
-  const mimeType = IMAGE_MIME_BY_EXTENSION.get(extension);
-  if (!mimeType) throw new Error("This file type is not supported for image preview.");
+  if (!IMAGE_MIME_BY_EXTENSION.has(extension)) throw new Error("This file type is not supported for image preview.");
   const fileStat = await fs.stat(resolved);
   if (!fileStat.isFile()) throw new Error("Image preview target is not a file.");
   if (fileStat.size > MAX_INLINE_IMAGE_BYTES) throw new Error("Image is too large to preview inline.");
-  const buffer = await fs.readFile(resolved);
+  const normalized = await normalizeModelImage(await fs.readFile(resolved));
+  const { buffer, mimeType } = normalized;
   return { fileName: path.basename(resolved), path: resolved, mimeType, sizeBytes: buffer.byteLength, dataUrl: `data:${mimeType};base64,${buffer.toString("base64")}` };
 }
 

@@ -137,7 +137,7 @@ On launch, navigation stays hidden behind a startup view until the local Node ba
 
 Draft JSON is stored in `%APPDATA%\bxb-homework-electron\.banxuebang\drafts`. The installer migrates drafts written by older builds under the packaged payload before replacing the installation directory.
 
-The Agent composer accepts pasted images, saves them to the managed workspace, and shows removable pending attachments. With image captioning disabled, the active chat provider receives those images directly as multimodal content. With image captioning enabled, its provider transcribes them first and only the transcription is passed to chat. Conversation persistence stores file metadata rather than Base64 image data.
+The Agent composer accepts pasted images, saves them to the managed workspace, and shows removable pending attachments. BMP and AVIF clipboard images are converted to PNG before saving. Existing workspace images in these formats are also converted to PNG in memory before preview or model requests, so previously saved attachments remain usable. Image MIME types are determined from the encoded bytes rather than the file name. With image captioning disabled, the active chat provider receives those images directly as multimodal content. With image captioning enabled, its provider transcribes them first and only the transcription is passed to chat. Conversation persistence stores file metadata rather than Base64 image data.
 
 PDF tools extract the text layer and render bounded page images for visual analysis. PDF page images follow the same model-role selection: the image-caption provider handles them when enabled, otherwise the active chat provider is used as the multimodal visual analyzer.
 
