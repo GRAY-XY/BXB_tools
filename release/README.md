@@ -72,6 +72,13 @@ The current macOS packaging configuration does not provide Developer ID signing 
 
 ## Other helpers
 
+Native SwiftUI releases have a separate pipeline from Electron:
+[`macos/README.md`](macos/README.md) documents architecture-specific DMGs,
+Developer ID signing, notarization, CI credentials and clean-machine acceptance.
+Run `scripts/build-swiftui-release.sh --version X.Y.Z --arch arm64` on a native
+Mac after configuring signing credentials, or use its explicit `--unsigned`
+developer mode. The existing Electron build and release tags stay available.
+
 - `scripts/publish-scan.js` checks for known local-only or sensitive paths. Run it before packaging and publishing.
 - `scripts/build-windows-exe.ps1` is the older standalone Tk/PyInstaller build helper; it is not the current WinUI installer flow.
 - `artifacts/` contains local build output only and is intentionally excluded from Git.

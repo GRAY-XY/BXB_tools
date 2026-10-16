@@ -40,7 +40,7 @@ import {
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..", "..");
-const isPackaged = process.env.BXB_WINUI_PACKAGED === "1";
+const isPackaged = process.env.BXB_WINUI_PACKAGED === "1" || process.env.BXB_MACOS_PACKAGED === "1";
 const electronUserDataRoot = path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "bxb-homework-electron");
 const dataRoot = path.join(electronUserDataRoot, ".banxuebang");
 const workspaceDir = path.join(dataRoot, "workspace");
@@ -276,10 +276,11 @@ function maskKey(value) {
 function browserCacheCandidates() {
   if (process.platform === "darwin") return nativeBrowserCacheCandidates(electronUserDataRoot);
   return [
+    process.env.PLAYWRIGHT_BROWSERS_PATH,
     path.join(electronUserDataRoot, "ms-playwright"),
     path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "ms-playwright"),
     path.join(os.homedir(), "AppData", "Local", "ms-playwright"),
-  ];
+  ].filter(Boolean);
 }
 
 async function hasChromiumCache(root) {
@@ -2927,7 +2928,7 @@ async function appInfo() {
     version: await readPackageVersion(),
     nodeVersion: process.version,
     platform: process.platform,
-    updateChannel: "Windows stable",
+    updateChannel: process.env.BXB_MACOS_NATIVE === "1" ? "macOS stable" : "Windows stable",
     userDataRoot: electronUserDataRoot,
     dataRoot,
     workspaceDir,

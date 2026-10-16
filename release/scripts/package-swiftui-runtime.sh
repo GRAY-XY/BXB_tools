@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# The signed release packager stages locked production dependencies and browsers
+# after Xcode builds the native executable. Normal Xcode builds keep this phase.
+if [[ "${BXB_PACKAGE_RUNTIME_EXTERNALLY:-}" == YES ]]; then
+  exit 0
+fi
+
 repo_root="${1:?Usage: package-swiftui-runtime.sh <repo-root> <app-contents> <target-archs>}"
 app_contents="${2:?Usage: package-swiftui-runtime.sh <repo-root> <app-contents> <target-archs>}"
 target_archs="${3:-$(uname -m)}"

@@ -1,0 +1,52 @@
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
+
+test("signing plan orders nested code before containers and excludes symlink aliases", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "bxb-sign-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const app = path.join(await fs.realpath(root), "BXB.app");
+  const nested = path.join(app, "Contents/Frameworks/Chromium.app");
+  const helper = path.join(nested, "Contents/Frameworks/Helper.app");
+  const executable = path.join(helper, "Contents/MacOS/Helper");
+  await fs.mkdir(path.dirname(executable), { recursive: true });
+  await fs.mkdir(path.join(app, "Contents/MacOS"), { recursive: true });
+  await fs.mkdir(path.join(app, "Contents/Helpers"), { recursive: true });
+  const node = path.join(app, "Contents/Helpers/node");
+  await fs.writeFile(node, Buffer.from([0xcf, 0xfa, 0xed, 0xfe, 0, 0, 0, 0]));
+  await fs.writeFile(executable, Buffer.from([0xcf, 0xfa, 0xed, 0xfe, 0, 0, 0, 0]));
+  await fs.symlink("node", path.join(app, "Contents/MacOS/alias"));
+  await fs.writeFile(path.join(app, "Contents/readme.txt"), "text resource");
+  const result = spawnSync("python3", [fileURLToPath(new URL("../scripts/sign-macos-app.py", import.meta.url)), "--app", app, "--plan"], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  const plan = JSON.parse(result.stdout);
+  const targets = plan.map((item) => item.path);
+  assert.ok(targets.indexOf(executable) < targets.indexOf(helper));
+  assert.ok(targets.indexOf(helper) < targets.indexOf(nested));
+  assert.ok(targets.indexOf(nested) < targets.indexOf(app));
+  assert.ok(targets.indexOf(node) < targets.indexOf(app));
+  assert.equal(targets.at(-1), app);
+  assert.ok(!targets.some((item) => item.endsWith("alias") || item.endsWith("readme.txt")));
+  assert.equal(plan.find((item) => item.path === node).javascriptRuntime, true);
+  assert.equal(plan.find((item) => item.path === helper).javascriptRuntime, true);
+  assert.equal(plan.at(-1).javascriptRuntime, false);
+});
+
+test("bundle main executables are signed through their containers after all nested code", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "bxb-sign-main-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const app = path.join(await fs.realpath(root), "BXB.app");
+  await fs.mkdir(path.join(app, "Contents/MacOS"), { recursive: true });
+  const main = path.join(app, "Contents/MacOS/BXB");
+  await fs.writeFile(main, Buffer.from([0xcf, 0xfa, 0xed, 0xfe, 0, 0, 0, 0]));
+  await fs.writeFile(path.join(app, "Contents/Info.plist"), '<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleExecutable</key><string>BXB</string></dict></plist>');
+  const result = spawnSync("python3", [fileURLToPath(new URL("../scripts/sign-macos-app.py", import.meta.url)), "--app", app, "--plan"], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  const plan = JSON.parse(result.stdout);
+  assert.ok(!plan.some((item) => item.path === main), "signing a bundle's main file implicitly signs its whole container too early");
+  assert.equal(plan.at(-1).path, app);
+});
