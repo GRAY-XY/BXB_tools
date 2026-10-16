@@ -1,0 +1,177 @@
+name: Build macOS SwiftUI Release
+
+on:
+  push:
+    tags: ["bxb-homework-swiftui-v[0-9]*"]
+  pull_request:
+    paths:
+      - "apps/macos/swiftui/**"
+      - "backend/**"
+      - "release/**"
+      - "package*.json"
+      - ".nvmrc"
+      - ".github/workflows/build-macos-swiftui-release.yml"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing stable release tag (bxb-homework-swiftui-vX.Y.Z)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-release-${{ github.event.pull_request.number || inputs.release_tag || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: arm64
+            runner: macos-15
+          - architecture: x86_64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Validate release version
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [[ "$EVENT_NAME" == pull_request ]]; then
+            version="$(node -p 'JSON.parse(require("fs").readFileSync("package.json")).version')"
+          else
+            [[ "$RELEASE_TAG" =~ ^bxb-homework-swiftui-v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Use a stable bxb-homework-swiftui-vX.Y.Z tag" >&2; exit 1; }
+            version="${RELEASE_TAG#bxb-homework-swiftui-v}"
+          fi
+          echo "MACOS_RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Verify backend and packaging helpers
+        run: |
+          npm ci --no-audit --no-fund
+          npm run check
+          npm run check:macos-release
+
+      - name: Import release credentials
+        if: github.event_name != 'pull_request'
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          MACOS_NOTARY_KEY_P8: ${{ secrets.MACOS_NOTARY_KEY_P8 }}
+          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, os, pathlib
+          for name in ("MACOS_CERTIFICATE_P12_BASE64", "MACOS_CERTIFICATE_PASSWORD", "MACOS_SIGNING_IDENTITY", "MACOS_NOTARY_KEY_P8", "MACOS_NOTARY_KEY_ID", "MACOS_NOTARY_ISSUER_ID"):
+              if not os.environ.get(name): raise SystemExit(f"Missing required secret: {name}")
+          root = pathlib.Path(os.environ["RUNNER_TEMP"])
+          for name, data in (("bxb-certificate.p12", base64.b64decode(os.environ["MACOS_CERTIFICATE_P12_BASE64"], validate=True)), ("bxb-notary.p8", os.environ["MACOS_NOTARY_KEY_P8"].encode())):
+              file = root / name
+              file.touch(mode=0o600)
+              file.write_bytes(data)
+          PY
+          security list-keychains -d user > "$RUNNER_TEMP/bxb-original-keychains.txt"
+          keychain="$RUNNER_TEMP/bxb-release.keychain-db"
+          keychain_password="$(openssl rand -hex 32)"
+          echo "::add-mask::$keychain_password"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$RUNNER_TEMP/bxb-certificate.p12" -k "$keychain" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain"
+          python3 - <<'PY'
+          import os, pathlib, shlex, subprocess
+          root = pathlib.Path(os.environ["RUNNER_TEMP"])
+          original = shlex.split((root / "bxb-original-keychains.txt").read_text())
+          subprocess.run(["security", "list-keychains", "-d", "user", "-s", str(root / "bxb-release.keychain-db"), *original], check=True)
+          PY
+          xcrun notarytool store-credentials bxb-release --key "$RUNNER_TEMP/bxb-notary.p8" \
+            --key-id "$MACOS_NOTARY_KEY_ID" --issuer "$MACOS_NOTARY_ISSUER_ID" --keychain "$keychain"
+          echo "MACOS_SIGNING_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+          echo "MACOS_NOTARY_PROFILE=bxb-release" >> "$GITHUB_ENV"
+
+      - name: Build and verify application package
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          TARGET_ARCH: ${{ matrix.architecture }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          MACOS_BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          options=()
+          if [[ "$EVENT_NAME" == pull_request ]]; then options=(--unsigned); fi
+          bash release/scripts/build-swiftui-release.sh --version "$MACOS_RELEASE_VERSION" \
+            --arch "$TARGET_ARCH" --output "$RUNNER_TEMP/macos-artifacts" "${options[@]}"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: macos-${{ matrix.architecture }}
+          path: ${{ runner.temp }}/macos-artifacts/*
+          if-no-files-found: error
+
+      - name: Remove release credentials
+        if: always() && github.event_name != 'pull_request'
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, shlex, subprocess
+          root = pathlib.Path(os.environ["RUNNER_TEMP"])
+          original = root / "bxb-original-keychains.txt"
+          if original.exists():
+              subprocess.run(["security", "list-keychains", "-d", "user", "-s", *shlex.split(original.read_text())], check=True)
+          keychain = root / "bxb-release.keychain-db"
+          if keychain.exists(): subprocess.run(["security", "delete-keychain", str(keychain)], check=True)
+          for name in ("bxb-certificate.p12", "bxb-notary.p8", "bxb-original-keychains.txt"):
+              (root / name).unlink(missing_ok=True)
+          PY
+
+  release:
+    needs: package
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
+          persist-credentials: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          pattern: macos-*
+          merge-multiple: true
+          path: macos-artifacts
+      - name: Verify both artifacts and publish a reviewable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^bxb-homework-swiftui-v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          for arch in arm64 x86_64; do
+            version="${RELEASE_TAG#bxb-homework-swiftui-v}"
+            artifact="BXBHomework-v$version-macos-$arch.dmg"
+            test -f "macos-artifacts/$artifact"
+            (cd macos-artifacts && sha256sum -c "$artifact.sha256")
+          done
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "BXB Homework SwiftUI v${RELEASE_TAG#bxb-homework-swiftui-v}" \
+              --notes-file release/macos/installation-notes.md
+          fi
+          gh release upload "$RELEASE_TAG" macos-artifacts/*.dmg macos-artifacts/*.sha256

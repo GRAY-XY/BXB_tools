@@ -1,5 +1,9 @@
 # BXB Homework for macOS (SwiftUI)
 
+For self-contained, signed and notarized native DMG releases, see
+[`release/macos/README.md`](../../../release/macos/README.md). This release path
+includes a pinned Node runtime and Chromium for Apple Silicon or Intel Macs.
+
 ## In-app updates
 
 Settings → **应用更新** checks public stable SwiftUI releases, shows the native
