@@ -93,6 +93,15 @@ jobs:
           "$VALIDATION_ROOT/bridge-stream" 2>&1 |
             tee "$VALIDATION_ROOT/logs/bridge-stream.log"
 
+      - name: Verify native update confirmation and download state
+        run: |
+          xcrun swiftc -swift-version 6 -target arm64-apple-macos15.0 -parse-as-library \
+            apps/macos/swiftui/BXBHomework/Shared/JSONValue.swift \
+            apps/macos/swiftui/BXBHomework/Features/MacOSUpdateModel.swift \
+            apps/macos/swiftui/Runtime/UpdateFlowSmoke.swift \
+            -o "$VALIDATION_ROOT/update-flow"
+          "$VALIDATION_ROOT/update-flow" 2>&1 | tee "$VALIDATION_ROOT/logs/update-flow.log"
+
       - name: Build the complete native app with Xcode
         run: |
           export BXB_NODE_EXECUTABLE="$(command -v node)"

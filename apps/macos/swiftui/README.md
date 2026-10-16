@@ -4,6 +4,34 @@ For self-contained, signed and notarized native DMG releases, see
 [`release/macos/README.md`](../../../release/macos/README.md). This release path
 includes a pinned Node runtime and Chromium for Apple Silicon or Intel Macs.
 
+## In-app updates
+
+Settings → **应用更新** checks public stable SwiftUI releases, shows the native
+installed/available versions and downloads the matching arm64 or Intel DMG.
+Only `bxb-homework-swiftui-vX.Y.Z` releases with a matching
+`BXBHomework-vX.Y.Z-macos-ARCH.dmg` and `.dmg.sha256` sidecar are eligible.
+Drafts, prereleases, unsigned CI packages and Electron/Windows releases are
+excluded. The native signed release pipeline is tracked separately in #34.
+
+Checking does not download or interrupt the app. Download progress, cancellation
+and retry are available in Settings. A verified download enables **打开安装包并退出…**:
+confirm the dialog, save unfinished input, and the app rechecks SHA-256 before
+opening the DMG. It exits only if opening succeeds. Drag the app into
+Applications to replace it, then launch the new version manually. Canceling
+confirmation does not install, exit or relaunch. Installation is never automatic.
+
+Update commands are native UI IPC only and are not exposed as assistant tools.
+The flow can be tested without downloading or opening a real installer:
+
+```sh
+node --test backend/test/macos-updater.test.js backend/test/macos-update-bridge.test.js
+xcrun swiftc -swift-version 6 -target arm64-apple-macos15.0 -parse-as-library \
+  apps/macos/swiftui/BXBHomework/Shared/JSONValue.swift \
+  apps/macos/swiftui/BXBHomework/Features/MacOSUpdateModel.swift \
+  apps/macos/swiftui/Runtime/UpdateFlowSmoke.swift -o /tmp/bxb-update-flow
+/tmp/bxb-update-flow
+```
+
 This directory contains the native macOS client shell. The existing Electron
 client remains available one directory above while features migrate in stages.
 

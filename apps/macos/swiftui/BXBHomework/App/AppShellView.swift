@@ -112,4 +112,7 @@ struct AppShellView: View {
     AppShellView()
         .environment(backend)
         .environment(AssistantSetupModel(service: backend.modelConfiguration))
+        .environment(MacOSUpdateModel(invoke: { method, params in
+            try await backend.invoke(method, params: params)
+        }, openInstaller: { _ in false }, quit: {}))
 }
