@@ -493,12 +493,22 @@
                                 AcceptsReturn="True"
                                 IsReadOnly="True"
                                 TextWrapping="Wrap" />
-                            <TextBox
-                                x:Name="EditorTextBox"
-                                Grid.Row="1"
-                                AcceptsReturn="True"
-                                TextWrapping="Wrap"
-                                Visibility="Collapsed" />
+                            <Grid x:Name="DraftEditorPanel" Grid.Row="1" RowSpacing="10" Visibility="Collapsed">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="*" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <TextBox x:Name="EditorTextBox" AcceptsReturn="True" TextWrapping="Wrap" />
+                                <Expander x:Name="DraftAttachmentSection" Grid.Row="1" Header="草稿附件（源代码、截图及文件）" IsExpanded="True" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+                                    <StackPanel Spacing="8">
+                                        <TextBlock Text="勾选本次作业提交的附件。绑定后保存独立副本；修改正文或附件后需要重新审核。" TextWrapping="Wrap" />
+                                        <Button x:Name="DraftAddAttachmentButton" Content="从工作区添加附件" Click="OnDraftAddAttachmentClick" />
+                                        <ScrollViewer MaxHeight="220" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                            <StackPanel x:Name="DraftAttachmentRowsPanel" Spacing="8" />
+                                        </ScrollViewer>
+                                    </StackPanel>
+                                </Expander>
+                            </Grid>
                             <ScrollViewer
                                 x:Name="DraftDeliveryScrollViewer"
                                 Grid.Row="1"
@@ -545,6 +555,7 @@
                                         MinHeight="220"
                                         TextWrapping="Wrap" />
                                     <StackPanel x:Name="DraftDeliveryChunksPanel" Spacing="8" />
+                                    <StackPanel x:Name="DraftDeliveryAttachmentsPanel" Spacing="8" />
                                 </StackPanel>
                             </ScrollViewer>
                             <ScrollViewer

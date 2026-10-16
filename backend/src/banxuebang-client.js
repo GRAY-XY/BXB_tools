@@ -19,6 +19,7 @@ import path from "node:path";
 import { chromium } from "playwright";
 import { nativeBrowserCacheCandidates, prepareNativeChromium } from "./playwright-runtime.js";
 import { DraftStore } from "./draft-store.js";
+import { DraftAttachmentStore, MAX_DRAFT_ATTACHMENTS } from "./draft-attachments.js";
 
 const BASE_URL = "https://student.banxuebang.com";
 const BASIC_AUTH = "Basic YnhiLXdlYi1zOmJ4Yi13ZWItcw==";
@@ -39,6 +40,12 @@ const TEXT_FILE_EXTENSIONS = new Set([
   ".c",
   ".cc",
   ".cpp",
+  ".cs",
+  ".h",
+  ".hpp",
+  ".jsx",
+  ".kt",
+  ".swift",
   ".css",
   ".csv",
   ".go",
@@ -358,6 +365,7 @@ function draftSubmissionConfirmationToken(preview) {
         submissionId: preview.submissionId,
         isCorrectWork: preview.isCorrectWork,
         retainedFileIds: toArray(preview.retainedAttachments).map((attachment) => attachment.fileId),
+        selectedAttachments: toArray(preview.selectedAttachments).map(({ id, fileName, sizeBytes, sha256 }) => ({ id, fileName, sizeBytes, sha256 })),
       }),
     )
     .digest("hex");
@@ -2825,9 +2833,9 @@ export class BanxuebangClient {
     });
   }
 
-  async readLocalAttachment(filePath, maxChars = 4000) {
+  async readLocalAttachment(filePath, maxChars = 4000, { buffer: verifiedBuffer } = {}) {
     const resolvedPath = path.resolve(filePath);
-    const buffer = await readFile(resolvedPath);
+    const buffer = verifiedBuffer ?? await readFile(resolvedPath);
     const extension = path.extname(resolvedPath).toLowerCase();
     let text = "";
     let readable = true;
@@ -2964,6 +2972,70 @@ export class BanxuebangClient {
     };
   }
 
+  async snapshotDraftAttachments(draftId, entries, existing = []) {
+    if (!Array.isArray(entries) || entries.length > MAX_DRAFT_ATTACHMENTS) throw new Error(`每份草稿最多绑定 ${MAX_DRAFT_ATTACHMENTS} 个附件。`);
+    const store = new DraftAttachmentStore(this.draftStore.draftDir);
+    const attachments = [];
+    const seen = new Set();
+    try {
+      for (const entry of entries) {
+        if (entry?.attachment_id && !entry.file) {
+          const attachment = existing.find(item => item.id === entry.attachment_id);
+          if (!attachment || seen.has(attachment.id)) throw new Error("草稿附件不存在或重复。");
+          await store.read(draftId, attachment);
+          seen.add(attachment.id);
+          attachments.push(attachment);
+        } else if (entry?.file && !entry.attachment_id) {
+          const file = await this.resolveWorkspaceEntry(entry.file);
+          if (!file.fileStat.isFile()) throw new Error("只能绑定工作区内的普通文件。");
+          if (seen.has(file.path)) throw new Error("不能重复绑定同一个工作区文件。");
+          seen.add(file.path);
+          attachments.push(await store.snapshot(draftId, file.path, {
+            kind: entry.kind, relativePath: path.relative(await this.workspaceRoot(), file.path).replaceAll("\\", "/"),
+          }));
+        } else throw new Error("每个附件必须指定工作区 file 或已有 attachment_id。");
+      }
+      return attachments;
+    } catch (error) {
+      await Promise.allSettled(attachments.filter(item => !existing.some(old => old.id === item.id))
+        .map(item => store.remove(draftId, item.id)));
+      throw error;
+    }
+  }
+
+  async selectedDraftAttachments(draft, attachmentIds = [], { includeBuffer = false } = {}) {
+    if (!Array.isArray(attachmentIds)) throw new Error("所选附件列表无效。");
+    const ids = new Set(attachmentIds.map(String));
+    const attachments = toArray(draft.attachments).filter(item => ids.has(item.id));
+    if (attachments.length !== ids.size) throw new Error("所选附件不属于当前草稿，请重新审核。");
+    const store = new DraftAttachmentStore(this.draftStore.draftDir);
+    const files = [];
+    for (const item of attachments) {
+      const file = await store.read(draft.draftId, item);
+      if (!includeBuffer) delete file.buffer;
+      files.push(file);
+    }
+    return files;
+  }
+
+  async previewDraftAttachment(draftId, attachmentId) {
+    const draft = await this.draftStore.get(draftId);
+    if (!draft) throw draftNotFoundError(draftId);
+    const [attachment] = await this.selectedDraftAttachments(draft, [attachmentId], { includeBuffer: true });
+    const { buffer, ...metadata } = attachment;
+    if ([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".avif"].includes(path.extname(attachment.fileName).toLowerCase())) {
+      const { normalizeModelImage } = await import("./model-image.js");
+      const normalized = await normalizeModelImage(buffer);
+      return { ...metadata, previewType: "image", dataUrl: `data:${normalized.mimeType};base64,${normalized.buffer.toString("base64")}` };
+    }
+    if (attachment.kind === "source") {
+      const text = buffer.toString("utf8");
+      return { ...metadata, previewType: "text", text: text.slice(0, 200000), truncated: text.length > 200000 };
+    }
+    const content = await this.readLocalAttachment(attachment.path, 200000, { buffer });
+    return { ...metadata, previewType: content.readable ? "text" : "file", text: content.text, truncated: content.truncated };
+  }
+
   async draftTaskSubmission({
     taskId,
     subjectName = null,
@@ -2977,9 +3049,10 @@ export class BanxuebangClient {
     preferredTarget = "task",
     intendedTargets = ["task"],
     teacherMessageHint = "",
+    attachments = [],
   } = {}) {
     const normalizedDraftText = String(draftText || "").trim();
-    if (!normalizedDraftText) {
+    if (!normalizedDraftText && !attachments.length) {
       throw new Error("draft_text is required and cannot be empty.");
     }
 
@@ -2987,6 +3060,9 @@ export class BanxuebangClient {
     const sessionSummary = this.summarizeSession(session);
     const now = new Date().toISOString();
     const draftId = `draft_${Date.now()}_${randomUUID().slice(0, 8)}`;
+    let savedAttachments;
+    try { savedAttachments = await this.snapshotDraftAttachments(draftId, attachments); }
+    catch (error) { await new DraftAttachmentStore(this.draftStore.draftDir).clear(draftId); throw error; }
     const deliveryTarget = normalizeDeliveryTarget(preferredTarget, "task");
     const draft = {
       draftId,
@@ -3000,6 +3076,7 @@ export class BanxuebangClient {
       subjectName: subjectName || sessionSummary.currentSubject?.name || null,
       taskTitle: taskTitle || null,
       draftText: normalizedDraftText,
+      attachments: savedAttachments,
       summary: String(summary || "").trim(),
       evidence: Array.isArray(evidence) ? evidence : [],
       warnings: Array.isArray(warnings) ? warnings : [],
@@ -3013,7 +3090,11 @@ export class BanxuebangClient {
       sourceSession: sessionSummary,
     };
 
-    await this.draftStore.save(draft);
+    try { await this.draftStore.save(draft); }
+    catch (error) {
+      await new DraftAttachmentStore(this.draftStore.draftDir).clear(draftId).catch(() => {});
+      throw error;
+    }
 
     return {
       saved: true,
@@ -3023,6 +3104,7 @@ export class BanxuebangClient {
       subjectName: draft.subjectName,
       taskTitle: draft.taskTitle,
       reviewPath: path.join(this.draftStore.draftDir, `${draftId}.json`),
+      attachmentCount: savedAttachments.length,
       draft,
     };
   }
@@ -3074,21 +3156,25 @@ export class BanxuebangClient {
     };
   }
 
-  async updateSubmissionDraft(draftId, { draftText, summary } = {}) {
-    const normalizedDraftText = String(draftText || "").trim();
-    if (!normalizedDraftText) {
-      throw new Error("draft_text is required and cannot be empty.");
-    }
-
+  async updateSubmissionDraft(draftId, { draftText, summary, attachments, appendAttachments } = {}) {
+    let removedAttachments = [];
     const updated = await this.draftStore.update(draftId, async (draft) => {
       if (isFinalDraftStatus(draft.status)) {
         throw new Error("已交付的草稿不能再修改。请新建草稿后重新审核。");
       }
       assertDraftDeliverySettled(draft);
 
+      const normalizedDraftText = String(draftText === undefined ? draft.draftText || "" : draftText).trim();
+      const entries = appendAttachments === undefined ? attachments
+        : [...toArray(draft.attachments).map(item => ({ attachment_id: item.id })), ...appendAttachments];
+      const savedAttachments = entries === undefined ? toArray(draft.attachments)
+        : await this.snapshotDraftAttachments(draftId, entries, toArray(draft.attachments));
+      if (!normalizedDraftText && !savedAttachments.length) throw new Error("草稿正文和附件不能都为空。");
+      removedAttachments = toArray(draft.attachments).filter(item => !savedAttachments.some(saved => saved.id === item.id));
       return {
         ...draft,
         draftText: normalizedDraftText,
+        attachments: savedAttachments,
         summary: summary === undefined ? draft.summary : String(summary || "").trim(),
         status: "pending_review",
         reviewedAt: null,
@@ -3102,10 +3188,14 @@ export class BanxuebangClient {
       throw draftNotFoundError(draftId);
     }
 
+    const attachmentStore = new DraftAttachmentStore(this.draftStore.draftDir);
+    await Promise.allSettled(removedAttachments.map(item => attachmentStore.remove(draftId, item.id)));
+
     return {
       draftId: updated.draftId,
       status: updated.status,
       updatedAt: updated.updatedAt,
+      attachmentCount: toArray(updated.attachments).length,
       draft: updated,
     };
   }
@@ -3118,6 +3208,7 @@ export class BanxuebangClient {
       assertDraftDeliverySettled(draft);
 
       const reviewedAt = new Date().toISOString();
+      await this.selectedDraftAttachments(draft, toArray(draft.attachments).map(item => item.id));
       return {
         ...draft,
         status: "approved",
@@ -3181,7 +3272,7 @@ export class BanxuebangClient {
 
     assertDraftDeliverySettled(draft);
 
-    await this.draftStore.clear(draftId);
+    await this.draftStore.clear(draftId, { beforeDelete: assertDraftDeliverySettled });
 
     return {
       deleted: true,
@@ -3191,7 +3282,7 @@ export class BanxuebangClient {
     };
   }
 
-  async prepareDraftSubmission(draftId) {
+  async prepareDraftSubmission(draftId, { attachmentIds = [] } = {}) {
     const draft = await this.draftStore.get(draftId);
     if (!draft) {
       throw draftNotFoundError(draftId);
@@ -3202,9 +3293,8 @@ export class BanxuebangClient {
     if (!draft.taskId) {
       throw new Error("草稿没有对应的 task ID，无法提交。");
     }
-    if (!String(draft.draftText || "").trim()) {
-      throw new Error("草稿正文为空，无法提交。");
-    }
+    const selectedFiles = await this.selectedDraftAttachments(draft, attachmentIds);
+    const selectedAttachments = selectedFiles.map(({ buffer, path: filePath, ...metadata }) => metadata);
 
     const detail = await this.getTaskDetail(draft.taskId, { includeOtherSubmissions: false });
     const task = ensureObject(detail.task);
@@ -3246,12 +3336,13 @@ export class BanxuebangClient {
       modeLabel = "补交";
     }
 
-    const canSubmit = (!hasExistingSubmission || Boolean(submissionId)) && !unresolvedAttempt && !unresolvedTeacherMessage;
+    const emptyContent = !String(draft.draftText || "").trim() && !selectedAttachments.length && !toArray(detail.mySubmissionAttachments).length;
+    const canSubmit = !emptyContent && (!hasExistingSubmission || Boolean(submissionId)) && !unresolvedAttempt && !unresolvedTeacherMessage;
     const reason = unresolvedAttempt
       ? "上次提交的结果尚未确认。请先在伴学邦核对 task 状态；系统已阻止重复提交。"
       : unresolvedTeacherMessage
         ? "同一 task 的老师私信仍有未核对或部分送达记录，请先处理该记录再提交作业。"
-        : canSubmit
+        : emptyContent ? "正文和所选附件不能都为空，请选择附件后重新预览。" : canSubmit
           ? null
           : "检测到该 task 已有提交记录，但无法确定原提交记录 ID。为避免产生重复提交，当前不能自动提交。";
     const retainedAttachments = toArray(detail.mySubmissionAttachments).map((attachment) => ({
@@ -3274,6 +3365,8 @@ export class BanxuebangClient {
       isCorrectWork,
       hasExistingSubmission,
       retainedAttachments,
+      selectedAttachments,
+      attachmentCount: toArray(draft.attachments).length,
       canSubmit,
       reason,
       note:
@@ -3287,7 +3380,7 @@ export class BanxuebangClient {
     };
   }
 
-  async submitApprovedDraft(draftId, { confirmationToken } = {}) {
+  async submitApprovedDraft(draftId, { confirmationToken, attachmentIds = [] } = {}) {
     if (!confirmationToken) {
       throw new Error("缺少提交确认令牌，请返回草稿并重新核对提交内容。");
     }
@@ -3322,7 +3415,7 @@ export class BanxuebangClient {
         throw error;
       }
 
-      const preview = await this.prepareDraftSubmission(draftId);
+      const preview = await this.prepareDraftSubmission(draftId, { attachmentIds });
       if (!preview.canSubmit) {
         throw new Error(preview.reason || "当前草稿无法提交。");
       }
@@ -3332,10 +3425,18 @@ export class BanxuebangClient {
 
       const startedAt = new Date().toISOString();
       const attemptId = randomUUID();
+      let selectedFiles;
       const startedDraft = await this.draftStore.update(draftId, async (draft) => {
         if (draft.status !== "approved") {
           throw new Error("只有已通过审核的草稿可以提交。");
         }
+        const currentFiles = await this.selectedDraftAttachments(draft, attachmentIds);
+        const currentPreview = { ...preview, draftText: String(draft.draftText || ""),
+          selectedAttachments: currentFiles };
+        if (draftSubmissionConfirmationToken(currentPreview) !== draftSubmissionConfirmationToken(preview)) {
+          throw new Error("草稿正文或所选附件已发生变化，请重新核对提交内容。");
+        }
+        selectedFiles = currentFiles;
         if (["in_flight", "unknown"].includes(draft.deliveryAttempt?.status)) {
           const error = new Error("上次提交的结果尚未确认，请先核对伴学邦 task 状态。");
           error.code = "delivery_unknown";
@@ -3347,6 +3448,7 @@ export class BanxuebangClient {
             id: attemptId,
             target: "task",
             status: "in_flight",
+            attachments: selectedFiles.map(({ id, fileName, sha256, sizeBytes }) => ({ id, fileName, sha256, sizeBytes })),
             taskId: preview.taskId,
             mode: preview.mode,
             startedAt,
@@ -3363,6 +3465,8 @@ export class BanxuebangClient {
         submission = await this.submitTaskResult({
           taskId: preview.taskId,
           remark: preview.draftText,
+          filePaths: selectedFiles.map(file => file.path),
+          fileChecksums: Object.fromEntries(selectedFiles.map(file => [file.path, file.sha256])),
           isCorrectWork: preview.isCorrectWork,
           submissionId: preview.submissionId,
           classId: preview.classId,
@@ -3419,6 +3523,7 @@ export class BanxuebangClient {
           submittedAt,
           updatedAt: submittedAt,
           submission: {
+            attachments: preview.selectedAttachments,
             mode: preview.mode,
             modeLabel: preview.modeLabel,
             taskId: preview.taskId,
@@ -3430,6 +3535,7 @@ export class BanxuebangClient {
             id: attemptId,
             target: "task",
             status: "success",
+            attachments: preview.selectedAttachments,
             taskId: preview.taskId,
             mode: preview.mode,
             startedAt,
@@ -3441,6 +3547,7 @@ export class BanxuebangClient {
             {
               type: "task",
               status: "success",
+              attachments: preview.selectedAttachments,
               attemptId,
               taskId: preview.taskId,
               mode: preview.mode,
@@ -3854,7 +3961,7 @@ export class BanxuebangClient {
     }
   }
 
-  async uploadSubmissionFile(localPath) {
+  async uploadSubmissionFile(localPath, { expectedSha256 } = {}) {
     const session = await this.requireSession();
     await this.refreshContext(session);
 
@@ -3865,6 +3972,9 @@ export class BanxuebangClient {
 
     const resolvedPath = path.resolve(localPath);
     const fileBuffer = await readFile(resolvedPath);
+    if (expectedSha256 && createHash("sha256").update(fileBuffer).digest("hex") !== expectedSha256) {
+      throw new Error(`附件“${path.basename(resolvedPath)}”在确认后发生变化，请重新审核。`);
+    }
     const uploadUrl = new URL(
       `/gateway/filesystem/file/simpleupload/${userInfo.id}`,
       session.baseUrl || BASE_URL,
@@ -3924,6 +4034,7 @@ export class BanxuebangClient {
     remark = "",
     fileIds = [],
     filePaths = [],
+    fileChecksums = {},
     isCorrectWork = 0,
     submissionId = null,
     classId = null,
@@ -3939,7 +4050,7 @@ export class BanxuebangClient {
 
     const uploadedFiles = [];
     for (const filePath of filePaths) {
-      const upload = await this.uploadSubmissionFile(filePath);
+      const upload = await this.uploadSubmissionFile(filePath, { expectedSha256: fileChecksums[filePath] });
       uploadedFiles.push(upload.submissionFile);
     }
 

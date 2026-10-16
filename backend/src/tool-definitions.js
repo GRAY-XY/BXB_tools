@@ -6,6 +6,11 @@ import * as z from "zod/v4";
 
 const MAX_SNIPPET_TIMEOUT_MS = 15000;
 const MAX_SNIPPET_OUTPUT_CHARS = 12000;
+const draftAttachmentInput = z.object({
+  file: z.string().optional().describe("Workspace file path for a new attachment."),
+  attachment_id: z.string().optional().describe("Existing attachment id to retain when replacing the list."),
+  kind: z.enum(["source", "image", "file"]).optional(),
+});
 
 function clampPositiveInt(value, fallback, max) {
   const parsed = Number.parseInt(value, 10);
@@ -624,6 +629,7 @@ export function createToolDefinitions(client) {
         task_id: z.union([z.string(), z.number()]).describe("Activity/task id."),
         subject_name: z.string().optional().describe("Course name."),
         task_title: z.string().optional().describe("Task title."),
+        attachments: z.array(draftAttachmentInput).optional().describe("Local workspace files to copy into this draft for human review. No upload occurs."),
         draft_text: z
           .string()
           .describe("Concise, natural draft body that fully answers the task in its original order and format. Match length to the requested action, match classifications to definitions in the task, and retain full numerical precision until final rounding. Plain text only: no Markdown, HTML, LaTeX delimiters, assistant commentary, template-style opening/closing, or typeset math symbols. Use keyboard notation such as x^2, sqrt(x), *, /, <=, theta, and 21.8 degrees."),
@@ -670,6 +676,7 @@ export function createToolDefinitions(client) {
         preferred_target: preferredTarget,
         intended_targets: intendedTargets,
         teacher_message_hint: teacherMessageHint,
+        attachments,
       }) =>
         client.draftTaskSubmission({
           taskId,
@@ -684,6 +691,7 @@ export function createToolDefinitions(client) {
           preferredTarget,
           intendedTargets,
           teacherMessageHint,
+          attachments: attachments ?? [],
         }),
     },
     {
@@ -712,11 +720,19 @@ export function createToolDefinitions(client) {
         draft_id: z.string().describe("Draft id returned by draft_task_submission."),
         draft_text: z
           .string()
+          .optional()
           .describe("Complete replacement draft body in the task's original order and format. Match length to the requested action, match classifications to definitions in the task, and retain full numerical precision until final rounding. Plain text only: no Markdown, HTML, LaTeX delimiters, assistant commentary, template-style opening/closing, or typeset math symbols. Use keyboard notation such as x^2, sqrt(x), *, /, <=, theta, and 21.8 degrees."),
         summary: z.string().optional().describe("Optional updated draft summary."),
+        attachments: z.array(draftAttachmentInput).optional().describe("Replacement attachment list. Omit to retain all; use attachment_id for existing copies or file for new workspace files."),
       },
-      execute: async ({ draft_id: draftId, draft_text: draftText, summary }) =>
-        client.updateSubmissionDraft(draftId, { draftText, summary }),
+      execute: async ({ draft_id: draftId, draft_text: draftText, summary, attachments }) =>
+        client.updateSubmissionDraft(draftId, { draftText, summary, attachments }),
+    },
+    {
+      name: "preview_submission_draft_attachment",
+      description: "Read a verified local draft attachment for the review UI. Does not upload or submit.",
+      inputSchema: { draft_id: z.string(), attachment_id: z.string() },
+      execute: async ({ draft_id, attachment_id }) => client.previewDraftAttachment(draft_id, attachment_id),
     },
     {
       name: "approve_submission_draft",
@@ -740,7 +756,7 @@ export function createToolDefinitions(client) {
     },
     {
       name: "delete_submission_draft",
-      description: "Delete a locally saved submission draft JSON file. This does not affect Banxuebang.",
+      description: "Delete a locally saved submission draft and its attachment copies. This does not affect Banxuebang.",
       inputSchema: {
         draft_id: z.string().describe("Draft id returned by draft_task_submission."),
       },
@@ -752,8 +768,9 @@ export function createToolDefinitions(client) {
         "Validate an approved draft and return the exact Banxuebang destination, mode, text, and retained files for a human confirmation screen. This does not submit anything.",
       inputSchema: {
         draft_id: z.string().describe("Approved draft id."),
+        attachment_ids: z.array(z.string()).optional().describe("Explicit attachment selection; omitted means text only."),
       },
-      execute: async ({ draft_id: draftId }) => client.prepareDraftSubmission(draftId),
+      execute: async ({ draft_id: draftId, attachment_ids: attachmentIds }) => client.prepareDraftSubmission(draftId, { attachmentIds }),
     },
     {
       name: "submit_approved_draft",
@@ -761,12 +778,13 @@ export function createToolDefinitions(client) {
         "Submit an approved draft to its corresponding Banxuebang task. Call only after the user explicitly confirms the prepare_draft_submission preview.",
       inputSchema: {
         draft_id: z.string().describe("Approved draft id that the user explicitly confirmed."),
+        attachment_ids: z.array(z.string()).optional().describe("The exact attachment ids shown in the confirmed preview."),
         confirmation_token: z
           .string()
           .describe("Confirmation token returned by prepare_draft_submission for the reviewed preview."),
       },
-      execute: async ({ draft_id: draftId, confirmation_token: confirmationToken }) =>
-        client.submitApprovedDraft(draftId, { confirmationToken }),
+      execute: async ({ draft_id: draftId, confirmation_token: confirmationToken, attachment_ids: attachmentIds }) =>
+        client.submitApprovedDraft(draftId, { confirmationToken, attachmentIds }),
     },
     {
       name: "prepare_draft_private_message",
