@@ -87,6 +87,14 @@ jobs:
           done
           xcrun swiftc -swift-version 6 -target arm64-apple-macos15.0 -parse-as-library \
             apps/macos/swiftui/BXBHomework/Shared/JSONValue.swift \
+            apps/macos/swiftui/BXBHomework/Features/AssistantModels.swift \
+            apps/macos/swiftui/BXBHomework/Features/AssistantCodePreviewView.swift \
+            apps/macos/swiftui/Runtime/AssistantCodePreviewSmoke.swift \
+            -o "$VALIDATION_ROOT/assistant-code-preview"
+          "$VALIDATION_ROOT/assistant-code-preview" 2>&1 |
+            tee "$VALIDATION_ROOT/logs/assistant-code-preview.log"
+          xcrun swiftc -swift-version 6 -target arm64-apple-macos15.0 -parse-as-library \
+            apps/macos/swiftui/BXBHomework/Shared/JSONValue.swift \
             apps/macos/swiftui/BXBHomework/Shared/NodeBackendClient.swift \
             apps/macos/swiftui/Runtime/BridgeStreamSmoke.swift \
             -o "$VALIDATION_ROOT/bridge-stream"

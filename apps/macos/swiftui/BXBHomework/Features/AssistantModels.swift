@@ -6,6 +6,7 @@ struct AssistantStep: Identifiable, Hashable, Sendable {
     let title: String
     let detail: String
     let at: String
+    let previewImages: [AssistantPreviewImage]
 
     static func parse(_ value: JSONValue, index: Int) -> AssistantStep {
         let kind = value.firstString("kind", "type")
@@ -16,8 +17,53 @@ struct AssistantStep: Identifiable, Hashable, Sendable {
             kind: kind,
             title: title,
             detail: value.firstString("detail", "message"),
-            at: at
+            at: at,
+            previewImages: value["previewImages"].arrayValue.enumerated().compactMap {
+                AssistantPreviewImage.parse($0.element, index: $0.offset)
+            }
         )
+    }
+}
+
+struct AssistantPreviewImage: Identifiable, Hashable, Sendable {
+    let id: String
+    let relativePath: String
+    let fileName: String
+    let width: Int?
+    let height: Int?
+    let firstLine: Int?
+    let lastLine: Int?
+
+    var caption: String {
+        guard let firstLine, let lastLine, firstLine > 0, lastLine >= firstLine else { return fileName }
+        return "\(fileName) · 第 \(firstLine)–\(lastLine) 行"
+    }
+
+    static func parse(_ value: JSONValue, index: Int) -> AssistantPreviewImage? {
+        guard case .object = value else { return nil }
+        let relativePath = value.firstString("relativePath")
+        return AssistantPreviewImage(
+            id: "\(index)-\(relativePath)",
+            relativePath: relativePath,
+            fileName: value.firstString("fileName").fallback(
+                relativePath.isEmpty ? "代码预览.png" : URL(filePath: relativePath).lastPathComponent
+            ),
+            width: value["width"].intValue,
+            height: value["height"].intValue,
+            firstLine: value["firstLine"].intValue,
+            lastLine: value["lastLine"].intValue
+        )
+    }
+
+    func fileURL(in workspaceDirectory: String?) -> URL? {
+        guard let workspaceDirectory, !workspaceDirectory.isEmpty,
+              !relativePath.isEmpty, !(relativePath as NSString).isAbsolutePath else { return nil }
+        let root = URL(filePath: workspaceDirectory, directoryHint: .isDirectory)
+            .standardizedFileURL.resolvingSymlinksInPath()
+        let file = root.appending(path: relativePath)
+            .standardizedFileURL.resolvingSymlinksInPath()
+        let prefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
+        return file.path.hasPrefix(prefix) ? file : nil
     }
 }
 

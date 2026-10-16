@@ -41,6 +41,7 @@
 		B10000000000000000000026 /* AssistantSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80000000000000000000026 /* AssistantSetupView.swift */; };
 		B10000000000000000000027 /* MacOSUpdateModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80000000000000000000027 /* MacOSUpdateModel.swift */; };
 		B10000000000000000000028 /* MacOSUpdateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80000000000000000000028 /* MacOSUpdateView.swift */; };
+		B10000000000000000000029 /* AssistantCodePreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80000000000000000000029 /* AssistantCodePreviewView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -85,6 +86,7 @@
 		A80000000000000000000026 /* AssistantSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantSetupView.swift; sourceTree = "<group>"; };
 		A80000000000000000000027 /* MacOSUpdateModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacOSUpdateModel.swift; sourceTree = "<group>"; };
 		A80000000000000000000028 /* MacOSUpdateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacOSUpdateView.swift; sourceTree = "<group>"; };
+		A80000000000000000000029 /* AssistantCodePreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantCodePreviewView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -155,6 +157,7 @@
 				A8000000000000000000001A /* AssistantModels.swift */,
 				A8000000000000000000001B /* AssistantViewModel.swift */,
 				A8000000000000000000001C /* AssistantView.swift */,
+				A80000000000000000000029 /* AssistantCodePreviewView.swift */,
 				A8000000000000000000001E /* MessagesModels.swift */,
 				A8000000000000000000001F /* MessagesViewModel.swift */,
 				A80000000000000000000020 /* MessagesView.swift */,
@@ -314,6 +317,7 @@
 				B10000000000000000000015 /* AssistantModels.swift in Sources */,
 				B10000000000000000000016 /* AssistantViewModel.swift in Sources */,
 				B10000000000000000000017 /* AssistantView.swift in Sources */,
+				B10000000000000000000029 /* AssistantCodePreviewView.swift in Sources */,
 				B10000000000000000000018 /* MessagesModels.swift in Sources */,
 				B10000000000000000000019 /* MessagesViewModel.swift in Sources */,
 				B1000000000000000000001A /* MessagesView.swift in Sources */,
