@@ -1206,6 +1206,14 @@ async function callToolUncoordinated(name, args = {}, { signal } = {}) {
       workspaceDir,
     }), signal);
     throwIfAgentAborted(signal);
+    if (args.draft_id) {
+      const updated = await client.updateSubmissionDraft(args.draft_id, { appendAttachments: [
+        { file: rendered.sourceFile.relativePath, kind: "source" },
+        ...rendered.images.map(item => ({ file: item.relativePath, kind: "image" })),
+      ] });
+      rendered.draftId = args.draft_id;
+      rendered.attachmentCount = updated.draft.attachments.length;
+    }
     return rendered;
   }
   const result = await waitForAgentOperation(executeTool(toolDefinitions, name, args || {}), signal);
@@ -1431,6 +1439,9 @@ async function enhanceReadableToolResult(name, args, result, { signal } = {}) {
 }
 
 function safeToolSchemas() {
+  const draftAttachments = { type: "array", description: "草稿附件：新文件用 file 指定工作区路径，保留已有副本用 attachment_id；修改后需重新审核。", items: {
+    type: "object", properties: { file: { type: "string" }, attachment_id: { type: "string" }, kind: { type: "string", enum: ["source", "image", "file"] } },
+  } };
   const tools = [
     { name: "session_status", description: "读取当前伴学邦登录状态和上下文。", parameters: { type: "object", properties: {} } },
     { name: "refresh_context", description: "刷新当前伴学邦学期、班级、课程上下文。", parameters: { type: "object", properties: {} } },
@@ -1574,11 +1585,12 @@ function safeToolSchemas() {
     },
     {
       name: "render_code_as_vscode_image",
-      description: "将助手编写的程序代码排版成仅含代码区与行号的 VS Code 风格 PNG 草稿，保存到本机工作区并显示在对话中；不含侧栏等编辑器界面，不上传或提交。",
+      description: "保存助手编写的源文件，并排版成仅含代码区与行号的 VS Code 风格 PNG 草稿；可通过 draft_id 绑定到待审核草稿。不含侧栏等编辑器界面，不上传或提交。",
       parameters: {
         type: "object",
         properties: {
           file_name: { type: "string", description: "代码源文件名，例如 main.py 或 Program.cs。" },
+          draft_id: { type: "string", description: "将生成的源文件和所有截图绑定到这份草稿，修改后回到待审核。" },
           code: { type: "string", description: "要渲染的完整代码；必须与已保存的作业代码正文一致。" },
           language: { type: "string", description: "可选的代码语言，例如 python、javascript、csharp。" },
           theme: { type: "string", enum: ["dark", "light"], description: "VS Code 深色或浅色主题，默认 dark。" },
@@ -1610,6 +1622,7 @@ function safeToolSchemas() {
           task_id: { type: "string" },
           subject_name: { type: "string" },
           task_title: { type: "string" },
+          attachments: draftAttachments,
           draft_text: { type: "string", description: "按原题顺序和格式完成的简洁自然正文。篇幅与题目要求的动作匹配，分类以题目材料定义为准，计算保留完整精度到最后一步再舍入。只能使用纯文本，不得包含 Markdown、HTML、LaTeX 定界符、助手说明、模板化开场结尾或特殊排版数学符号；使用 x^2、sqrt(x)、*、/、<=、theta、21.8 度等普通键盘写法。" },
           summary: { type: "string" },
           warnings: { type: "array", items: { type: "string" } },
@@ -1640,9 +1653,10 @@ function safeToolSchemas() {
         properties: {
           draft_id: { type: "string" },
           draft_text: { type: "string", description: "按原题顺序和格式提供修改后的完整草稿正文。篇幅与题目要求的动作匹配，分类以题目材料定义为准，计算保留完整精度到最后一步再舍入。只能使用纯文本，不得包含 Markdown、HTML、LaTeX 定界符、助手说明、模板化开场结尾或特殊排版数学符号；使用 x^2、sqrt(x)、*、/、<=、theta、21.8 度等普通键盘写法。" },
+          attachments: draftAttachments,
           summary: { type: "string", description: "可选的简短草稿摘要。" },
         },
-        required: ["draft_id", "draft_text"],
+        required: ["draft_id"],
       },
     },
   ];

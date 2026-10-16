@@ -88,6 +88,7 @@ function compactDraftWriteResult(result) {
     "taskTitle",
     "updatedAt",
     "reviewPath",
+    "attachmentCount",
   ]);
 }
 
@@ -125,6 +126,9 @@ export function compactAgentToolResult(name, result) {
       theme: String(result?.theme || "dark"),
       lineCount: Number(result?.lineCount) || 0,
       pageCount: Number(result?.pageCount) || 0,
+      sourceFile: result?.sourceFile ? pick(result.sourceFile, ["fileName", "relativePath", "sizeBytes"]) : null,
+      draftId: result?.draftId || null,
+      attachmentCount: result?.attachmentCount || 0,
       images: Array.isArray(result?.images) ? result.images.slice(0, 8).map((image) => ({
         fileName: String(image?.fileName || ""),
         relativePath: String(image?.relativePath || ""),

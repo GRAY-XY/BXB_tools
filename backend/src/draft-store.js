@@ -1,5 +1,7 @@
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { DraftAttachmentStore } from "./draft-attachments.js";
 
 const defaultDraftDir = () =>
   process.env.BANXUEBANG_DRAFT_DIR ||
@@ -55,6 +57,11 @@ export async function migrateDraftFiles(sourceDirs, targetDir) {
         }
 
         if (targetDraft && draftTimestamp(targetDraft) >= draftTimestamp(sourceDraft)) continue;
+        const targetAttachments = new DraftAttachmentStore(targetRoot);
+        const sourceAttachments = new DraftAttachmentStore(sourceDir);
+        for (const attachment of sourceDraft.attachments || []) {
+          await targetAttachments.importFrom(sourceAttachments, sourceDraft.draftId, attachment);
+        }
         await writeFile(targetPath, `${JSON.stringify(sourceDraft, null, 2)}\n`, "utf8");
         migrated += 1;
       } catch {
@@ -70,6 +77,7 @@ export class DraftStore {
   constructor(draftDir = defaultDraftDir(), { now = () => Date.now() } = {}) {
     this.draftDir = draftDir;
     this.now = now;
+    this.pendingUpdates = new Map();
   }
 
   async cleanupExpiredRejectedDrafts({ now = this.now() } = {}) {
@@ -83,6 +91,8 @@ export class DraftStore {
       try {
         const draft = JSON.parse(await readFile(filePath, "utf8"));
         if (!isExpiredRejectedDraft(draft, Number(now))) continue;
+        if (this.pendingUpdates.has(String(draft.draftId))) continue;
+        await new DraftAttachmentStore(this.draftDir).clear(draft.draftId || entry.name.slice(0, -5));
         await rm(filePath, { force: true });
         deletedDraftIds.push(String(draft.draftId || entry.name.slice(0, -5)));
       } catch {
@@ -127,6 +137,7 @@ export class DraftStore {
       const raw = await readFile(filePath, "utf8");
       const draft = JSON.parse(raw);
       if (isExpiredRejectedDraft(draft, this.now())) {
+        await new DraftAttachmentStore(this.draftDir).clear(draftId);
         await rm(filePath, { force: true });
         return null;
       }
@@ -142,30 +153,39 @@ export class DraftStore {
   async save(draft) {
     await mkdir(this.draftDir, { recursive: true });
     const filePath = this._filePath(draft.draftId);
-    await writeFile(filePath, `${JSON.stringify(draft, null, 2)}\n`, "utf8");
+    const temporaryPath = `${filePath}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(temporaryPath, `${JSON.stringify(draft, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+      await rename(temporaryPath, filePath);
+    } finally { await rm(temporaryPath, { force: true }); }
     return draft;
   }
 
   async update(draftId, updater) {
-    const current = await this.get(draftId);
-    if (!current) {
-      return null;
-    }
-
-    const updated = await updater(current);
-    await this.save(updated);
-    return updated;
+    return this.exclusive(draftId, async () => {
+      const current = await this.get(draftId);
+      if (!current) return null;
+      const updated = await updater(current);
+      await this.save(updated);
+      return updated;
+    });
   }
 
-  async clear(draftId) {
-    const filePath = this._filePath(draftId);
-    try {
-      await rm(filePath, { force: true });
-    } catch (error) {
-      if (error && error.code !== "ENOENT") {
-        throw error;
-      }
-    }
+  async exclusive(draftId, operation) {
+    const previous = this.pendingUpdates.get(draftId) || Promise.resolve();
+    const pending = previous.catch(() => {}).then(operation);
+    this.pendingUpdates.set(draftId, pending);
+    try { return await pending; }
+    finally { if (this.pendingUpdates.get(draftId) === pending) this.pendingUpdates.delete(draftId); }
+  }
+
+  async clear(draftId, { beforeDelete } = {}) {
+    return this.exclusive(draftId, async () => {
+      const draft = await this.get(draftId);
+      if (draft && beforeDelete) beforeDelete(draft);
+      await new DraftAttachmentStore(this.draftDir).clear(draftId);
+      await rm(this._filePath(draftId), { force: true });
+    });
   }
 
   _filePath(draftId) {

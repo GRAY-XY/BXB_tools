@@ -296,6 +296,13 @@ export async function renderCodeAsVscodeImages({ fileName, code, language: reque
   const pageCount = Math.ceil(sourceLines.length / PAGE_LINES);
   const images = [];
   const id = randomUUID().slice(0, 8);
+  const sourceName = safeFileName;
+  const sourceDirectory = path.join(previewDirectory, id);
+  await mkdir(sourceDirectory);
+  const sourcePath = path.join(sourceDirectory, sourceName);
+  await writeFile(sourcePath, sourceCode, { flag: "wx", encoding: "utf8" });
+  const sourceFile = { fileName: sourceName, path: sourcePath,
+    relativePath: path.relative(workspaceDir, sourcePath).replaceAll("\\", "/"), sizeBytes: Buffer.byteLength(sourceCode) };
 
   for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
     const firstIndex = pageIndex * PAGE_LINES;
@@ -329,6 +336,7 @@ export async function renderCodeAsVscodeImages({ fileName, code, language: reque
     theme: safeTheme,
     lineCount: sourceLines.length,
     pageCount,
+    sourceFile,
     images,
   };
 }

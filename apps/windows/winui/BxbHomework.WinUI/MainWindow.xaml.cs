@@ -575,7 +575,7 @@ public sealed partial class MainWindow : Window
         DetailTextBox.Text = "";
         DetailTextBox.Visibility = Visibility.Visible;
         EditorTextBox.Text = "";
-        EditorTextBox.Visibility = Visibility.Collapsed;
+        DraftEditorPanel.Visibility = Visibility.Collapsed;
         DraftDeliveryScrollViewer.Visibility = Visibility.Collapsed;
         DraftDeliveryTargetComboBox.IsEnabled = true;
         DraftDeliveryContactComboBox.IsEnabled = true;
@@ -1254,8 +1254,10 @@ public sealed partial class MainWindow : Window
         CommandInputBox.Text = "";
         CommandInputBox.PlaceholderText = "摘要，可选，例如：手动整理的初稿";
         DetailTextBox.Visibility = Visibility.Collapsed;
-        EditorTextBox.Visibility = Visibility.Visible;
+        DraftEditorPanel.Visibility = Visibility.Visible;
         EditorTextBox.Text = "";
+        DraftAttachmentSection.Visibility = Visibility.Collapsed;
+        EditorTextBox.IsReadOnly = false;
         DetailTitleText.Text = "草稿正文";
         PrimaryActionButton.Content = "创建草稿";
         SecondaryActionButton.Content = "取消";
@@ -2731,22 +2733,27 @@ public sealed partial class MainWindow : Window
         if (!_selectedDraft.HasValue) return;
         var draftId = GetString(_selectedDraft.Value, "draftId", "");
         var text = EditorTextBox.Text.Trim();
-        if (string.IsNullOrWhiteSpace(draftId) || string.IsNullOrWhiteSpace(text)) return;
+        if (string.IsNullOrWhiteSpace(draftId)) return;
         var result = await ToolAsync("update_submission_draft", new { draft_id = draftId, draft_text = text });
         var draft = result.TryGetProperty("draft", out var inner) ? inner : result;
+        await LoadDraftsAsync((FilterComboBox.SelectedItem as ComboItem)?.Key ?? "all");
         _selectedDraft = draft.Clone();
         ShowDraft(draft);
-        await LoadDraftsAsync((FilterComboBox.SelectedItem as ComboItem)?.Key ?? "all");
     }
 
     private async Task ApproveDraftAsync()
     {
         if (!_selectedDraft.HasValue) return;
+        if (!string.Equals(EditorTextBox.Text.Trim(), GetString(_selectedDraft.Value, "draftText", "").Trim(), StringComparison.Ordinal))
+        {
+            SetStatus("正文有未保存的修改，请先保存后再审核。");
+            return;
+        }
         var result = await ToolAsync("approve_submission_draft", new { draft_id = GetString(_selectedDraft.Value, "draftId", ""), review_note = "WinUI approved" });
         var draft = result.TryGetProperty("draft", out var inner) ? inner : result;
+        await LoadDraftsAsync("all");
         _selectedDraft = draft.Clone();
         ShowDraft(draft);
-        await LoadDraftsAsync("all");
     }
 
     private async Task DeleteDraftAsync()
@@ -2784,7 +2791,7 @@ public sealed partial class MainWindow : Window
         _draftMessagePreview = null;
         DraftManagementActionPanel.Visibility = Visibility.Collapsed;
         DetailTextBox.Visibility = Visibility.Collapsed;
-        EditorTextBox.Visibility = Visibility.Collapsed;
+        DraftEditorPanel.Visibility = Visibility.Collapsed;
         HomeworkDetailScrollViewer.Visibility = Visibility.Collapsed;
         PrivateThreadListView.Visibility = Visibility.Collapsed;
         DetailImageScrollViewer.Visibility = Visibility.Collapsed;
@@ -2849,6 +2856,7 @@ public sealed partial class MainWindow : Window
         DraftDeliverySummaryText.Text = "";
         DraftDeliveryContentTextBox.Text = "";
         DraftDeliveryChunksPanel.Children.Clear();
+        DraftDeliveryAttachmentsPanel.Children.Clear();
         DraftDeliveryStatusText.Text = target == "teacher_private_message"
             ? "正在读取联系人并生成私信预览..."
             : "正在读取作业状态并生成提交预览...";
@@ -2862,11 +2870,11 @@ public sealed partial class MainWindow : Window
                 JsonElement? contact = DraftDeliveryContactComboBox.SelectedItem is ComboBoxItem { Tag: JsonElement selectedContact }
                     ? selectedContact
                     : null;
-                await PrepareDraftPrivateMessageAsync(contact);
+                await PrepareDraftPrivateMessageAsync(contact, requestVersion);
             }
             else
             {
-                await PrepareDraftSubmitAsync();
+                await PrepareDraftSubmitAsync(requestVersion);
             }
         }
         catch (Exception error)
@@ -2890,10 +2898,15 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async Task PrepareDraftSubmitAsync()
+    private async Task PrepareDraftSubmitAsync(int requestVersion)
     {
         if (!_selectedDraft.HasValue) return;
-        var preview = await ToolAsync("prepare_draft_submission", new { draft_id = GetString(_selectedDraft.Value, "draftId", "") });
+        var preview = await ToolAsync("prepare_draft_submission", new
+        {
+            draft_id = GetString(_selectedDraft.Value, "draftId", ""),
+            attachment_ids = _selectedDraftAttachmentIds.ToArray(),
+        });
+        if (!_draftDeliveryMode || requestVersion != _draftDeliveryPreviewVersion) return;
         _draftSubmitPreview = preview.Clone();
         _draftMessagePreview = null;
         RenderDraftDeliveryPreview(preview, "task");
@@ -2911,12 +2924,13 @@ public sealed partial class MainWindow : Window
             {
                 draft_id = GetString(_selectedDraft.Value, "draftId", ""),
                 confirmation_token = GetString(_draftSubmitPreview.Value, "confirmationToken", ""),
+                attachment_ids = ReadArray(_draftSubmitPreview.Value, "selectedAttachments").Select(file => GetString(file, "id", "")).ToArray(),
             });
             _draftSubmitPreview = null;
             var draft = result.TryGetProperty("draft", out var inner) ? inner : result;
+            await LoadDraftsAsync("all");
             _selectedDraft = draft.Clone();
             ShowDraft(draft);
-            await LoadDraftsAsync("all");
         }
         catch (Exception error)
         {
@@ -2927,13 +2941,14 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async Task PrepareDraftPrivateMessageAsync(JsonElement? contact)
+    private async Task PrepareDraftPrivateMessageAsync(JsonElement? contact, int requestVersion)
     {
         if (!_selectedDraft.HasValue) return;
         object parameters = contact.HasValue
             ? new { draft_id = GetString(_selectedDraft.Value, "draftId", ""), contact = contact.Value }
             : new { draft_id = GetString(_selectedDraft.Value, "draftId", "") };
         var preview = await ToolAsync("prepare_draft_private_message", parameters);
+        if (!_draftDeliveryMode || requestVersion != _draftDeliveryPreviewVersion) return;
         _draftMessagePreview = preview.Clone();
         _draftSubmitPreview = null;
         PopulateDraftDeliveryContacts(preview);
@@ -3022,6 +3037,7 @@ public sealed partial class MainWindow : Window
         }
 
         DraftDeliverySummaryText.Text = string.Join(Environment.NewLine, summaryLines);
+        RenderDraftDeliveryAttachments(preview, target);
         DraftDeliveryContentTextBox.Text = target == "task"
             ? GetString(preview, "draftText", "")
             : GetString(preview, "messageText", "");
@@ -3719,7 +3735,7 @@ public sealed partial class MainWindow : Window
 
         DetailTitleText.Text = fileName;
         DetailTextBox.Visibility = Visibility.Collapsed;
-        EditorTextBox.Visibility = Visibility.Collapsed;
+        DraftEditorPanel.Visibility = Visibility.Collapsed;
         HomeworkDetailScrollViewer.Visibility = Visibility.Collapsed;
         PrivateThreadListView.Visibility = Visibility.Collapsed;
         DetailDocumentWebView.Visibility = Visibility.Collapsed;
@@ -3759,7 +3775,7 @@ public sealed partial class MainWindow : Window
 
         DetailTitleText.Text = string.IsNullOrWhiteSpace(fallbackTitle) ? Path.GetFileName(resolvedPath) : fallbackTitle;
         DetailTextBox.Visibility = Visibility.Collapsed;
-        EditorTextBox.Visibility = Visibility.Collapsed;
+        DraftEditorPanel.Visibility = Visibility.Collapsed;
         HomeworkDetailScrollViewer.Visibility = Visibility.Collapsed;
         HomeworkDetailStackPanel.Children.Clear();
         PrivateThreadListView.Visibility = Visibility.Collapsed;
@@ -4506,7 +4522,7 @@ public sealed partial class MainWindow : Window
 
         DetailTitleText.Text = "作业详情";
         DetailTextBox.Visibility = Visibility.Collapsed;
-        EditorTextBox.Visibility = Visibility.Collapsed;
+        DraftEditorPanel.Visibility = Visibility.Collapsed;
         PrivateThreadListView.Visibility = Visibility.Collapsed;
         DetailImageScrollViewer.Visibility = Visibility.Collapsed;
         DetailDocumentWebView.Visibility = Visibility.Collapsed;
@@ -4727,7 +4743,7 @@ public sealed partial class MainWindow : Window
         DetailSecondaryButton.Content = "驳回";
         SetDraftActionButtons(true);
         DetailTextBox.Visibility = Visibility.Collapsed;
-        EditorTextBox.Visibility = Visibility.Visible;
+        DraftEditorPanel.Visibility = Visibility.Visible;
         DraftDeliveryScrollViewer.Visibility = Visibility.Collapsed;
         HomeworkDetailScrollViewer.Visibility = Visibility.Collapsed;
         PrivateThreadListView.Visibility = Visibility.Collapsed;
@@ -4735,6 +4751,9 @@ public sealed partial class MainWindow : Window
         DetailDocumentWebView.Visibility = Visibility.Collapsed;
         DetailDocumentWebView.Source = new Uri("about:blank");
         EditorTextBox.Text = GetString(draft, "draftText", "");
+        EditorTextBox.IsReadOnly = status is "submitted" or "sent_to_teacher";
+        DraftAttachmentSection.Visibility = Visibility.Visible;
+        RenderDraftAttachments(draft);
         var retentionNotice = status == "rejected" ? " · 将在驳回 24 小时后自动删除" : "";
         SetStatus($"{FormatDraftStatus(status)} · {GetString(draft, "subjectName", "未知课程")} · 创建于 {FormatDraftCreatedAt(draft)}{retentionNotice}");
     }
@@ -4752,7 +4771,7 @@ public sealed partial class MainWindow : Window
     {
         DetailTitleText.Text = PrivateContactLabel(item.Data);
         DetailTextBox.Visibility = Visibility.Collapsed;
-        EditorTextBox.Visibility = Visibility.Collapsed;
+        DraftEditorPanel.Visibility = Visibility.Collapsed;
         HomeworkDetailScrollViewer.Visibility = Visibility.Collapsed;
         DetailImageScrollViewer.Visibility = Visibility.Collapsed;
         DetailDocumentWebView.Visibility = Visibility.Collapsed;
@@ -5028,7 +5047,7 @@ public sealed partial class MainWindow : Window
     private void SetDetail(string text)
     {
         DetailTextBox.Visibility = Visibility.Visible;
-        EditorTextBox.Visibility = Visibility.Collapsed;
+        DraftEditorPanel.Visibility = Visibility.Collapsed;
         DraftDeliveryScrollViewer.Visibility = Visibility.Collapsed;
         HomeworkDetailScrollViewer.Visibility = Visibility.Collapsed;
         HomeworkDetailStackPanel.Children.Clear();

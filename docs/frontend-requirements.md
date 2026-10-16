@@ -252,11 +252,13 @@ Required actions:
 - List all drafts: `list_submission_drafts({ status: "all" })`
 - Open draft: `get_submission_draft({ draft_id })`
 - Save edited draft text: `update_submission_draft({ draft_id, draft_text })`
+- Replace bound attachments: `update_submission_draft({ draft_id, attachments: [{ attachment_id } | { file, kind? }] })`
+- Preview a verified attachment copy: `preview_submission_draft_attachment({ draft_id, attachment_id })`
 - Approve draft: `approve_submission_draft({ draft_id, review_note })`
 - Reject draft: `reject_submission_draft({ draft_id, review_note })`
 - Delete local draft: `delete_submission_draft({ draft_id })`
-- Prepare submission preview: `prepare_draft_submission({ draft_id })`
-- Submit after confirmation: `submit_approved_draft({ draft_id, confirmation_token })`
+- Prepare submission preview: `prepare_draft_submission({ draft_id, attachment_ids })`
+- Submit after confirmation: `submit_approved_draft({ draft_id, confirmation_token, attachment_ids })`
 - Prepare teacher private-message preview: `prepare_draft_private_message({ draft_id, contact? })`
 - Send after confirmation: `send_approved_draft_private_message({ draft_id, contact, confirmation_token })`
 
@@ -276,6 +278,12 @@ Review and editing:
 - Saving edits updates only the local draft JSON.
 - Rejected drafts are retained for 24 hours from `rejectedAt`, then deleted automatically. Cleanup runs at startup, periodically while the app is open, and when drafts are read. Legacy rejected drafts fall back to `reviewedAt`, then `updatedAt`.
 - Saving must not upload or submit anything.
+- Windows draft review includes body text and bound source-code, screenshot, and workspace-file attachments. Each file has preview/remove controls and a checkbox for the next Task submission.
+- Attachments are independent managed copies with filename, type, byte count, and SHA-256 metadata. A workspace change cannot replace reviewed content. Allow up to 20 files per draft and 25 MiB per file.
+- Binding or removing attachments saves the current body and resets approval. Approval must reject unsaved body changes; delivery must verify the selected copies against their hashes.
+- Confirmation lists the selected uploads with preview controls. Selection is explicit in both preview and submission calls and is included in the confirmation token. An omitted selection uploads no new files, preserving compatibility with clients without attachment review.
+- A draft may contain attachments without body text; it cannot have neither. Private-message delivery requires body text and explicitly excludes all bound attachments.
+- Draft deletion, rejected-draft expiry, and backend migration handle the attachment directory alongside the JSON record.
 - Editing a rejected draft moves it back to `pending_review`.
 - Delivered drafts (`submitted` or `sent_to_teacher`) are read-only. A later resubmission or re-send should use a new draft and a new review.
 - Delete uses an in-app two-step confirmation, not native `confirm()`.
