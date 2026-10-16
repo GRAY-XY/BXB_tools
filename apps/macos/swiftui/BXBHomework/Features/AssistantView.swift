@@ -503,6 +503,9 @@ private struct AssistantMessageRow: View {
                                             .foregroundStyle(.secondary)
                                             .textSelection(.enabled)
                                     }
+                                    ForEach(step.previewImages) { preview in
+                                        AssistantCodePreviewView(preview: preview, workspaceDirectory: workspaceDirectory)
+                                    }
                                 }
                             }
                         }

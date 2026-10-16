@@ -196,6 +196,12 @@ submission or teacher messaging. Teacher messages are previewed with a selected
 existing contact and exact chunks; a definite rejection resumes at the failed
 chunk, while an uncertain result locks the draft until the conversation is checked.
 
+Assistant tool steps show generated code previews inline, including each page's
+filename and line range. Images fit the message width, and the enlargement button
+opens the original image in a scrollable view. Missing or damaged images show a
+fallback without hiding the step's text. Images are loaded asynchronously from
+inside the configured workspace, both during streaming and when reopening a chat.
+
 Assistant conversation and model-summary parsing can be verified without a
 configured model:
 
@@ -206,6 +212,18 @@ xcrun swiftc -parse-as-library \
   apps/macos/swiftui/Runtime/AssistantParsingSmoke.swift \
   -o /tmp/bxb-assistant-parsing-smoke
 /tmp/bxb-assistant-parsing-smoke
+```
+
+The native code-preview loader also has an account-free smoke test:
+
+```sh
+xcrun swiftc -swift-version 6 -target arm64-apple-macos15.0 -parse-as-library \
+  apps/macos/swiftui/BXBHomework/Shared/JSONValue.swift \
+  apps/macos/swiftui/BXBHomework/Features/AssistantModels.swift \
+  apps/macos/swiftui/BXBHomework/Features/AssistantCodePreviewView.swift \
+  apps/macos/swiftui/Runtime/AssistantCodePreviewSmoke.swift \
+  -o /tmp/bxb-assistant-code-preview-smoke
+/tmp/bxb-assistant-code-preview-smoke
 ```
 
 ## Academic term switching
