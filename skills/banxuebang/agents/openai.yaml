@@ -1,0 +1,4 @@
+interface:
+  display_name: "Banxuebang"
+  short_description: "Banxuebang tools, reviewed drafts, and code previews"
+  default_prompt: "Use $banxuebang to inspect my homework and prepare a draft for review."

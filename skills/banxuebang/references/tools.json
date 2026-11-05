@@ -1,0 +1,1599 @@
+{
+  "schemaVersion": 1,
+  "toolCount": 52,
+  "sharedToolCount": 47,
+  "tools": [
+    {
+      "name": "list_terms",
+      "description": "List the terms available in the current Banxuebang session.",
+      "effect": "read/preview",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_courses",
+      "description": "List the courses available in the current Banxuebang term and class context.",
+      "effect": "read/preview",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "session_status",
+      "description": "Show whether the Banxuebang session is ready and which term/class/subject are selected.",
+      "effect": "read/preview",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "interactive_login",
+      "description": "Launch a real browser for manual Banxuebang login, capture localStorage after login, and persist the session for later tools.",
+      "effect": "login/session-write",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "headless": {
+            "description": "Defaults to false. Keep false for manual login.",
+            "type": "boolean"
+          },
+          "timeout_ms": {
+            "description": "How long to wait for login completion. Default 300000.",
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "login_in_browser",
+      "description": "Launch a real browser for manual Banxuebang login, then capture localStorage and persist the session. This is a clearer alias for first-time login.",
+      "effect": "login/session-write",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "headless": {
+            "description": "Defaults to false. Keep false for manual login.",
+            "type": "boolean"
+          },
+          "timeout_ms": {
+            "description": "How long to wait for login completion. Default 300000.",
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "login_with_credentials",
+      "description": "Open the Banxuebang login page in a real browser, fill username/password, optionally tick the agreement checkbox, submit, and capture the resulting session.",
+      "effect": "login/session-write",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "username": {
+            "description": "Banxuebang account / login name.",
+            "type": "string"
+          },
+          "password": {
+            "description": "Banxuebang password.",
+            "type": "string"
+          },
+          "headless": {
+            "description": "Defaults to false so the user can see the browser if anything unexpected appears.",
+            "type": "boolean"
+          },
+          "timeout_ms": {
+            "description": "How long to wait for login success. Default 60000.",
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "agree_terms": {
+            "description": "Whether to auto-tick the agreement checkbox before login. Default true.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "username",
+          "password"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "import_browser_storage",
+      "description": "Import a Banxuebang browser localStorage dump. Expected keys include tokens, userInfo, curClass, currTermId, and curSubject.",
+      "effect": "login/session-write",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "storage_json": {
+            "description": "A JSON object string containing browser localStorage values.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "storage_json"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "refresh_context",
+      "description": "Refresh term/class/subject context from Banxuebang APIs using the current session token.",
+      "effect": "account-context",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "set_current_term",
+      "description": "Switch the current term by id or name and refresh the subject list for that term.",
+      "effect": "account-context",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "term_id": {
+            "description": "Target term id.",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ]
+          },
+          "term_name": {
+            "description": "Target term name, for example 2025-2026下学期.",
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "set_current_subject",
+      "description": "Switch the current subject by id or course name for homework and achievement tools. Use subject_name \"全部课程\" to aggregate homework across all courses.",
+      "effect": "account-context",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "subject_id": {
+            "description": "Target subject id.",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ]
+          },
+          "subject_name": {
+            "description": "Target course name, for example 国际公民素养. Use \"全部课程\" for all courses.",
+            "type": "string"
+          },
+          "class_id": {
+            "description": "Optional class id when the same subject id exists under multiple classes.",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_homework",
+      "description": "Read the 学业 tab data behind achievement_list, including unsubmitted homework and homework pages.",
+      "effect": "read/preview",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "list_type": {
+            "description": "Filter mode. \"all\" maps to 全部, \"latest\" to 最新, \"pending\" to 待处理.",
+            "type": "string",
+            "enum": [
+              "all",
+              "latest",
+              "pending"
+            ]
+          },
+          "page": {
+            "description": "Page number. Default 1.",
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "size": {
+            "description": "Page size. Default 10.",
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_tasks",
+      "description": "List tasks for the current subject or all courses. Use subject_name \"全部课程\" to aggregate all current-term courses.",
+      "effect": "read/preview",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "term_id": {
+            "description": "Optional term id override.",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ]
+          },
+          "term_name": {
+            "description": "Optional term name override.",
+            "type": "string"
+          },
+          "subject_id": {
+            "description": "Optional subject id override.",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ]
+          },
+          "subject_name": {
+            "description": "Optional subject name override. Use \"全部课程\" for all courses.",
+            "type": "string"
+          },
+          "class_id": {
+            "description": "Optional class id override when multiple classes share a subject.",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ]
+          },
+          "list_type": {
+            "description": "Filter mode. \"all\" maps to 全部, \"latest\" to 最新, \"pending\" to 待处理.",
+            "type": "string",
+            "enum": [
+              "all",
+              "latest",
+              "pending"
+            ]
+          },
+          "page": {
+            "description": "Page number. Default 1.",
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "size": {
+            "description": "Page size. Default 10.",
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_achievement_overview",
+      "description": "Read the 成绩 tab data behind achievement_list, including average GPA level, score groups, transfer class options, and chart records.",
+      "effect": "read/preview",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "transfer_class_id": {
+            "description": "Optional transfer class record id to inspect. Defaults to the last record used by the page.",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_current_subject_gpa",
+      "description": "Get the average GPA level for the current subject, plus the active transfer-class record.",
+      "effect": "read/preview",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_private_message_contacts",
+      "description": "List Banxuebang private-message contacts for the current student.",
+      "effect": "read/preview",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_private_message_thread",
+      "description": "Read private-message thread content for a selected contact.",
+      "effect": "read/preview",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "contact": {
+            "description": "Contact object returned by list_private_message_contacts."
+          },
+          "size": {
+            "description": "Page size. Default 20.",
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "end_time": {
+            "description": "Optional endTime cursor for older messages.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "contact"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "send_private_message_text",
+      "description": "Send a text private message to a selected Banxuebang contact. This must only be called after direct user action in the UI.",
+      "effect": "remote-write",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "contact": {
+            "description": "Contact object returned by list_private_message_contacts."
+          },
+          "content": {
+            "description": "Text message content to send.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "contact",
+          "content"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "open_task",
+      "description": "Open a Banxuebang task by id and return its detail, attachments, and current submission state.",
+      "effect": "read/preview",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "task_id": {
+            "description": "Activity/task id.",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ]
+          },
+          "include_other_submissions": {
+            "description": "Whether to include the submission status list of other students. Default false.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "read_task_content",
+      "description": "Read the text content of a task, including answer/reference text when available.",
+      "effect": "read/preview",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "task_id": {
+            "description": "Activity/task id.",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ]
+          },
+          "max_chars": {
+            "description": "Maximum number of characters to return per text field. Default 4000.",
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "download_task_attachment",
+      "description": "Download an attachment from a task to the local workspace.",
+      "effect": "local-write",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "task_id": {
+            "description": "Optional task id used to validate that the attachment belongs to the task.",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ]
+          },
+          "file_id": {
+            "description": "Attachment file id.",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ]
+          },
+          "directory": {
+            "description": "Optional destination directory. Default is the local workspace.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "read_task_attachment",
+      "description": "Download a task attachment if needed and extract readable text from supported file types like txt, html, pdf, and docx.",
+      "effect": "local-write",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "task_id": {
+            "description": "Optional task id used to validate that the attachment belongs to the task.",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ]
+          },
+          "file_id": {
+            "description": "Attachment file id.",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ]
+          },
+          "max_chars": {
+            "description": "Maximum number of characters to return. Default 4000.",
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "directory": {
+            "description": "Optional download directory. Default is the local workspace.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_workspace_files",
+      "description": "List files in the local workspace where user uploads and assistant-created/downloaded files are stored.",
+      "effect": "read/preview",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "query": {
+            "description": "Optional filename or relative-path search text.",
+            "type": "string"
+          },
+          "max_files": {
+            "description": "Maximum number of files to return. Default 200.",
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "include_directories": {
+            "description": "Include folder entries in the listing. Default false.",
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "read_workspace_file",
+      "description": "Read a workspace file by relative path or filename. Supports text, PDF, and DOCX when the file type is readable.",
+      "effect": "read/preview",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "file": {
+            "description": "Workspace relative path or filename.",
+            "type": "string"
+          },
+          "max_chars": {
+            "description": "Maximum characters to return. Default 8000.",
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "rename_workspace_file",
+      "description": "Rename a workspace file by relative path or filename. If the new name has no extension, the original extension is kept.",
+      "effect": "local-write",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "file": {
+            "description": "Workspace relative path or filename.",
+            "type": "string"
+          },
+          "new_name": {
+            "description": "New file name. Must not include a folder path.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file",
+          "new_name"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "write_workspace_text_file",
+      "description": "Create a local text or Markdown file in the workspace. This does not upload anything.",
+      "effect": "local-write",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "file_name": {
+            "description": "File name to create in the workspace.",
+            "type": "string"
+          },
+          "content": {
+            "description": "Text content to save.",
+            "type": "string"
+          },
+          "overwrite": {
+            "description": "Whether to overwrite an existing file. Default false.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "file_name",
+          "content"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "extract_pdf_text",
+      "description": "Extract readable text from a local PDF file. Use paths returned by download_task_attachment when possible.",
+      "effect": "read/preview",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "local_path": {
+            "description": "Absolute or relative path to a local PDF file.",
+            "type": "string"
+          },
+          "max_chars": {
+            "description": "Maximum number of characters to return. Default 6000.",
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "local_path"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "extract_docx_text",
+      "description": "Extract readable text from a local DOCX file. Use paths returned by download_task_attachment when possible.",
+      "effect": "read/preview",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "local_path": {
+            "description": "Absolute or relative path to a local DOCX file.",
+            "type": "string"
+          },
+          "max_chars": {
+            "description": "Maximum number of characters to return. Default 6000.",
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "local_path"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "run_python_snippet",
+      "description": "Run a short Python snippet for calculations or small data transformations. Time-limited and output-limited; not a full sandbox.",
+      "effect": "local-code-execution",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "code": {
+            "description": "Python code to run. Keep it short and deterministic.",
+            "type": "string"
+          },
+          "stdin": {
+            "description": "Optional stdin text passed to the Python process.",
+            "type": "string"
+          },
+          "timeout_ms": {
+            "description": "Timeout in milliseconds. Default 5000, maximum 15000.",
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "web_search",
+      "description": "Search the web through the local Playwright browser. Defaults to Bing and does not require a search API key.",
+      "effect": "read/preview",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "query": {
+            "description": "Search query.",
+            "type": "string"
+          },
+          "max_results": {
+            "description": "Maximum number of results to return. Default 5, maximum 10.",
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "engine": {
+            "description": "Search engine. Defaults to bing.",
+            "type": "string",
+            "enum": [
+              "bing"
+            ]
+          },
+          "timeout_ms": {
+            "description": "Browser timeout in milliseconds. Default 20000, maximum 45000.",
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "read_web_page",
+      "description": "Open an http(s) web page through the local Playwright browser and return readable body text.",
+      "effect": "read/preview",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "url": {
+            "description": "HTTP or HTTPS URL to read.",
+            "type": "string"
+          },
+          "max_chars": {
+            "description": "Maximum number of body-text characters to return. Default 8000, maximum 30000.",
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "timeout_ms": {
+            "description": "Browser timeout in milliseconds. Default 20000, maximum 45000.",
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "collect_task_submission_context",
+      "description": "Collect the task text, attachments, extracted attachment text, and missing-information signals needed before drafting a submission.",
+      "effect": "local-write",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "task_id": {
+            "description": "Activity/task id.",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ]
+          },
+          "max_chars": {
+            "description": "Maximum number of characters to keep for each text field. Default 4000.",
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "max_attachments": {
+            "description": "Maximum number of attachments to read. Default 6.",
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "draft_task_submission",
+      "description": "Save a concise, natural, submission-ready plain-text draft for later human review. This does not upload files or submit the task.",
+      "effect": "local-write",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "task_id": {
+            "description": "Activity/task id.",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ]
+          },
+          "subject_name": {
+            "description": "Course name.",
+            "type": "string"
+          },
+          "task_title": {
+            "description": "Task title.",
+            "type": "string"
+          },
+          "attachments": {
+            "description": "Local workspace files to copy into this draft for human review. No upload occurs.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "file": {
+                  "description": "Workspace file path for a new attachment.",
+                  "type": "string"
+                },
+                "attachment_id": {
+                  "description": "Existing attachment id to retain when replacing the list.",
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "source",
+                    "image",
+                    "file"
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "draft_text": {
+            "description": "Concise, natural draft body that fully answers the task in its original order and format. Match length to the requested action, match classifications to definitions in the task, and retain full numerical precision until final rounding. Plain text only: no Markdown, HTML, LaTeX delimiters, assistant commentary, template-style opening/closing, or typeset math symbols. Use keyboard notation such as x^2, sqrt(x), *, /, <=, theta, and 21.8 degrees.",
+            "type": "string"
+          },
+          "summary": {
+            "description": "Short summary of what the draft tries to do.",
+            "type": "string"
+          },
+          "evidence": {
+            "description": "Optional evidence objects or snippets used to justify the draft.",
+            "type": "array",
+            "items": {}
+          },
+          "warnings": {
+            "description": "Optional warnings about uncertainty or partial information.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "missing_info": {
+            "description": "Optional missing-information items that still block or weaken the answer.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "needs_user_input": {
+            "description": "Whether the agent believes more user input is needed before submission.",
+            "type": "boolean"
+          },
+          "preferred_target": {
+            "description": "Optional preferred delivery target. Use teacher_private_message when the task appears expired and may not allow supplement.",
+            "type": "string",
+            "enum": [
+              "task",
+              "teacher_private_message"
+            ]
+          },
+          "intended_targets": {
+            "description": "Optional list of intended delivery targets for the human reviewer.",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "task",
+                "teacher_private_message"
+              ]
+            }
+          },
+          "teacher_message_hint": {
+            "description": "Optional plain-text hint to include if the user later chooses to private-message a teacher.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "draft_text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_submission_drafts",
+      "description": "List locally archived submission drafts and their review status.",
+      "effect": "read/preview",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "status": {
+            "description": "Optional status filter.",
+            "type": "string",
+            "enum": [
+              "pending_review",
+              "approved",
+              "rejected",
+              "submitted",
+              "sent_to_teacher",
+              "all"
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_submission_draft",
+      "description": "Read a saved submission draft for review.",
+      "effect": "read/preview",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "draft_id": {
+            "description": "Draft id returned by draft_task_submission.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "draft_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "update_submission_draft",
+      "description": "Replace the content of a locally saved, undelivered submission draft and return it to pending review. This does not upload, submit, approve, delete, or send anything.",
+      "effect": "local-write",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "draft_id": {
+            "description": "Draft id returned by draft_task_submission.",
+            "type": "string"
+          },
+          "draft_text": {
+            "description": "Complete replacement draft body in the task's original order and format. Match length to the requested action, match classifications to definitions in the task, and retain full numerical precision until final rounding. Plain text only: no Markdown, HTML, LaTeX delimiters, assistant commentary, template-style opening/closing, or typeset math symbols. Use keyboard notation such as x^2, sqrt(x), *, /, <=, theta, and 21.8 degrees.",
+            "type": "string"
+          },
+          "summary": {
+            "description": "Optional updated draft summary.",
+            "type": "string"
+          },
+          "attachments": {
+            "description": "Replacement attachment list. Omit to retain all; use attachment_id for existing copies or file for new workspace files.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "file": {
+                  "description": "Workspace file path for a new attachment.",
+                  "type": "string"
+                },
+                "attachment_id": {
+                  "description": "Existing attachment id to retain when replacing the list.",
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "source",
+                    "image",
+                    "file"
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "draft_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "preview_submission_draft_attachment",
+      "description": "Read a verified local draft attachment for the review UI. Does not upload or submit.",
+      "effect": "read/preview",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "draft_id": {
+            "type": "string"
+          },
+          "attachment_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "draft_id",
+          "attachment_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "approve_submission_draft",
+      "description": "Mark a saved submission draft as approved after human review.",
+      "effect": "local-write",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "draft_id": {
+            "description": "Draft id returned by draft_task_submission.",
+            "type": "string"
+          },
+          "review_note": {
+            "description": "Optional reviewer note.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "draft_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "reject_submission_draft",
+      "description": "Mark a saved submission draft as rejected after human review.",
+      "effect": "local-write",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "draft_id": {
+            "description": "Draft id returned by draft_task_submission.",
+            "type": "string"
+          },
+          "review_note": {
+            "description": "Optional reviewer note.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "draft_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "delete_submission_draft",
+      "description": "Delete a locally saved submission draft and its attachment copies. This does not affect Banxuebang.",
+      "effect": "local-delete",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "draft_id": {
+            "description": "Draft id returned by draft_task_submission.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "draft_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "prepare_draft_submission",
+      "description": "Validate an approved draft and return the exact Banxuebang destination, mode, text, and retained files for a human confirmation screen. This does not submit anything.",
+      "effect": "read/preview",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "draft_id": {
+            "description": "Approved draft id.",
+            "type": "string"
+          },
+          "attachment_ids": {
+            "description": "Explicit attachment selection; omitted means text only.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "draft_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "submit_approved_draft",
+      "description": "Submit an approved draft to its corresponding Banxuebang task. Call only after the user explicitly confirms the prepare_draft_submission preview.",
+      "effect": "remote-write",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "draft_id": {
+            "description": "Approved draft id that the user explicitly confirmed.",
+            "type": "string"
+          },
+          "attachment_ids": {
+            "description": "The exact attachment ids shown in the confirmed preview.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "confirmation_token": {
+            "description": "Confirmation token returned by prepare_draft_submission for the reviewed preview.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "draft_id",
+          "confirmation_token"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "prepare_draft_private_message",
+      "description": "Validate an approved draft and return a private-message preview, chunk list, contact suggestions, and confirmation token. This does not send anything.",
+      "effect": "read/preview",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "draft_id": {
+            "description": "Approved draft id.",
+            "type": "string"
+          },
+          "contact": {
+            "description": "Optional contact object returned by list_private_message_contacts or the preview contact list."
+          }
+        },
+        "required": [
+          "draft_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "send_approved_draft_private_message",
+      "description": "Send an approved draft to a selected existing Banxuebang private-message contact. Call only after the user explicitly confirms the prepare_draft_private_message preview.",
+      "effect": "remote-write",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "draft_id": {
+            "description": "Approved draft id that the user explicitly confirmed.",
+            "type": "string"
+          },
+          "contact": {
+            "description": "Selected contact returned by prepare_draft_private_message or list_private_message_contacts."
+          },
+          "confirmation_token": {
+            "description": "Confirmation token returned by prepare_draft_private_message for the reviewed preview.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "draft_id",
+          "contact",
+          "confirmation_token"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "upload_submission_file",
+      "description": "Upload a local file to Banxuebang's file system and return the submission file object used by homework submission.",
+      "effect": "remote-write",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "local_path": {
+            "description": "Absolute or relative local file path.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "local_path"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "submit_task_result",
+      "description": "Submit task content and/or attachments for a Banxuebang task. Prefer file_paths so the tool can upload files automatically.",
+      "effect": "remote-write",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "task_id": {
+            "description": "Activity/task id.",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ]
+          },
+          "remark": {
+            "description": "Submission text content.",
+            "type": "string"
+          },
+          "file_ids": {
+            "description": "Optional already-uploaded file ids. Prefer file_paths instead.",
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                }
+              ]
+            }
+          },
+          "file_paths": {
+            "description": "Optional local file paths to upload and include in the submission.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "is_correct_work": {
+            "description": "0 for normal submit, 1 for correction/revision.",
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "submission_id": {
+            "description": "Optional existing submission record id for editing a prior submission.",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ]
+          },
+          "class_id": {
+            "description": "Optional target class id. Use the task's class id for cross-course submission.",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ]
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "browser_capture_achievement_page",
+      "description": "Use Playwright as a browser fallback: inject the saved session into localStorage, open achievement_list, and capture a screenshot and text preview.",
+      "effect": "local-write",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "headless": {
+            "description": "Defaults to true.",
+            "type": "boolean"
+          },
+          "screenshot_path": {
+            "description": "Optional output path. Default is ./artifacts/achievement-page.png",
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "clear_session",
+      "description": "Delete the locally saved Banxuebang session file.",
+      "effect": "local-delete",
+      "origin": "shared-backend",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "render_code_as_vscode_image",
+      "description": "Save the original source file and code-only VS Code-style PNG pages in the workspace. Optionally bind them to a draft for review; never uploads or submits.",
+      "effect": "local-write",
+      "origin": "standalone-adapter",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "file_name": {
+            "description": "Source filename, such as Main.java or main.py.",
+            "type": "string"
+          },
+          "code": {
+            "description": "Complete source code to save and render.",
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          },
+          "theme": {
+            "type": "string",
+            "enum": [
+              "dark",
+              "light"
+            ]
+          },
+          "draft_id": {
+            "description": "Existing draft to receive the source file and all screenshots.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file_name",
+          "code"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "import_workspace_files",
+      "description": "Copy local files or folders into the workspace. Originals are preserved; existing files are skipped or kept with another name.",
+      "effect": "local-write",
+      "origin": "standalone-adapter",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "paths": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "conflict_policy": {
+            "type": "string",
+            "enum": [
+              "skip",
+              "keep-both"
+            ]
+          }
+        },
+        "required": [
+          "paths"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "delete_workspace_file",
+      "description": "Delete a workspace file or empty folder. Nonempty folders are rejected. Use expected identity metadata from the listing to detect changed targets.",
+      "effect": "local-delete",
+      "origin": "standalone-adapter",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "file": {
+            "type": "string"
+          },
+          "expected": {
+            "type": "object",
+            "properties": {
+              "identity": {
+                "type": "string"
+              },
+              "modifiedAt": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "read_workspace_image",
+      "description": "Read a workspace image as a normalized PNG/JPEG/WebP/GIF data URL for the calling agent to inspect. BMP and AVIF are normalized to PNG; no model request is sent.",
+      "effect": "read/preview",
+      "origin": "standalone-adapter",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "file": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "render_pdf_pages",
+      "description": "Render a workspace PDF into page PNGs for the calling agent's visual review. Returns saved paths and optional data URLs; does not invoke a model or upload files.",
+      "effect": "local-write",
+      "origin": "standalone-adapter",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "file": {
+            "description": "Workspace PDF path.",
+            "type": "string"
+          },
+          "page_numbers": {
+            "maxItems": 30,
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "max_pages": {
+            "description": "Default 12; absolute maximum 30.",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 30
+          },
+          "include_data_urls": {
+            "description": "Default false; MCP still returns native image blocks.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "sourceRepository": "https://github.com/GRAY-XY/BXB_tools",
+  "runtimeFiles": {
+    "backend/src/academic-context-coordinator.js": "8119d76e3c877bafc6a4affce8d7d1197f2e5a189a994e521c75c69d46f0a3e2",
+    "backend/src/banxuebang-client.js": "d070b7995f21e70f4acf25ba98c5b8cabf743cab186dea4d97b799a3c1a5a772",
+    "backend/src/code-image-preview.js": "ce12f52d9cf14d2cf2ea0c21d1635a02fe917417549731b8ef0b458ca1478f04",
+    "backend/src/draft-attachments.js": "1484706def46502af403d7e7f0182c31734a54a30fc55caaee87e83ff927d091",
+    "backend/src/draft-store.js": "ab63b2ce147ebc240f8e42af6b8759303fc01b1e562d1eac4637bd110101f0a3",
+    "backend/src/model-image.js": "5e6e9deb1ba77fccdd2b8fe498be418c2426a9e4211b5edff3e1741cc55437b7",
+    "backend/src/playwright-runtime.js": "90aa806415aabda0e7760ebd0f8469ee7fa0bf4968e52fc48886da6fdb130cae",
+    "backend/src/session-store.js": "13417facc966d419696f0cf58a268895fd42b63fbc00ec0649dd976a9895ce15",
+    "backend/src/tool-definitions.js": "478758c904c58adbb2c69815c904f43c1e0edbfacd98e0445a6c50b500f6a716"
+  },
+  "sourceLineEndings": "LF",
+  "dependencyLockSha256": "0458def7fd65c48ff63da996cdc4347634c1f542ea0366492add35047227b60c",
+  "toolCount": 52,
+  "sharedToolCount": 47
+}

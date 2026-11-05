@@ -1,0 +1,30 @@
+{
+  "name": "@gray-xy/banxuebang-agent-skill",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "Standalone Banxuebang Agent Skill with every shared tool, code previews, CLI, and MCP stdio.",
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "doctor": "node scripts/bxb.mjs doctor",
+    "tools": "node scripts/bxb.mjs list",
+    "mcp": "node scripts/mcp.mjs"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.18.0",
+    "@napi-rs/canvas": "0.1.80",
+    "dompurify": "^3.4.11",
+    "katex": "^0.17.0",
+    "mammoth": "^1.12.0",
+    "markdown-it": "^14.2.0",
+    "markdown-it-texmath": "^1.0.0",
+    "pdf-parse": "^2.4.5",
+    "playwright": "^1.54.0",
+    "undici": "^8.5.0",
+    "zod": "^3.24.1"
+  }
+}
