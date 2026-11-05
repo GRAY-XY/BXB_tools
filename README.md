@@ -69,6 +69,21 @@ The macOS Electron + React app can be packaged on macOS with `bash ./release/scr
 
 ## Local Tool Layer
 
+### Standalone Agent Skill
+
+[`skills/banxuebang/`](skills/banxuebang/SKILL.md) is a portable Agent Skill package with `SKILL.md`, agent metadata, a complete tool catalog, vendored runtime source, locked dependencies, a CLI, and an MCP stdio server. Copy that folder to a receiving agent's skill directory and run its `scripts/setup.mjs` once. It includes every shared Banxuebang tool, code/source screenshot binding, workspace import/delete, image reads, and PDF page rendering. Account data is stored outside the package; no desktop application or model-provider key is required.
+
+```sh
+node skills/banxuebang/scripts/setup.mjs --browser
+node skills/banxuebang/scripts/bxb.mjs doctor
+node skills/banxuebang/scripts/bxb.mjs list
+node skills/banxuebang/scripts/bxb.mjs call session_status
+```
+
+Maintain the runtime snapshot and generated schemas with `node release/scripts/sync-agent-skill.mjs`; use `--check` to detect drift. This package exposes all tools, so the calling agent must obtain user authorization before actual uploads, submissions, messages, or destructive local operations. See the skill's linked references for installation, private state paths, and reviewed delivery.
+
+Create the source-only distribution ZIP and SHA-256 sidecar under `release/artifacts/agent-skills/` with `python release/scripts/package-agent-skill.py`.
+
 The root package can also be used directly as a local Banxuebang tool layer or MCP server.
 
 Start the MCP server:

@@ -1,0 +1,4305 @@
+import {
+  copyFile,
+  open,
+  lstat,
+  mkdir,
+  readdir,
+  readFile,
+  realpath,
+  rename,
+  rmdir,
+  rm,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
+import { constants as fsConstants, existsSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import path from "node:path";
+import { chromium } from "playwright";
+import { nativeBrowserCacheCandidates, prepareNativeChromium } from "./playwright-runtime.js";
+import { DraftStore } from "./draft-store.js";
+import { DraftAttachmentStore, MAX_DRAFT_ATTACHMENTS } from "./draft-attachments.js";
+
+const BASE_URL = "https://student.banxuebang.com";
+const BASIC_AUTH = "Basic YnhiLXdlYi1zOmJ4Yi13ZWItcw==";
+const STORAGE_KEYS = [
+  "tokens",
+  "userInfo",
+  "curClass",
+  "currTermId",
+  "curSubject",
+  "subjectList",
+  "termList",
+  "menuData",
+  "topMenuArray",
+  "deviceId",
+  "loginName",
+];
+const TEXT_FILE_EXTENSIONS = new Set([
+  ".c",
+  ".cc",
+  ".cpp",
+  ".cs",
+  ".h",
+  ".hpp",
+  ".jsx",
+  ".kt",
+  ".swift",
+  ".css",
+  ".csv",
+  ".go",
+  ".html",
+  ".htm",
+  ".java",
+  ".js",
+  ".json",
+  ".log",
+  ".md",
+  ".py",
+  ".rb",
+  ".rs",
+  ".sh",
+  ".sql",
+  ".svg",
+  ".text",
+  ".ts",
+  ".tsx",
+  ".txt",
+  ".xml",
+  ".yaml",
+  ".yml",
+]);
+const IMAGE_EXTENSIONS = new Set([".bmp", ".gif", ".jpeg", ".jpg", ".png", ".svg", ".webp"]);
+const VIDEO_EXTENSIONS = new Set([".avi", ".m4v", ".mov", ".mp4", ".mkv", ".webm"]);
+const AUDIO_EXTENSIONS = new Set([".aac", ".flac", ".m4a", ".mp3", ".ogg", ".wav"]);
+const ALL_SUBJECT_ID = "__all_courses__";
+const ALL_SUBJECT_NAMES = new Set(["全部课程", "全部", "all", "all courses"]);
+const WEB_SEARCH_ENGINES = new Set(["bing"]);
+const DRAFT_DELIVERY_TARGETS = new Set(["task", "teacher_private_message"]);
+const FINAL_DRAFT_STATUSES = new Set(["submitted", "sent_to_teacher"]);
+const PRIVATE_MESSAGE_CHUNK_LIMIT = 800;
+
+function defaultWorkspaceDir() {
+  return process.env.BANXUEBANG_WORKSPACE_DIR || path.join(process.cwd(), ".banxuebang", "workspace");
+}
+
+function buildAllSubject() {
+  return {
+    id: ALL_SUBJECT_ID,
+    classId: null,
+    name: "全部课程",
+    cnName: "全部课程",
+    allSubjects: true,
+    unSubmitCount: null,
+  };
+}
+
+function isAllSubject(subject) {
+  return Boolean(subject?.allSubjects || normalizeId(subject?.id) === ALL_SUBJECT_ID);
+}
+
+function isAllSubjectName(value) {
+  return ALL_SUBJECT_NAMES.has(normalizeName(value));
+}
+
+function parseMaybeJson(value) {
+  if (typeof value !== "string") {
+    return value ?? null;
+  }
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+function stringifyStorageValue(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  return typeof value === "string" ? value : JSON.stringify(value);
+}
+
+function ensureObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function normalizeId(value) {
+  return value === null || value === undefined ? null : String(value);
+}
+
+function findById(items, id, extraMatch) {
+  const targetId = normalizeId(id);
+  if (!targetId) {
+    return null;
+  }
+
+  return (
+    items.find((item) => {
+      if (normalizeId(item.id) !== targetId) {
+        return false;
+      }
+
+      return extraMatch ? extraMatch(item) : true;
+    }) || null
+  );
+}
+
+function normalizeName(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function findByName(items, name, selectors = [], extraMatch) {
+  const targetName = normalizeName(name);
+  if (!targetName) {
+    return null;
+  }
+
+  const getCandidateNames = (item) =>
+    selectors
+      .map((selector) => selector(item))
+      .filter(Boolean)
+      .map((value) => String(value).trim());
+
+  const exactMatch =
+    items.find((item) => {
+      if (extraMatch && !extraMatch(item)) {
+        return false;
+      }
+
+      return getCandidateNames(item).some((candidate) => normalizeName(candidate) === targetName);
+    }) || null;
+
+  if (exactMatch) {
+    return exactMatch;
+  }
+
+  return (
+    items.find((item) => {
+      if (extraMatch && !extraMatch(item)) {
+        return false;
+      }
+
+      return getCandidateNames(item).some((candidate) =>
+        normalizeName(candidate).includes(targetName),
+      );
+    }) || null
+  );
+}
+
+function maskToken(token) {
+  if (!token) {
+    return null;
+  }
+
+  if (token.length <= 12) {
+    return `${token.slice(0, 3)}***${token.slice(-2)}`;
+  }
+
+  return `${token.slice(0, 6)}...${token.slice(-4)}`;
+}
+
+function safeBusinessResult(result, endpoint) {
+  if (result && typeof result === "object" && "code" in result && result.code) {
+    const message = result.msg || result.message || `Business error on ${endpoint}`;
+    throw new Error(message);
+  }
+
+  return result;
+}
+
+function parseStorageMap(storage) {
+  return {
+    tokens: parseMaybeJson(storage.tokens),
+    userInfo: parseMaybeJson(storage.userInfo),
+    curClass: parseMaybeJson(storage.curClass),
+    currTermId: parseMaybeJson(storage.currTermId),
+    curSubject: parseMaybeJson(storage.curSubject),
+    subjectList: parseMaybeJson(storage.subjectList) || [],
+    termList: parseMaybeJson(storage.termList) || [],
+    menuData: parseMaybeJson(storage.menuData) || [],
+    topMenuArray: parseMaybeJson(storage.topMenuArray) || [],
+    loginName: parseMaybeJson(storage.loginName),
+    deviceId: parseMaybeJson(storage.deviceId),
+  };
+}
+
+function buildStorageFromContext(storage = {}, context = {}, auth = {}) {
+  return {
+    ...storage,
+    tokens: stringifyStorageValue(auth),
+    userInfo: stringifyStorageValue(context.userInfo),
+    curClass: stringifyStorageValue(context.curClass),
+    currTermId:
+      context.currTermId === null || context.currTermId === undefined
+        ? null
+        : String(context.currTermId),
+    curSubject: stringifyStorageValue(context.curSubject),
+    subjectList: stringifyStorageValue(context.subjectList || []),
+    termList: stringifyStorageValue(context.termList || []),
+    loginName:
+      context.loginName === null || context.loginName === undefined
+        ? storage.loginName ?? null
+        : String(context.loginName),
+    deviceId:
+      context.deviceId === null || context.deviceId === undefined
+        ? storage.deviceId ?? null
+        : String(context.deviceId),
+  };
+}
+
+function computeCountdown(endTime) {
+  if (!endTime) {
+    return { isEnd: false, days: null, hours: null, emergentType: null };
+  }
+
+  const end = new Date(String(endTime).replaceAll("-", "/"));
+  if (Number.isNaN(end.getTime())) {
+    return { isEnd: false, days: null, hours: null, emergentType: null };
+  }
+
+  const now = new Date();
+  if (now >= end) {
+    return { isEnd: true, days: "00", hours: "00", emergentType: null };
+  }
+
+  const diff = end.getTime() - now.getTime();
+  const daysNum = Math.floor(diff / 86400000);
+  const hoursNum = Math.floor((diff % 86400000) / 3600000);
+  const days = daysNum < 10 ? `0${daysNum}` : String(daysNum);
+  const hours = hoursNum < 10 ? `0${hoursNum}` : String(hoursNum);
+  const normalizedHours = days === "00" && hours === "00" ? "01" : hours;
+
+  let emergentType = 1;
+  if (daysNum >= 2) {
+    emergentType = 3;
+  } else if (daysNum >= 1) {
+    emergentType = 2;
+  }
+
+  return {
+    isEnd: false,
+    days,
+    hours: normalizedHours,
+    emergentType,
+  };
+}
+
+async function launchBrowser(headless) {
+  if (process.platform === "darwin") {
+    const roots = nativeBrowserCacheCandidates(null);
+    const executablePath = await prepareNativeChromium({ roots, installRoot: roots[0] });
+    try { return await chromium.launch({ headless, executablePath }); }
+    catch { throw new Error("登录浏览器无法启动，请重试或重新安装应用。请保留原有账号和配置。"); }
+  }
+  const browserRootCandidates = [
+    process.env.PLAYWRIGHT_BROWSERS_PATH,
+    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "ms-playwright") : null,
+    process.env.USERPROFILE ? path.join(process.env.USERPROFILE, "AppData", "Local", "ms-playwright") : null,
+  ].filter(Boolean);
+  const executableCandidates = browserRootCandidates.flatMap((browserRoot) => [
+    path.join(browserRoot, "chromium-1217", "chrome-win64", "chrome.exe"),
+    path.join(browserRoot, "chromium-1217", "chrome-win", "chrome.exe"),
+  ]);
+  const executablePath = executableCandidates.find((candidate) => existsSync(candidate));
+
+  try {
+    const launchOptions = {
+      headless,
+    };
+    if (executablePath) {
+      launchOptions.executablePath = executablePath;
+    } else {
+      launchOptions.channel = "chromium";
+    }
+    return await chromium.launch(launchOptions);
+  } catch (error) {
+    throw new Error(
+      `Failed to launch Playwright Chromium. Install the browser payload or extract ms-playwright-browsers.zip to the Playwright cache. Checked: ${executableCandidates.join(", ")}. Original error: ${error.message}`,
+    );
+  }
+}
+
+function enrichHomeworkRecord(item) {
+  const countdown = computeCountdown(item.endTime);
+  return { ...item, ...countdown, statusText: homeworkStatusText(item) };
+}
+
+function isUnsubmittedHomework(item) {
+  return item?.isParticipate === 0 || item?.isParticipate === false || item?.isParticipate === "0";
+}
+
+function isParticipatedHomework(item) {
+  return item?.isParticipate === 1 || item?.isParticipate === true || item?.isParticipate === "1";
+}
+
+function isEnabledFlag(value) {
+  return value === 1 || value === true || value === "1";
+}
+
+function submissionRecordId(record) {
+  return normalizeId(record?.id || record?.activityWorkCorrectId || record?.awcId);
+}
+
+function taskHasEnded(task) {
+  if (isEnabledFlag(task?.isEnd)) {
+    return true;
+  }
+
+  const endTime = Date.parse(task?.endTime || "");
+  return Number.isFinite(endTime) && endTime < Date.now();
+}
+
+function draftSubmissionConfirmationToken(preview) {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        draftId: preview.draftId,
+        taskId: preview.taskId,
+        classId: preview.classId,
+        draftText: preview.draftText,
+        mode: preview.mode,
+        submissionId: preview.submissionId,
+        isCorrectWork: preview.isCorrectWork,
+        retainedFileIds: toArray(preview.retainedAttachments).map((attachment) => attachment.fileId),
+        selectedAttachments: toArray(preview.selectedAttachments).map(({ id, fileName, sizeBytes, sha256 }) => ({ id, fileName, sizeBytes, sha256 })),
+      }),
+    )
+    .digest("hex");
+}
+
+function normalizeDeliveryTarget(value, fallback = "task") {
+  const normalized = String(value || "").trim();
+  return DRAFT_DELIVERY_TARGETS.has(normalized) ? normalized : fallback;
+}
+
+function normalizeDeliveryTargets(value, fallback = ["task"]) {
+  const items = Array.isArray(value) ? value : value ? [value] : fallback;
+  const normalized = items.map((item) => normalizeDeliveryTarget(item, null)).filter(Boolean);
+  return normalized.length ? Array.from(new Set(normalized)) : fallback;
+}
+
+function isFinalDraftStatus(status) {
+  return FINAL_DRAFT_STATUSES.has(String(status || "").trim());
+}
+
+function draftHasUnresolvedTaskSubmission(draft) {
+  return ["in_flight", "unknown"].includes(String(draft?.deliveryAttempt?.status || ""));
+}
+
+function draftHasUnresolvedTeacherMessage(draft) {
+  const messageAttempt = ensureObject(draft?.teacherMessageAttempt);
+  const messageStatus = String(messageAttempt.status || "");
+  const confirmedMessages = toArray(messageAttempt.confirmedMessages);
+  return ["in_flight", "unknown", "ready"].includes(messageStatus) ||
+    (messageStatus === "failed" && confirmedMessages.length > 0);
+}
+
+function draftHasUnresolvedDelivery(draft) {
+  return draftHasUnresolvedTaskSubmission(draft) || draftHasUnresolvedTeacherMessage(draft);
+}
+
+function assertDraftDeliverySettled(draft) {
+  if (draftHasUnresolvedDelivery(draft)) {
+    throw new Error("这份草稿有尚未核对或已部分送达的交付记录；请先处理交付状态后再编辑或删除。");
+  }
+}
+
+function draftNotFoundError(draftId) {
+  return new Error(`找不到草稿 ${draftId}。草稿可能已被删除，请刷新草稿列表后重试。`);
+}
+
+function draftPrivateMessageContactKey(contact) {
+  const source = ensureObject(contact?.raw || contact);
+  return [
+    normalizeId(source.id) || "",
+    normalizeId(source.classId) || "",
+    normalizeId(source.peerId) || "",
+    normalizeId(source.receiverId) || "",
+    normalizeId(source.senderId) || "",
+  ].join("|");
+}
+
+function draftPrivateMessageContactSummary(contact) {
+  const source = ensureObject(contact?.raw || contact);
+  return {
+    id: normalizeId(source.id),
+    classId: normalizeId(source.classId),
+    className: source.className || null,
+    peerId: normalizeId(source.peerId),
+    peerName: source.peerName || null,
+    peerType: source.peerType || null,
+    receiverId: normalizeId(source.receiverId),
+    receiverType: source.receiverType || null,
+    senderId: normalizeId(source.senderId),
+    senderType: source.senderType || null,
+    childId: normalizeId(source.childId) || "",
+    kinship: source.kinship || "",
+    courseName: source.courseName || null,
+  };
+}
+
+function draftPrivateMessageConfirmationToken(preview) {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        target: "teacher_private_message",
+        draftId: preview.draftId,
+        taskId: preview.taskId,
+        contactKey: preview.selectedContact?.contactKey || null,
+        chunks: toArray(preview.chunks).map((chunk) => chunk.text),
+      }),
+    )
+    .digest("hex");
+}
+
+function splitPrivateMessageText(text, maxChars = PRIVATE_MESSAGE_CHUNK_LIMIT) {
+  const normalized = String(text || "")
+    .replace(/\r/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{4,}/g, "\n\n\n")
+    .trim();
+  if (!normalized) {
+    return [];
+  }
+
+  const chunks = [];
+  let current = "";
+  const pushCurrent = () => {
+    const trimmed = current.trim();
+    if (trimmed) {
+      chunks.push(trimmed);
+    }
+    current = "";
+  };
+
+  for (const paragraph of normalized.split(/\n{2,}/)) {
+    const block = paragraph.trim();
+    if (!block) {
+      continue;
+    }
+
+    if (block.length > maxChars) {
+      pushCurrent();
+      for (let index = 0; index < block.length; index += maxChars) {
+        chunks.push(block.slice(index, index + maxChars).trim());
+      }
+      continue;
+    }
+
+    const candidate = current ? `${current}\n\n${block}` : block;
+    if (candidate.length > maxChars) {
+      pushCurrent();
+      current = block;
+    } else {
+      current = candidate;
+    }
+  }
+
+  pushCurrent();
+  return chunks.map((chunk, index) => ({
+    index: index + 1,
+    total: chunks.length,
+    text: chunk,
+    length: chunk.length,
+  }));
+}
+
+function collectTeacherNames(value) {
+  return toArray(value)
+    .flatMap((teacher) => [
+      teacher?.name,
+      teacher?.teacherName,
+      teacher?.realName,
+      teacher?.userName,
+      teacher?.cnName,
+    ])
+    .filter(Boolean)
+    .map((item) => String(item).trim())
+    .filter(Boolean);
+}
+
+function buildDraftPrivateMessageSignals(draft, detail) {
+  const taskSummary = ensureObject(detail?.taskSummary);
+  const task = ensureObject(detail?.task);
+  const subjectList = toArray(draft?.sourceSession?.availableSubjects || detail?.context?.availableSubjects);
+  const courseName = taskSummary.courseName || task.courseName || draft?.subjectName || "";
+  const matchingCourse = subjectList.find((course) => {
+    const names = [course?.name, course?.cnName, course?.courseName].filter(Boolean).map(normalizeName);
+    return normalizeName(courseName) && names.includes(normalizeName(courseName));
+  });
+
+  const teacherNames = [
+    taskSummary.createName,
+    task.createName,
+    ...collectTeacherNames(task.teacherList),
+    ...collectTeacherNames(task.activityTask?.teacherList),
+    ...collectTeacherNames(matchingCourse?.teacherList),
+  ]
+    .filter(Boolean)
+    .map((item) => String(item).trim())
+    .filter(Boolean);
+
+  return {
+    teacherNames: Array.from(new Set(teacherNames)),
+    courseNames: Array.from(new Set([courseName, draft?.subjectName].filter(Boolean).map((item) => String(item).trim()))),
+    taskTitle: taskSummary.activityName || task.activityName || draft?.taskTitle || "",
+  };
+}
+
+function scoreDraftPrivateContact(contact, signals) {
+  const peerName = normalizeName(contact?.peerName);
+  const courseName = normalizeName(contact?.courseName);
+  const className = normalizeName(contact?.className);
+  let score = 0;
+  const reasons = [];
+
+  for (const teacherName of signals.teacherNames || []) {
+    const normalized = normalizeName(teacherName);
+    if (!normalized) {
+      continue;
+    }
+    if (peerName && (peerName === normalized || peerName.includes(normalized) || normalized.includes(peerName))) {
+      score += 80;
+      reasons.push(`教师名匹配：${teacherName}`);
+    }
+  }
+
+  for (const name of signals.courseNames || []) {
+    const normalized = normalizeName(name);
+    if (!normalized) {
+      continue;
+    }
+    if (courseName && (courseName === normalized || courseName.includes(normalized) || normalized.includes(courseName))) {
+      score += 30;
+      reasons.push(`课程匹配：${name}`);
+    }
+    if (className && (className === normalized || className.includes(normalized) || normalized.includes(className))) {
+      score += 15;
+      reasons.push(`班级匹配：${name}`);
+    }
+  }
+
+  return {
+    matchScore: score,
+    matchReasons: Array.from(new Set(reasons)),
+    recommended: score > 0,
+  };
+}
+
+function buildDraftTeacherMessageText({ draft, detail }) {
+  const taskSummary = ensureObject(detail?.taskSummary);
+  const task = ensureObject(detail?.task);
+  const userName =
+    draft?.sourceSession?.user?.name ||
+    detail?.context?.user?.name ||
+    detail?.context?.userInfo?.name ||
+    "";
+  const courseName = taskSummary.courseName || task.courseName || draft?.subjectName || "未知课程";
+  const taskTitle = taskSummary.activityName || task.activityName || draft?.taskTitle || "未命名作业";
+  const taskId = normalizeId(detail?.taskId || draft?.taskId) || "-";
+  const hint = String(draft?.teacherMessageHint || "").trim();
+
+  return [
+    `老师您好${userName ? `，我是${userName}` : ""}。`,
+    "我想询问下面这份作业是否可以开放补交，或请老师协助处理：",
+    `课程：${courseName}`,
+    `作业：${taskTitle}`,
+    `Task ID：${taskId}`,
+    hint ? `补充说明：${hint}` : "",
+    "我已经整理好的作业内容如下：",
+    String(draft?.draftText || "").trim(),
+    "如果可以补交，麻烦老师开放一下补交入口或告知后续处理方式，谢谢老师。",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function homeworkStatusText(item) {
+  if (isUnsubmittedHomework(item)) {
+    return "未提交";
+  }
+  if (item?.correction === 1 || item?.correction === "1") {
+    return "待订正";
+  }
+  return item?.scoreLevel || item?.scoreTypeName || "已提交/已记录";
+}
+
+function toArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function decodeHtmlEntities(value) {
+  if (!value) {
+    return "";
+  }
+
+  return String(value)
+    .replaceAll("&nbsp;", " ")
+    .replaceAll("&amp;", "&")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&#39;", "'");
+}
+
+function stripHtml(value) {
+  if (!value) {
+    return "";
+  }
+
+  return decodeHtmlEntities(
+    String(value)
+      .replaceAll(/<br\s*\/?>/gi, "\n")
+      .replaceAll(/<\/p>/gi, "\n")
+      .replaceAll(/<[^>]+>/g, " ")
+      .replaceAll(/\r/g, "")
+      .replaceAll(/[ \t]+\n/g, "\n")
+      .replaceAll(/\n{3,}/g, "\n\n")
+      .replaceAll(/[ \t]{2,}/g, " ")
+      .trim(),
+  );
+}
+
+function buildTextPreview(text, maxChars = 4000) {
+  const normalized = String(text || "").trim();
+  if (!normalized) {
+    return {
+      text: "",
+      truncated: false,
+      totalChars: 0,
+    };
+  }
+
+  return {
+    text: normalized.slice(0, maxChars),
+    truncated: normalized.length > maxChars,
+    totalChars: normalized.length,
+  };
+}
+
+function sanitizeFileName(fileName, fallback = "attachment") {
+  const cleaned = String(fileName || "")
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")
+    .trim();
+
+  return cleaned || fallback;
+}
+
+export class WorkspaceError extends Error {
+  constructor(code, message, details = null) {
+    super(message);
+    this.name = "WorkspaceError";
+    this.code = code;
+    if (details) {
+      this.details = details;
+    }
+  }
+}
+
+function workspaceError(code, message, details = null) {
+  return new WorkspaceError(code, message, details);
+}
+
+const WORKSPACE_NAME_MAX_LENGTH = 255;
+const MAX_IMPORT_ITEMS = 50;
+const MAX_IMPORT_SCAN_ENTRIES = 5000;
+
+function validateWorkspaceFileName(fileName) {
+  const trimmed = String(fileName ?? "").trim();
+  if (!trimmed) {
+    throw workspaceError("unsupported_name", "文件名不能为空。");
+  }
+  if (trimmed === "." || trimmed === "..") {
+    throw workspaceError("unsupported_name", `不能使用“${trimmed}”作为文件名。`);
+  }
+  if (/[\\/]/.test(trimmed) || path.basename(trimmed) !== trimmed) {
+    throw workspaceError("unsupported_name", "文件名不能包含路径分隔符，请只输入文件名本身。");
+  }
+  if (/[\u0000-\u001f\u007f]/.test(trimmed)) {
+    throw workspaceError("unsupported_name", "文件名不能包含控制字符。");
+  }
+  const cleaned = trimmed.replace(/[<>:"|?*]/g, "_");
+  if (!cleaned || cleaned === "." || cleaned === "..") {
+    throw workspaceError("unsupported_name", "文件名无效，请换一个名称。");
+  }
+  if (cleaned.length > WORKSPACE_NAME_MAX_LENGTH) {
+    throw workspaceError("unsupported_name", "文件名过长，请缩短后再试。");
+  }
+  return cleaned;
+}
+
+function isInsideOrSame(rootPath, targetPath) {
+  const relative = path.relative(rootPath, targetPath);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function isStrictlyInside(rootPath, targetPath) {
+  const relative = path.relative(rootPath, targetPath);
+  return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+function fileIdentity(fileStat) {
+  return `${fileStat.dev}:${fileStat.ino}`;
+}
+
+async function pathExists(targetPath) {
+  try {
+    await lstat(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function nextAvailableWorkspaceTarget(rootPath, fileName) {
+  const parsed = path.parse(fileName);
+  let candidate = path.join(rootPath, fileName);
+  let index = 2;
+  while (await pathExists(candidate)) {
+    candidate = path.join(rootPath, `${parsed.name} (${index})${parsed.ext}`);
+    index += 1;
+  }
+  return candidate;
+}
+
+// Imported folders are copied file by file so that symlinks and special files can
+// never smuggle a path that points outside the workspace.
+async function scanImportSource(sourcePath) {
+  const queue = [sourcePath];
+  let scanned = 0;
+
+  while (queue.length) {
+    const currentPath = queue.pop();
+    const entries = await readdir(currentPath, { withFileTypes: true });
+    for (const entry of entries) {
+      scanned += 1;
+      if (scanned > MAX_IMPORT_SCAN_ENTRIES) {
+        return {
+          ok: false,
+          code: "import_too_large",
+          message: "文件夹包含的项目过多，请分开导入。",
+        };
+      }
+
+      const entryPath = path.join(currentPath, entry.name);
+      const label = path.relative(sourcePath, entryPath) || entry.name;
+      if (entry.isSymbolicLink()) {
+        return {
+          ok: false,
+          code: "blocked_symlink",
+          message: `文件夹中的“${label}”是符号链接，导入后可能指向工作区外部，已停止导入。`,
+        };
+      }
+      if (entry.isDirectory()) {
+        queue.push(entryPath);
+        continue;
+      }
+      if (!entry.isFile()) {
+        return {
+          ok: false,
+          code: "blocked_special_file",
+          message: `文件夹中的“${label}”不是普通文件，无法导入。`,
+        };
+      }
+    }
+  }
+
+  return { ok: true };
+}
+
+async function copyImportSource(sourcePath, targetPath, sourceStat) {
+  if (!sourceStat.isDirectory()) {
+    await copyFile(sourcePath, targetPath, fsConstants.COPYFILE_EXCL);
+    return;
+  }
+
+  await mkdir(targetPath);
+  const queue = [[sourcePath, targetPath]];
+  while (queue.length) {
+    const [fromDir, toDir] = queue.pop();
+    const entries = await readdir(fromDir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fromPath = path.join(fromDir, entry.name);
+      const toPath = path.join(toDir, entry.name);
+      if (entry.isDirectory()) {
+        await mkdir(toPath);
+        queue.push([fromPath, toPath]);
+      } else if (entry.isFile()) {
+        await copyFile(fromPath, toPath, fsConstants.COPYFILE_EXCL);
+      }
+    }
+  }
+}
+
+function summarizeLocalFile(filePath, workspaceDir, fileStat) {
+  const relativePath = path.relative(workspaceDir, filePath).replaceAll("\\", "/");
+  const extension = path.extname(filePath).toLowerCase();
+  return {
+    name: path.basename(filePath),
+    relativePath,
+    path: filePath,
+    extension,
+    size: fileStat.size,
+    modifiedAt: fileStat.mtime.toISOString(),
+    identity: fileIdentity(fileStat),
+    isDirectory: fileStat.isDirectory(),
+    category: fileStat.isDirectory()
+      ? "directory"
+      : IMAGE_EXTENSIONS.has(extension)
+        ? "image"
+        : VIDEO_EXTENSIONS.has(extension)
+          ? "video"
+          : AUDIO_EXTENSIONS.has(extension)
+            ? "audio"
+            : extension === ".pdf"
+              ? "pdf"
+              : extension === ".docx"
+                ? "docx"
+                : extension === ".doc"
+                  ? "doc"
+                  : TEXT_FILE_EXTENSIONS.has(extension)
+                    ? "text"
+                    : "file",
+  };
+}
+
+function parseDispositionFilename(contentDisposition) {
+  if (!contentDisposition) {
+    return null;
+  }
+
+  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    return decodeURIComponent(utf8Match[1]);
+  }
+
+  const asciiMatch = contentDisposition.match(/filename="?([^"]+)"?/i);
+  return asciiMatch?.[1] || null;
+}
+
+function getFileExtension(fileName, explicitExt = null) {
+  if (explicitExt) {
+    const normalized = String(explicitExt).trim();
+    return normalized.startsWith(".") ? normalized.toLowerCase() : `.${normalized.toLowerCase()}`;
+  }
+
+  return path.extname(String(fileName || "")).toLowerCase();
+}
+
+function guessAttachmentCategory(file) {
+  const extension = getFileExtension(
+    file?.fileName || file?.filename || file?.name,
+    file?.fileExt || file?.ext,
+  );
+  const mimeType = String(file?.fileType || file?.contenttype || "").toLowerCase();
+
+  if (IMAGE_EXTENSIONS.has(extension) || mimeType.startsWith("image/")) {
+    return 1;
+  }
+
+  if (VIDEO_EXTENSIONS.has(extension) || mimeType.startsWith("video/")) {
+    return 2;
+  }
+
+  if (AUDIO_EXTENSIONS.has(extension) || mimeType.startsWith("audio/")) {
+    return 3;
+  }
+
+  return 4;
+}
+
+function normalizeAttachment(file, source = "task") {
+  if (!file || typeof file !== "object") {
+    return null;
+  }
+
+  const raw = file.correctAttachment && typeof file.correctAttachment === "object"
+    ? { ...file, ...file.correctAttachment }
+    : file;
+  const fileId = normalizeId(raw.fileId || raw.correctFileId || raw.id);
+
+  if (!fileId) {
+    return null;
+  }
+
+  const fileName =
+    raw.fileName || raw.filename || raw.name || raw.originalFileName || `${fileId}`;
+  const fileExt = getFileExtension(fileName, raw.fileExt || raw.ext);
+
+  return {
+    fileId,
+    source,
+    name: raw.name || raw.fileName || raw.filename || fileName,
+    fileName,
+    fileExt,
+    fileType: raw.fileType || raw.contenttype || raw.mimeType || null,
+    fileSize: raw.fileSize || raw.filesize || null,
+    category: raw.category || guessAttachmentCategory(raw),
+    creatorId: raw.creatorId || raw.userid || null,
+    createTime: raw.createTime || raw.uploaddate || null,
+    raw,
+  };
+}
+
+function collectAttachments(files, source) {
+  return toArray(files)
+    .map((file) => normalizeAttachment(file, source))
+    .filter(Boolean);
+}
+
+function summarizeCourse(course) {
+  return {
+    id: normalizeId(course.id),
+    classId: normalizeId(course.classId),
+    name: course.cnName || course.name || null,
+    color: course.color || null,
+    teacherList: toArray(course.teacherList),
+    unSubmitCount: course.unSubmitCount ?? 0,
+  };
+}
+
+function summarizeTask(task) {
+  if (!task || typeof task !== "object") {
+    return null;
+  }
+
+  return {
+    id: normalizeId(task.id || task.activityId),
+    activityName: task.activityName || null,
+    courseName: task.courseName || null,
+    classId: normalizeId(task.classId),
+    createName: task.createName || null,
+    releaseTime: task.releaseTime || null,
+    endTime: task.endTime || null,
+    scoreTypeName: task.scoreTypeName || null,
+    scoreTypeColor: task.scoreTypeColor || null,
+    scoreCategory: task.scoreCategory ?? null,
+    homeworkType: task.homeworkType ?? null,
+    isParticipate: task.isParticipate ?? null,
+    correction: task.correction ?? null,
+    lastAwcId: normalizeId(task.lastAwcId),
+  };
+}
+
+function clampInt(value, fallback, { min = 1, max = 20 } = {}) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.max(min, Math.min(max, parsed));
+}
+
+function normalizeSearchEngine(engine) {
+  const normalized = String(engine || "bing").trim().toLowerCase();
+  if (!WEB_SEARCH_ENGINES.has(normalized)) {
+    throw new Error(`Unsupported search engine "${engine}". Supported engines: bing.`);
+  }
+  return normalized;
+}
+
+function normalizeHttpUrl(value) {
+  let url;
+  try {
+    url = new URL(String(value || ""));
+  } catch {
+    throw new Error(`Invalid URL "${value}".`);
+  }
+
+  if (!["http:", "https:"].includes(url.protocol)) {
+    throw new Error("Only http and https URLs can be opened.");
+  }
+  return url.toString();
+}
+
+function extractXmlTag(xml, tagName) {
+  const pattern = new RegExp(`<${tagName}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${tagName}>`, "i");
+  const match = String(xml || "").match(pattern);
+  if (!match) {
+    return "";
+  }
+
+  return decodeHtmlEntities(
+    match[1]
+      .replace(/^<!\[CDATA\[/, "")
+      .replace(/\]\]>$/, "")
+      .trim(),
+  );
+}
+
+function parseBingRssResults(xml, maxResults) {
+  return Array.from(String(xml || "").matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/gi))
+    .map((match) => {
+      const itemXml = match[1];
+      const title = stripHtml(extractXmlTag(itemXml, "title"));
+      const url = extractXmlTag(itemXml, "link").trim();
+      const snippet = stripHtml(extractXmlTag(itemXml, "description"));
+      const publishedAt = extractXmlTag(itemXml, "pubDate").trim() || null;
+      return { title, url, snippet, publishedAt };
+    })
+    .filter((item) => item.title && /^https?:\/\//i.test(item.url))
+    .slice(0, maxResults);
+}
+
+async function listWorkspaceEntries(
+  rootDir,
+  { maxEntries = 200, includeDirectories = false, query = "", currentDir = rootDir } = {},
+) {
+  let entries;
+  try {
+    entries = await readdir(currentDir, { withFileTypes: true });
+  } catch {
+    // A single unreadable subfolder should not hide the rest of the workspace.
+    return [];
+  }
+
+  const results = [];
+  for (const entry of entries) {
+    if (results.length >= maxEntries) {
+      break;
+    }
+    if (entry.name.startsWith(".")) {
+      continue;
+    }
+
+    const entryPath = path.join(currentDir, entry.name);
+    const relativePath = path.relative(rootDir, entryPath).replaceAll("\\", "/");
+    const matchesQuery =
+      !query ||
+      entry.name.toLowerCase().includes(query) ||
+      relativePath.toLowerCase().includes(query);
+
+    if (entry.isDirectory()) {
+      if (includeDirectories && matchesQuery) {
+        results.push({ path: entryPath, isDirectory: true });
+      }
+      if (results.length < maxEntries) {
+        const nested = await listWorkspaceEntries(rootDir, {
+          maxEntries: maxEntries - results.length,
+          includeDirectories,
+          query,
+          currentDir: entryPath,
+        });
+        results.push(...nested);
+      }
+    } else if (entry.isFile()) {
+      if (matchesQuery) {
+        results.push({ path: entryPath, isDirectory: false });
+      }
+    }
+  }
+
+  return results;
+}
+
+function getPrivateMessagePeer(contact) {
+  if (!contact || typeof contact !== "object") {
+    return {};
+  }
+
+  const selfIsReceiver = contact.receiverType === "S";
+  return {
+    id: normalizeId(selfIsReceiver ? contact.senderId : contact.receiverId),
+    name: selfIsReceiver ? contact.senderName : contact.receiverName,
+    type: selfIsReceiver ? contact.senderType : contact.receiverType,
+    avatar: selfIsReceiver ? contact.senderAvatar : contact.receiverAvatar,
+    sexCode: selfIsReceiver ? contact.senderSexCode : contact.receiverSexCode,
+  };
+}
+
+function summarizePrivateContact(contact) {
+  const peer = getPrivateMessagePeer(contact);
+  return {
+    id: normalizeId(contact.id),
+    classId: normalizeId(contact.classId),
+    className: contact.className || null,
+    peerId: peer.id,
+    peerName: peer.name || null,
+    peerType: peer.type || null,
+    peerAvatar: peer.avatar || null,
+    peerSexCode: peer.sexCode ?? null,
+    receiverId: normalizeId(contact.receiverId),
+    receiverType: contact.receiverType || null,
+    senderId: normalizeId(contact.senderId),
+    senderType: contact.senderType || null,
+    childId: normalizeId(contact.childId) || "",
+    kinship: contact.kinship || "",
+    unreadNum: contact.unreadNum ?? 0,
+    lastTime: contact.lastTime || null,
+    lastContent: contact.lastContent || "",
+    courseName: contact.courseName || null,
+    courseColor: contact.courseColor || null,
+  };
+}
+
+function summarizePrivateMessage(message) {
+  return {
+    id: normalizeId(message.id),
+    classId: normalizeId(message.classId),
+    className: message.className || null,
+    receiverId: normalizeId(message.receiverId),
+    receiverName: message.receiverName || null,
+    receiverType: message.receiverType || null,
+    senderId: normalizeId(message.senderId),
+    senderName: message.senderName || null,
+    senderType: message.senderType || null,
+    content: message.content || "",
+    contentType: message.contentType || "T",
+    readFlag: message.readFlag ?? null,
+    revocation: message.revocation ?? 0,
+    createTime: message.createTime || null,
+  };
+}
+
+function parseTextBuffer(buffer, extension) {
+  const text = buffer.toString("utf8");
+  if (extension === ".html" || extension === ".htm") {
+    return stripHtml(text);
+  }
+
+  return text;
+}
+
+export class BanxuebangClient {
+  constructor(store, draftStore = new DraftStore()) {
+    this.store = store;
+    this.draftStore = draftStore;
+    this.submittingDraftIds = new Set();
+    this.submittingTaskIds = new Set();
+    this.sendingDraftMessageIds = new Set();
+    this.sendingTaskContactKeys = new Set();
+    this.pendingTermSwitches = new WeakMap();
+  }
+
+  async getSession() {
+    return this.store.load();
+  }
+
+  summarizeSession(session) {
+    if (!session) {
+      return {
+        ready: false,
+        baseUrl: BASE_URL,
+        sessionFile: this.store.sessionFile,
+      };
+    }
+
+    const context = ensureObject(session.context);
+    const currentSubject = ensureObject(context.curSubject);
+    const currentClass = ensureObject(context.curClass);
+    const userInfo = ensureObject(context.userInfo);
+
+    return {
+      ready: Boolean(session.auth?.access_token && userInfo.id),
+      baseUrl: session.baseUrl || BASE_URL,
+      sessionFile: this.store.sessionFile,
+      capturedAt: session.capturedAt || null,
+      loginSource: session.source || null,
+      accessToken: maskToken(session.auth?.access_token),
+      refreshToken: maskToken(session.auth?.refresh_token),
+      user: userInfo.id
+        ? {
+            id: userInfo.id,
+            name: userInfo.userName || userInfo.realName || null,
+            loginName: context.loginName || null,
+          }
+        : null,
+      currentClass: currentClass.id
+        ? {
+            id: currentClass.id,
+            name: currentClass.className || currentClass.name || null,
+            campusId: currentClass.campusId || null,
+          }
+        : null,
+      currentTermId: context.currTermId || null,
+      currentSubject: currentSubject.id
+        ? {
+            id: currentSubject.id,
+            classId: currentSubject.classId || null,
+            name: currentSubject.cnName || currentSubject.name || null,
+            allSubjects: Boolean(currentSubject.allSubjects),
+            unSubmitCount: currentSubject.unSubmitCount ?? null,
+          }
+        : null,
+      availableTerms: (context.termList || []).map((term) => ({
+        id: term.id,
+        name: term.name || term.termName || null,
+        status: term.status ?? null,
+      })),
+      availableSubjects: (context.subjectList || []).map((subject) => ({
+        id: subject.id,
+        classId: subject.classId || null,
+        name: subject.cnName || subject.name || null,
+        color: subject.color || null,
+        teacherList: toArray(subject.teacherList),
+        unSubmitCount: subject.unSubmitCount ?? null,
+      })),
+    };
+  }
+
+  async requireSession() {
+    const session = await this.getSession();
+    if (!session || !session.auth?.access_token || !session.context?.userInfo?.id) {
+      throw new Error(
+        "No usable Banxuebang session found. Run interactive_login or import_browser_storage first.",
+      );
+    }
+
+    return session;
+  }
+
+  workspaceDir() {
+    return defaultWorkspaceDir();
+  }
+
+  // Resolves the configured workspace directory to its canonical path so that
+  // every boundary check below compares like with like.
+  async workspaceRoot() {
+    const configured = this.workspaceDir();
+    await mkdir(configured, { recursive: true });
+    try {
+      return await realpath(configured);
+    } catch {
+      return path.resolve(configured);
+    }
+  }
+
+  async ensureWorkspaceDir() {
+    return this.workspaceRoot();
+  }
+
+  async assertWorkspaceTargetPath(targetPath) {
+    const root = await this.workspaceRoot();
+    if (targetPath === root || !isStrictlyInside(root, targetPath)) {
+      throw workspaceError("outside_workspace", "目标必须位于当前工作区内。");
+    }
+
+    const realParent = await realpath(path.dirname(targetPath)).catch(() => null);
+    if (!realParent || !isInsideOrSame(root, realParent)) {
+      throw workspaceError("outside_workspace", "目标所在目录不在当前工作区内。");
+    }
+
+    return targetPath;
+  }
+
+  // Validates an existing entry: never follows a final symlink, never accepts a
+  // parent directory that resolves outside the workspace, never the root itself.
+  async inspectWorkspaceEntry(candidatePath) {
+    const root = await this.workspaceRoot();
+    if (candidatePath === root) {
+      throw workspaceError("workspace_root", "不能对工作区根目录执行该操作。");
+    }
+    if (!isStrictlyInside(root, candidatePath)) {
+      throw workspaceError("outside_workspace", "目标必须位于当前工作区内。");
+    }
+
+    let entryStat;
+    try {
+      entryStat = await lstat(candidatePath);
+    } catch {
+      return null;
+    }
+    if (entryStat.isSymbolicLink()) {
+      throw workspaceError(
+        "blocked_symlink",
+        `“${path.basename(candidatePath)}”是符号链接，工作区操作不会跟随符号链接。`,
+      );
+    }
+
+    const realParent = await realpath(path.dirname(candidatePath)).catch(() => null);
+    if (!realParent || !isInsideOrSame(root, realParent)) {
+      throw workspaceError("outside_workspace", "目标所在目录不在当前工作区内。");
+    }
+
+    return { path: candidatePath, fileStat: entryStat };
+  }
+
+  async resolveWorkspaceEntry(fileRef) {
+    const root = await this.workspaceRoot();
+    const target = String(fileRef ?? "").trim();
+    if (!target) {
+      throw workspaceError("not_found", "请先选择要操作的文件。");
+    }
+
+    const directPath = path.resolve(root, target);
+    if (directPath === root) {
+      throw workspaceError("workspace_root", "不能对工作区根目录执行该操作。");
+    }
+    if (isStrictlyInside(root, directPath)) {
+      const entry = await this.inspectWorkspaceEntry(directPath);
+      if (entry) {
+        return entry;
+      }
+    }
+
+    const entries = await listWorkspaceEntries(root, { maxEntries: 500, includeDirectories: true });
+    const normalized = target.replaceAll("\\", "/").toLowerCase();
+    const match = entries.find((entry) => {
+      const relativePath = path.relative(root, entry.path).replaceAll("\\", "/").toLowerCase();
+      return relativePath === normalized || path.basename(entry.path).toLowerCase() === normalized;
+    });
+    if (!match) {
+      throw workspaceError("not_found", `工作区中找不到“${target}”，它可能已被移动或删除。`);
+    }
+
+    const resolved = await this.inspectWorkspaceEntry(match.path);
+    if (!resolved) {
+      throw workspaceError("not_found", `工作区中找不到“${target}”，它可能已被移动或删除。`);
+    }
+    return resolved;
+  }
+
+  async resolveWorkspaceFile(fileRef) {
+    const entry = await this.resolveWorkspaceEntry(fileRef);
+    return entry.path;
+  }
+
+  async listWorkspaceFiles({ query = "", maxFiles = 200, includeDirectories = false } = {}) {
+    const workspaceDir = await this.workspaceRoot();
+    const limit = clampInt(maxFiles, 200, { min: 1, max: 500 });
+    const normalizedQuery = String(query || "").trim().toLowerCase();
+    const entries = await listWorkspaceEntries(workspaceDir, {
+      maxEntries: limit,
+      includeDirectories: includeDirectories === true,
+      query: normalizedQuery,
+    });
+    const files = [];
+
+    for (const entry of entries) {
+      let fileStat;
+      try {
+        fileStat = await stat(entry.path);
+      } catch {
+        // The entry disappeared between the directory scan and this stat call.
+        continue;
+      }
+      const summary = summarizeLocalFile(entry.path, workspaceDir, fileStat);
+      files.push(summary);
+    }
+
+    files.sort((left, right) => String(right.modifiedAt).localeCompare(String(left.modifiedAt)));
+    return {
+      workspaceDir,
+      count: files.length,
+      files,
+    };
+  }
+
+  async readWorkspaceFile({ file, maxChars = 8000 } = {}) {
+    const entry = await this.resolveWorkspaceEntry(file);
+    if (entry.fileStat.isDirectory()) {
+      throw workspaceError("is_directory", `“${path.basename(entry.path)}”是文件夹，不能作为文件读取。`);
+    }
+    const result = await this.readLocalAttachment(entry.path, maxChars);
+    return {
+      workspaceDir: await this.workspaceRoot(),
+      file: result,
+    };
+  }
+
+  async renameWorkspaceFile({ file, newName } = {}) {
+    const workspaceDir = await this.workspaceRoot();
+    const entry = await this.resolveWorkspaceEntry(file);
+    const oldPath = entry.path;
+    const safeName = validateWorkspaceFileName(newName);
+    // Only files inherit the previous extension; a folder keeps the typed name
+    // even when it contains a dot.
+    const nextName = path.extname(safeName) || entry.fileStat.isDirectory()
+      ? safeName
+      : `${safeName}${path.extname(oldPath)}`;
+    const nextPath = path.join(path.dirname(oldPath), nextName);
+    await this.assertWorkspaceTargetPath(nextPath);
+
+    // A case-only rename targets the same inode on case-insensitive file
+    // systems, so comparing paths alone would reject it as a conflict.
+    const existingStat = await lstat(nextPath).catch(() => null);
+    if (existingStat && (existingStat.dev !== entry.fileStat.dev || existingStat.ino !== entry.fileStat.ino)) {
+      throw workspaceError("name_conflict", `工作区中已存在“${nextName}”，原文件未被覆盖。`, {
+        name: nextName,
+      });
+    }
+
+    if (oldPath !== nextPath) await rename(oldPath, nextPath);
+    const fileStat = await stat(nextPath);
+    return {
+      workspaceDir,
+      oldPath,
+      file: summarizeLocalFile(nextPath, workspaceDir, fileStat),
+    };
+  }
+
+  async deleteWorkspaceFile({ file, expected } = {}) {
+    const workspaceDir = await this.workspaceRoot();
+    const entry = await this.resolveWorkspaceEntry(file);
+    const filePath = entry.path;
+    const fileStat = entry.fileStat;
+    const name = path.basename(filePath);
+
+    if (!fileStat.isFile() && !fileStat.isDirectory()) {
+      throw workspaceError("blocked_special_file", `无法删除“${name}”：它不是普通文件或文件夹。`);
+    }
+    if (fileStat.isDirectory()) {
+      const children = await readdir(filePath).catch(() => null);
+      if (children && children.length) {
+        throw workspaceError(
+          "directory_not_empty",
+          `无法删除“${name}”：文件夹不是空的。应用不提供递归删除。`,
+        );
+      }
+    }
+
+    const expectedIdentity = expected && typeof expected === "object" ? String(expected.identity || "") : "";
+    const expectedModifiedAt = expected && typeof expected === "object" ? String(expected.modifiedAt || "") : "";
+    if (
+      (expectedIdentity && expectedIdentity !== fileIdentity(fileStat)) ||
+      (expectedModifiedAt && expectedModifiedAt !== fileStat.mtime.toISOString())
+    ) {
+      throw workspaceError("target_changed", `“${name}”在确认后发生了变化，已取消删除，请重新确认。`);
+    }
+
+    const deleted = summarizeLocalFile(filePath, workspaceDir, fileStat);
+    if (fileStat.isDirectory()) {
+      // rmdir only ever removes an empty directory, so a file created between
+      // the check above and this call fails the delete instead of recursing.
+      try {
+        await rmdir(filePath);
+      } catch (error) {
+        if (error?.code === "ENOTEMPTY" || error?.code === "EEXIST") {
+          throw workspaceError(
+            "directory_not_empty",
+            `无法删除“${name}”：文件夹不是空的。应用不提供递归删除。`,
+          );
+        }
+        if (error?.code === "ENOENT") {
+          throw workspaceError("not_found", `工作区中找不到“${name}”，它可能已被删除。`);
+        }
+        throw error;
+      }
+    } else {
+      await unlink(filePath);
+    }
+    return {
+      ok: true,
+      workspaceDir,
+      deleted,
+    };
+  }
+
+  async writeWorkspaceTextFile({ fileName, content, overwrite = false } = {}) {
+    const workspaceDir = await this.workspaceRoot();
+    const safeName = validateWorkspaceFileName(fileName);
+    const filePath = await this.assertWorkspaceTargetPath(path.join(workspaceDir, safeName));
+
+    // "wx" creates exclusively, so nothing can be overwritten between a
+    // separate existence check and the write.
+    try {
+      await writeFile(filePath, String(content ?? ""), { encoding: "utf8", flag: overwrite ? "w" : "wx" });
+    } catch (error) {
+      if (error?.code === "EEXIST") {
+        throw workspaceError("name_conflict", `工作区中已存在“${safeName}”，原文件未被覆盖。`, {
+          name: safeName,
+        });
+      }
+      if (error?.code === "EISDIR" || error?.code === "EPERM") {
+        throw workspaceError("is_directory", `“${safeName}”与已有文件夹同名，请换一个名称。`);
+      }
+      throw error;
+    }
+
+    const fileStat = await stat(filePath);
+    return {
+      workspaceDir,
+      file: summarizeLocalFile(filePath, workspaceDir, fileStat),
+    };
+  }
+
+  // Copies user-picked files and folders into the workspace. Source items are
+  // only ever read; existing workspace files are never overwritten unless the
+  // caller explicitly asks for "keep-both", which picks a free name instead.
+  async importWorkspaceItems({ paths = [], conflictPolicy = "skip" } = {}) {
+    const workspaceDir = await this.workspaceRoot();
+    const policy = conflictPolicy === "keep-both" ? "keep-both" : "skip";
+    const sources = Array.isArray(paths) ? paths.slice(0, MAX_IMPORT_ITEMS) : [];
+    const imported = [];
+    const conflicts = [];
+    const blocked = [];
+
+    for (const rawSource of sources) {
+      const raw = String(rawSource ?? "").trim();
+      if (!raw) {
+        blocked.push({ sourcePath: "", code: "not_found", message: "导入路径为空。" });
+        continue;
+      }
+
+      const sourcePath = path.resolve(raw);
+      const originalName = path.basename(sourcePath);
+      let sourceStat;
+      try {
+        sourceStat = await lstat(sourcePath);
+      } catch {
+        blocked.push({
+          sourcePath,
+          code: "not_found",
+          message: `找不到“${originalName}”，它可能已被移动或删除。`,
+        });
+        continue;
+      }
+
+      if (sourceStat.isSymbolicLink()) {
+        blocked.push({
+          sourcePath,
+          code: "blocked_symlink",
+          message: `“${originalName}”是符号链接，为避免指向工作区外部，未导入。`,
+        });
+        continue;
+      }
+      if (!sourceStat.isFile() && !sourceStat.isDirectory()) {
+        blocked.push({
+          sourcePath,
+          code: "blocked_special_file",
+          message: `“${originalName}”不是普通文件或文件夹，无法导入。`,
+        });
+        continue;
+      }
+      // Canonicalize so that a symlinked ancestor (for example /var on macOS)
+      // cannot disguise a source that already lives inside the workspace.
+      const realSourcePath = await realpath(sourcePath).catch(() => sourcePath);
+      if (isInsideOrSame(workspaceDir, realSourcePath)) {
+        blocked.push({
+          sourcePath,
+          code: "already_in_workspace",
+          message: `“${originalName}”已经在工作区内，无需重复导入。`,
+        });
+        continue;
+      }
+      if (originalName.startsWith(".")) {
+        blocked.push({
+          sourcePath,
+          code: "unsupported_name",
+          message: `“${originalName}”以“.”开头，不会显示在文件列表中，已跳过。`,
+        });
+        continue;
+      }
+
+      const safeName = originalName.replace(/[<>:"|?*\u0000-\u001f]/g, "_").trim() || "imported-item";
+      let targetPath = path.join(workspaceDir, safeName);
+      if (await pathExists(targetPath)) {
+        if (policy !== "keep-both") {
+          conflicts.push({
+            sourcePath,
+            name: safeName,
+            code: "name_conflict",
+            message: `工作区中已存在“${safeName}”，原文件未被覆盖。`,
+          });
+          continue;
+        }
+        targetPath = await nextAvailableWorkspaceTarget(workspaceDir, safeName);
+      }
+      const targetName = path.basename(targetPath);
+
+      if (sourceStat.isDirectory()) {
+        const scan = await scanImportSource(sourcePath);
+        if (!scan.ok) {
+          blocked.push({ sourcePath, code: scan.code, message: scan.message });
+          continue;
+        }
+      }
+
+      try {
+        await copyImportSource(sourcePath, targetPath, sourceStat);
+      } catch (error) {
+        if (error?.code === "EEXIST") {
+          conflicts.push({
+            sourcePath,
+            name: targetName,
+            code: "name_conflict",
+            message: `工作区中已存在“${targetName}”，原文件未被覆盖。`,
+          });
+          continue;
+        }
+        // Exclusive creation failed midway, so only undo what this call made.
+        await rm(targetPath, { recursive: true, force: true }).catch(() => {});
+        blocked.push({
+          sourcePath,
+          code: "io_error",
+          message: `复制“${originalName}”失败：${error?.message || "未知错误"}`,
+        });
+        continue;
+      }
+
+      imported.push({
+        name: targetName,
+        relativePath: path.relative(workspaceDir, targetPath).replaceAll("\\", "/"),
+        path: targetPath,
+        sourcePath,
+        kind: sourceStat.isDirectory() ? "directory" : "file",
+        renamed: targetName !== originalName,
+      });
+    }
+
+    return {
+      workspaceDir,
+      conflictPolicy: policy,
+      imported,
+      conflicts,
+      blocked,
+    };
+  }
+
+  async saveSession(session) {
+    await this.store.save(session);
+    return session;
+  }
+
+  async captureSessionFromPage(page, source) {
+    const storage = await page.evaluate((keys) => {
+      return Object.fromEntries(keys.map((key) => [key, localStorage.getItem(key)]));
+    }, STORAGE_KEYS);
+
+    const session = this.buildSessionFromStorage(storage, source);
+    await this.saveSession(session);
+    await this.refreshContext(session);
+    return session;
+  }
+
+  buildSessionFromStorage(storage, source = "imported-storage") {
+    const parsed = parseStorageMap(storage);
+    const auth = ensureObject(parsed.tokens);
+    const userInfo = ensureObject(parsed.userInfo);
+
+    if (!auth.access_token) {
+      throw new Error("Imported storage does not contain tokens.access_token.");
+    }
+
+    if (!userInfo.id) {
+      throw new Error("Imported storage does not contain userInfo.id.");
+    }
+
+    const context = {
+      userInfo,
+      curClass: parsed.curClass,
+      currTermId: parsed.currTermId,
+      curSubject: parsed.curSubject,
+      subjectList: Array.isArray(parsed.subjectList) ? parsed.subjectList : [],
+      termList: Array.isArray(parsed.termList) ? parsed.termList : [],
+      menuData: Array.isArray(parsed.menuData) ? parsed.menuData : [],
+      topMenuArray: Array.isArray(parsed.topMenuArray) ? parsed.topMenuArray : [],
+      loginName: parsed.loginName,
+      deviceId: parsed.deviceId,
+    };
+
+    return {
+      baseUrl: BASE_URL,
+      source,
+      capturedAt: new Date().toISOString(),
+      auth: {
+        ...auth,
+        obtainedAt: new Date().toISOString(),
+      },
+      storage: buildStorageFromContext(storage, context, auth),
+      context,
+    };
+  }
+
+  async interactiveLogin({ headless = false, timeoutMs = 300000 } = {}) {
+    let browser;
+    browser = await launchBrowser(headless);
+
+    try {
+      const context = await browser.newContext();
+      const page = await context.newPage();
+
+      await page.goto(`${BASE_URL}/achievement_list`, { waitUntil: "domcontentloaded" });
+
+      await page.waitForFunction(
+        () => {
+          const tokens = localStorage.getItem("tokens");
+          const userInfo = localStorage.getItem("userInfo");
+          return Boolean(tokens && userInfo);
+        },
+        undefined,
+        { timeout: timeoutMs },
+      );
+      const session = await this.captureSessionFromPage(page, "interactive-login");
+
+      return {
+        ...this.summarizeSession(session),
+        finalUrl: page.url(),
+        note: "Interactive login captured browser localStorage and refreshed page context.",
+      };
+    } finally {
+      await browser?.close();
+    }
+  }
+
+  async loginWithCredentials({
+    username,
+    password,
+    headless = false,
+    timeoutMs = 60000,
+    agreeTerms = true,
+  } = {}) {
+    if (!username || !password) {
+      throw new Error("username and password are required.");
+    }
+
+    let browser;
+    browser = await launchBrowser(headless);
+
+    try {
+      const context = await browser.newContext();
+      const page = await context.newPage();
+
+      await page.goto(`${BASE_URL}/login`, {
+        waitUntil: "networkidle",
+        timeout: 60000,
+      });
+
+      await page.getByPlaceholder("请输入账号").fill(String(username));
+      await page.getByPlaceholder("请输入密码").fill(String(password));
+
+      if (agreeTerms) {
+        const checkbox = page.locator('input[type="checkbox"]').first();
+        if ((await checkbox.count()) > 0 && !(await checkbox.isChecked())) {
+          const visibleControl = checkbox.locator("xpath=..").locator(".el-checkbox__inner");
+          if ((await visibleControl.count()) > 0 && (await visibleControl.isVisible())) {
+            await visibleControl.click();
+          } else {
+            await checkbox.evaluate((element) => element.click());
+          }
+          if (!(await checkbox.isChecked())) {
+            throw new Error("无法确认办学帮用户协议和隐私政策，请稍后重试。");
+          }
+        }
+      }
+
+      const loginButton = page.getByRole("button", { name: /登\s*录/ }).first();
+      if ((await loginButton.count()) === 0 || !(await loginButton.isVisible())) {
+        throw new Error("无法找到办学帮登录按钮，请稍后重试。");
+      }
+      await loginButton.click();
+
+      try {
+        await page.waitForFunction(
+          () => {
+            const tokens = localStorage.getItem("tokens");
+            const userInfo = localStorage.getItem("userInfo");
+            return Boolean(tokens && userInfo);
+          },
+          undefined,
+          { timeout: timeoutMs },
+        );
+      } catch {
+        throw new Error(
+          "账号登录未完成，请检查账号和密码；如果办学帮要求验证码或额外验证，当前内置登录暂时无法完成。",
+        );
+      }
+
+      const session = await this.captureSessionFromPage(page, "credential-login");
+
+      return {
+        ...this.summarizeSession(session),
+        finalUrl: page.url(),
+        note: "Credential login filled the login form in a browser, captured localStorage, and refreshed page context.",
+      };
+    } finally {
+      await browser?.close();
+    }
+  }
+
+  async importBrowserStorage(storageJson) {
+    const storage =
+      typeof storageJson === "string" ? JSON.parse(storageJson) : ensureObject(storageJson);
+    const session = this.buildSessionFromStorage(storage, "manual-storage-import");
+    await this.saveSession(session);
+    await this.refreshContext(session);
+    return this.summarizeSession(session);
+  }
+
+  async clearSession() {
+    await this.store.clear();
+    return {
+      cleared: true,
+      sessionFile: this.store.sessionFile,
+    };
+  }
+
+  async maybeRefreshToken(session) {
+    const auth = ensureObject(session.auth);
+    if (!auth.refresh_token || !auth.expires_in || !auth.obtainedAt) {
+      return session;
+    }
+
+    const expiresAt = new Date(auth.obtainedAt).getTime() + Number(auth.expires_in) * 1000;
+    if (Number.isNaN(expiresAt)) {
+      return session;
+    }
+
+    if (Date.now() < expiresAt - 60000) {
+      return session;
+    }
+
+    return this.refreshToken(session);
+  }
+
+  async refreshToken(session) {
+    if (!session.auth?.refresh_token) {
+      throw new Error("The current session does not contain a refresh token.");
+    }
+
+    const url = new URL("/gateway/auth/oauth/token", session.baseUrl || BASE_URL);
+    url.searchParams.set("grant_type", "refresh_token");
+    url.searchParams.set("refresh_token", session.auth.refresh_token);
+    url.searchParams.set("scope", "server");
+
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        Authorization: BASIC_AUTH,
+      },
+    });
+
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(`Refresh token request failed: ${JSON.stringify(payload)}`);
+    }
+
+    session.auth = {
+      ...payload,
+      obtainedAt: new Date().toISOString(),
+    };
+    session.storage.tokens = stringifyStorageValue(session.auth);
+    const previousContext = this.pendingTermSwitches.get(session);
+    if (previousContext) {
+      // Persist renewed credentials without publishing an unfinished term switch.
+      previousContext.auth = session.auth;
+      previousContext.storage.tokens = session.storage.tokens;
+      await this.saveSession(previousContext);
+    } else {
+      await this.saveSession(session);
+    }
+    return session;
+  }
+
+  async request(session, method, endpoint, { params, body, headers, retryOn401 = true } = {}) {
+    const currentSession = await this.maybeRefreshToken(session);
+    const url = new URL(endpoint, currentSession.baseUrl || BASE_URL);
+
+    if (params) {
+      for (const [key, value] of Object.entries(params)) {
+        if (value === null || value === undefined || value === "") {
+          continue;
+        }
+
+        url.searchParams.set(key, String(value));
+      }
+    }
+
+    const response = await fetch(url, {
+      method,
+      headers: {
+        Accept: "application/json",
+        VERSION: "CLOUDRISE",
+        deviceType: "web",
+        Authorization: currentSession.auth?.access_token
+          ? `Bearer ${currentSession.auth.access_token}`
+          : undefined,
+        "Content-Type": body ? "application/json" : undefined,
+        ...headers,
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+
+    const contentType = response.headers.get("content-type") || "";
+    const responseText = await response.text();
+    const payload = contentType.includes("application/json")
+      ? responseText
+        ? JSON.parse(responseText)
+        : null
+      : responseText;
+
+    if (response.status === 401 && retryOn401 && currentSession.auth?.refresh_token) {
+      const refreshed = await this.refreshToken(currentSession);
+      return this.request(refreshed, method, endpoint, {
+        params,
+        body,
+        headers,
+        retryOn401: false,
+      });
+    }
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status} ${endpoint}: ${JSON.stringify(payload)}`);
+    }
+
+    return payload;
+  }
+
+  async refreshContext(existingSession = null, { expectedTermId = null } = {}) {
+    const session = existingSession || (await this.requireSession());
+    const userInfo = ensureObject(session.context?.userInfo);
+
+    if (!userInfo.id) {
+      throw new Error(
+        "Session exists but userInfo.id is missing. Re-capture the session from a logged-in browser.",
+      );
+    }
+
+    const classResponse = safeBusinessResult(
+      await this.request(session, "GET", `/gateway/platform/Learning/user/${userInfo.id}/class`, {
+        params: { classType: 0 },
+      }),
+      "class-list",
+    );
+    const classList = Array.isArray(classResponse.data) ? classResponse.data : [];
+
+    const currentClass =
+      findById(classList, session.context?.curClass?.id) || classList.at(0) || null;
+
+    const termResponse = safeBusinessResult(
+      await this.request(session, "GET", "/gateway/platform/business/common/term", {
+        params: { studentId: userInfo.id },
+      }),
+      "term-list",
+    );
+    const termList = Array.isArray(termResponse.data) ? termResponse.data : [];
+
+    const currentTerm =
+      findById(termList, session.context?.currTermId) ||
+      termList.find((term) => Boolean(term.status)) ||
+      termList.at(0) ||
+      null;
+
+    const currentTermId = currentTerm ? currentTerm.id : null;
+    if (expectedTermId !== null && normalizeId(currentTermId) !== normalizeId(expectedTermId)) {
+      throw new Error("所选学期已不可用，请刷新学期列表后重试。");
+    }
+
+    let subjectList = [];
+    if (currentClass?.id && currentTermId) {
+      const subjectResponse = safeBusinessResult(
+        await this.request(
+          session,
+          "GET",
+          `/gateway/bxb/student/${userInfo.id}/class/${currentClass.id}/course-list`,
+          {
+            params: { termId: currentTermId },
+          },
+        ),
+        "subject-list",
+      );
+
+      subjectList = Array.isArray(subjectResponse.data) ? subjectResponse.data : [];
+    }
+
+    const currentSubject = isAllSubject(session.context?.curSubject)
+      ? buildAllSubject()
+      : subjectList.find(
+          (subject) =>
+            normalizeId(subject.id) === normalizeId(session.context?.curSubject?.id) &&
+            normalizeId(subject.classId) === normalizeId(session.context?.curSubject?.classId),
+        ) ||
+        subjectList.at(0) ||
+        null;
+
+    session.context = {
+      ...session.context,
+      userInfo,
+      classList,
+      curClass: currentClass,
+      termList,
+      currTermId: currentTermId,
+      subjectList,
+      curSubject: currentSubject,
+    };
+    session.storage = buildStorageFromContext(session.storage, session.context, session.auth);
+    await this.saveSession(session);
+
+    return this.summarizeSession(session);
+  }
+
+  async setCurrentTerm(termId) {
+    const session = await this.requireSession();
+    await this.refreshContext(session);
+
+    const target = findById(session.context.termList || [], termId);
+    if (!target) {
+      throw new Error(`Term ${termId} was not found in the current session.`);
+    }
+
+    if (normalizeId(session.context.currTermId) === normalizeId(target.id)) {
+      return this.summarizeSession(session);
+    }
+    // Publish the selection only after its courses have loaded successfully.
+    // A failed refresh must not persist a new term with the old term's courses.
+    const candidate = structuredClone(session);
+    candidate.context.currTermId = target.id;
+    candidate.context.curSubject = buildAllSubject();
+    candidate.storage.currTermId = String(target.id);
+    this.pendingTermSwitches.set(candidate, session);
+    try {
+      return await this.refreshContext(candidate, { expectedTermId: target.id });
+    } finally {
+      this.pendingTermSwitches.delete(candidate);
+    }
+  }
+
+  async setCurrentTermByName(termName) {
+    const session = await this.requireSession();
+    await this.refreshContext(session);
+
+    const target = findByName(session.context.termList || [], termName, [
+      (term) => term.name,
+      (term) => term.termName,
+    ]);
+    if (!target) {
+      throw new Error(`Term "${termName}" was not found in the current session.`);
+    }
+
+    return this.setCurrentTerm(target.id);
+  }
+
+  async setCurrentSubject(subjectId, classId = null) {
+    const session = await this.requireSession();
+    await this.refreshContext(session);
+
+    if (normalizeId(subjectId) === ALL_SUBJECT_ID || isAllSubjectName(subjectId)) {
+      const target = buildAllSubject();
+      session.context.curSubject = target;
+      session.storage.curSubject = stringifyStorageValue(target);
+      await this.saveSession(session);
+      return this.summarizeSession(session);
+    }
+
+    const target = findById(session.context.subjectList || [], subjectId, (subject) => {
+      if (!classId) {
+        return true;
+      }
+
+      return normalizeId(subject.classId) === normalizeId(classId);
+    });
+
+    if (!target) {
+      throw new Error(
+        `Subject ${subjectId}${classId ? ` (class ${classId})` : ""} was not found in the current session.`,
+      );
+    }
+
+    session.context.curSubject = target;
+    session.storage.curSubject = stringifyStorageValue(target);
+    await this.saveSession(session);
+    return this.summarizeSession(session);
+  }
+
+  async setCurrentSubjectByName(subjectName, classId = null) {
+    const session = await this.requireSession();
+    await this.refreshContext(session);
+
+    if (isAllSubjectName(subjectName)) {
+      const target = buildAllSubject();
+      session.context.curSubject = target;
+      session.storage.curSubject = stringifyStorageValue(target);
+      await this.saveSession(session);
+      return this.summarizeSession(session);
+    }
+
+    const target = findByName(
+      session.context.subjectList || [],
+      subjectName,
+      [(subject) => subject.cnName, (subject) => subject.name],
+      (subject) => {
+        if (!classId) {
+          return true;
+        }
+
+        return normalizeId(subject.classId) === normalizeId(classId);
+      },
+    );
+
+    if (!target) {
+      throw new Error(
+        `Subject "${subjectName}"${classId ? ` (class ${classId})` : ""} was not found in the current session.`,
+      );
+    }
+
+    return this.setCurrentSubject(target.id, target.classId);
+  }
+
+  async listCourses() {
+    const session = await this.requireSession();
+    await this.refreshContext(session);
+
+    return {
+      context: this.summarizeSession(session),
+      currentTermId: session.context.currTermId || null,
+      currentClass: session.context.curClass || null,
+      courses: [
+        {
+          id: ALL_SUBJECT_ID,
+          classId: null,
+          name: "全部课程",
+          color: "#0067c0",
+          unSubmitCount: null,
+          allSubjects: true,
+        },
+        ...toArray(session.context.subjectList).map(summarizeCourse),
+      ],
+    };
+  }
+
+  async listTerms() {
+    const session = await this.requireSession();
+    await this.refreshContext(session);
+
+    return {
+      context: this.summarizeSession(session),
+      terms: toArray(session.context.termList).map((term) => ({
+        id: normalizeId(term.id),
+        name: term.name || term.termName || null,
+        status: term.status ?? null,
+      })),
+    };
+  }
+
+  async applyContextOverrides({
+    termId,
+    termName,
+    subjectId,
+    subjectName,
+    classId = null,
+  } = {}) {
+    let context = null;
+
+    if (termId !== undefined && termId !== null) {
+      context = await this.setCurrentTerm(termId);
+    } else if (termName) {
+      context = await this.setCurrentTermByName(termName);
+    }
+
+    if (subjectId !== undefined && subjectId !== null) {
+      context = await this.setCurrentSubject(subjectId, classId);
+    } else if (subjectName) {
+      context = await this.setCurrentSubjectByName(subjectName, classId);
+    }
+
+    return context;
+  }
+
+  normalizeHomeworkListType(listType) {
+    if (listType === "latest") {
+      return 1;
+    }
+    if (listType === "pending") {
+      return 2;
+    }
+    return -1;
+  }
+
+  async queryHomeworkForSubject(session, subject, { listType = "all", page = 1, size = 10 } = {}) {
+    const { userInfo, currTermId } = session.context;
+    const query = {
+      page,
+      size,
+      leamTermIds: currTermId,
+      classId: subject.classId,
+    };
+
+    const normalizedListType = this.normalizeHomeworkListType(listType);
+    const courseName = subject.cnName || subject.name || null;
+    const tagCourse = (task) => ({
+      ...enrichHomeworkRecord(task),
+      courseId: task.courseId || subject.id,
+      courseName: task.courseName || courseName,
+      classId: task.classId || subject.classId,
+    });
+
+    let unsubmittedHomeworkList = [];
+    if (normalizedListType === -1) {
+      const unsubmittedResponse = safeBusinessResult(
+        await this.request(
+          session,
+          "GET",
+          `/gateway/bxb/student/${userInfo.id}/course/${subject.id}/un-submit-homework`,
+          {
+            params: {
+              leamTermIds: currTermId,
+              classId: subject.classId,
+            },
+          },
+        ),
+        "un-submit-homework",
+      );
+      unsubmittedHomeworkList = Array.isArray(unsubmittedResponse.data)
+        ? unsubmittedResponse.data.map(tagCourse)
+        : [];
+    }
+
+    const homeworkEndpoint =
+      normalizedListType === -1
+        ? `/gateway/bxb/student/${userInfo.id}/course/${subject.id}/page-query-homework`
+        : `/gateway/bxb/student/${userInfo.id}/course/${subject.id}/page-query-homework2`;
+
+    const homeworkResponse = safeBusinessResult(
+      await this.request(session, "GET", homeworkEndpoint, {
+        params:
+          normalizedListType === -1
+            ? query
+            : {
+                ...query,
+                listType: normalizedListType,
+              },
+      }),
+      "page-query-homework",
+    );
+
+    const data = ensureObject(homeworkResponse.data);
+    const homeworkList = Array.isArray(data.aaData) ? data.aaData.map(tagCourse) : [];
+    const pendingHomeworkList = normalizedListType === 2 ? homeworkList : [];
+    const effectiveUnsubmittedHomeworkList =
+      normalizedListType === 2 ? homeworkList.filter(isUnsubmittedHomework) : unsubmittedHomeworkList;
+
+    return {
+      query: {
+        ...query,
+        courseId: subject.id,
+        courseName,
+        listType: normalizedListType,
+      },
+      totalRecords: data.iTotalRecords ?? homeworkList.length,
+      pendingHomeworkList,
+      unsubmittedHomeworkList: effectiveUnsubmittedHomeworkList,
+      homeworkList,
+    };
+  }
+
+  async listHomework({ listType = "all", page = 1, size = 10 } = {}) {
+    const session = await this.requireSession();
+    await this.refreshContext(session);
+
+    const { userInfo, curSubject, currTermId, subjectList } = session.context;
+    if (!userInfo?.id || !currTermId) {
+      throw new Error("Current session does not have enough context to query homework.");
+    }
+
+    if (isAllSubject(curSubject)) {
+      const subjects = toArray(subjectList).filter((subject) => subject?.id && subject?.classId);
+      const results = [];
+      for (const subject of subjects) {
+        results.push(await this.queryHomeworkForSubject(session, subject, { listType, page, size }));
+      }
+
+      return {
+        context: this.summarizeSession(session),
+        query: {
+          page,
+          size,
+          leamTermIds: currTermId,
+          allSubjects: true,
+          listType: this.normalizeHomeworkListType(listType),
+        },
+        totalRecords: results.reduce((sum, item) => sum + Number(item.totalRecords || 0), 0),
+        pendingHomeworkList: results.flatMap((item) => item.pendingHomeworkList),
+        unsubmittedHomeworkList: results.flatMap((item) => item.unsubmittedHomeworkList),
+        homeworkList: results.flatMap((item) => item.homeworkList),
+        courseResults: results,
+      };
+    }
+
+    if (!curSubject?.id || !curSubject?.classId) {
+      throw new Error("Current session does not have enough subject context to query homework.");
+    }
+
+    const result = await this.queryHomeworkForSubject(session, curSubject, { listType, page, size });
+
+    return {
+      context: this.summarizeSession(session),
+      ...result,
+    };
+  }
+
+  async getPendingHomeworkSummary({ pageSize = 100 } = {}) {
+    const session = await this.requireSession();
+    await this.refreshContext(session);
+
+    const { currTermId, subjectList } = session.context;
+    if (!currTermId) {
+      throw new Error("Current session does not have a term selected.");
+    }
+
+    const subjects = toArray(subjectList).filter((subject) => subject?.id && subject?.classId);
+    const normalizedPageSize = Math.min(Math.max(Number(pageSize) || 100, 1), 100);
+    const pendingTasks = [];
+    let reportedTotalRecords = 0;
+
+    const readSubject = async (subject) => {
+      const rows = [];
+      const readPage = async (page) => this.queryHomeworkForSubject(session, subject, {
+        listType: "pending",
+        page,
+        size: normalizedPageSize,
+      });
+      const firstPage = await readPage(1);
+      rows.push(...toArray(firstPage.pendingHomeworkList));
+
+      const totalRecords = Number(firstPage.totalRecords);
+      const normalizedTotal = Number.isFinite(totalRecords) && totalRecords >= 0
+        ? totalRecords
+        : rows.length;
+      const pageCount = Math.ceil(normalizedTotal / normalizedPageSize);
+      for (let page = 2; page <= pageCount; page += 1) {
+        const nextPage = await readPage(page);
+        const nextRows = toArray(nextPage.pendingHomeworkList);
+        rows.push(...nextRows);
+        if (nextRows.length === 0) break;
+      }
+      return { rows, totalRecords: normalizedTotal };
+    };
+
+    const maxConcurrentCourses = 4;
+    for (let offset = 0; offset < subjects.length; offset += maxConcurrentCourses) {
+      const batch = await Promise.all(
+        subjects.slice(offset, offset + maxConcurrentCourses).map(readSubject),
+      );
+      for (const result of batch) {
+        pendingTasks.push(...result.rows);
+        reportedTotalRecords += result.totalRecords;
+      }
+    }
+
+    const uniqueTaskIds = new Set();
+    let tasksWithoutId = 0;
+    for (const task of pendingTasks) {
+      const taskId = normalizeId(task?.id || task?.activityId || task?.taskId);
+      if (taskId) {
+        uniqueTaskIds.add(taskId);
+      } else {
+        tasksWithoutId += 1;
+      }
+    }
+
+    return {
+      pendingTaskCount: uniqueTaskIds.size + tasksWithoutId,
+      reportedTotalRecords,
+      courseCount: subjects.length,
+      currentTermId: normalizeId(currTermId),
+      countedAt: new Date().toISOString(),
+    };
+  }
+
+  async listTasks(options = {}) {
+    const {
+      termId,
+      termName,
+      subjectId,
+      subjectName,
+      classId,
+      ...homeworkOptions
+    } = options;
+
+    if (
+      termId !== undefined ||
+      termName ||
+      subjectId !== undefined ||
+      subjectName ||
+      classId !== undefined
+    ) {
+      await this.applyContextOverrides({
+        termId,
+        termName,
+        subjectId,
+        subjectName,
+        classId,
+      });
+    }
+
+    return this.listHomework(homeworkOptions);
+  }
+
+  async getAchievementOverview({ transferClassId = null } = {}) {
+    const session = await this.requireSession();
+    await this.refreshContext(session);
+
+    const { userInfo, curClass, curSubject, currTermId } = session.context;
+    if (!userInfo?.id || !curClass?.campusId || !curSubject?.id || !curSubject?.classId || !currTermId) {
+      throw new Error("Current session does not have enough context to query achievements.");
+    }
+
+    const scoreTypeResponse = safeBusinessResult(
+      await this.request(
+        session,
+        "GET",
+        `/gateway/bxb/scoretype/class/${curSubject.classId}/course/${curSubject.id}/group`,
+        {
+          params: { termId: currTermId },
+        },
+      ),
+      "scoretype-group",
+    );
+
+    const gpaResponse = safeBusinessResult(
+      await this.request(session, "POST", "/gateway/bxb/student/queryGPA", {
+        body: {
+          classId: curSubject.classId,
+          courseId: curSubject.id,
+          termId: currTermId,
+          userId: userInfo.id,
+        },
+      }),
+      "queryGPA",
+    );
+
+    const gpaData = ensureObject(gpaResponse.data);
+    const transferClassGpaList = Array.isArray(gpaData.transferClassGpaList)
+      ? gpaData.transferClassGpaList.map((record) => ({
+          ...record,
+          teacherNames: Array.isArray(record.teacherNames)
+            ? record.teacherNames.join(",")
+            : record.teacherNames || "",
+          srcInTimeCopy: record.srcInTime ? String(record.srcInTime).slice(0, 10) : "",
+          srcOutTimeCopy: record.srcOutTime ? String(record.srcOutTime).slice(0, 10) : "至今",
+        }))
+      : [];
+
+    const selectedTransfer =
+      findById(transferClassGpaList, transferClassId) || transferClassGpaList.at(-1) || null;
+
+    let scoreLevelList = [];
+    let achievementList = [];
+    if (selectedTransfer?.classId && selectedTransfer?.srcCourseId) {
+      const scoreLevelResponse = safeBusinessResult(
+        await this.request(
+          session,
+          "GET",
+          `/gateway/bxb/scorelevel/class/${selectedTransfer.classId}/course/${selectedTransfer.srcCourseId}`,
+          {
+            params: { campusId: curClass.campusId },
+          },
+        ),
+        "scorelevel",
+      );
+
+      scoreLevelList = Array.isArray(scoreLevelResponse.data)
+        ? scoreLevelResponse.data.filter((item) => item.status)
+        : [];
+
+      const chartResponse = safeBusinessResult(
+        await this.request(session, "POST", "/gateway/bxb/scorerecord/queryGpaChartData", {
+          body: {
+            classId: selectedTransfer.classId,
+            currClass: selectedTransfer.currClass,
+            srcCourseId: selectedTransfer.srcCourseId,
+            srcInTime: selectedTransfer.srcInTime,
+            srcOutTime: selectedTransfer.srcOutTime,
+            termId: currTermId,
+            userId: userInfo.id,
+          },
+        }),
+        "queryGpaChartData",
+      );
+
+      achievementList = Array.isArray(chartResponse.data)
+        ? chartResponse.data.map((item) => ({ ...item, isChecked: true }))
+        : [];
+    }
+
+    return {
+      context: this.summarizeSession(session),
+      averageLevel: gpaData.level ?? null,
+      scoreTypes: Array.isArray(scoreTypeResponse.data) ? scoreTypeResponse.data : [],
+      transferClassOptions: transferClassGpaList,
+      selectedTransferClass: selectedTransfer,
+      scoreLevelList,
+      achievementList,
+    };
+  }
+
+  async getCurrentSubjectGpa() {
+    const overview = await this.getAchievementOverview();
+
+    return {
+      context: overview.context,
+      currentSubject: overview.context.currentSubject,
+      averageLevel: overview.averageLevel,
+      selectedTransferClass: overview.selectedTransferClass,
+      achievementCount: overview.achievementList.length,
+      scoreLevelCount: overview.scoreLevelList.length,
+    };
+  }
+
+  async listPrivateMessageContacts() {
+    const session = await this.requireSession();
+    const userInfo = ensureObject(session.context?.userInfo);
+    if (!userInfo.id) {
+      throw new Error("Current session does not have userInfo.id.");
+    }
+
+    const response = safeBusinessResult(
+      await this.request(session, "GET", `/gateway/bxb/priv-msg/user/${userInfo.id}/contact-list`, {
+        params: { userType: "S" },
+      }),
+      "priv-msg-contact-list",
+    );
+
+    const contacts = Array.isArray(response.data) ? response.data.map(summarizePrivateContact) : [];
+    return {
+      contacts,
+      count: contacts.length,
+    };
+  }
+
+  async getPrivateMessageThread(contact, { size = 20, endTime = "" } = {}) {
+    const session = await this.requireSession();
+    const source = ensureObject(contact?.raw || contact);
+    const classId = normalizeId(source.classId);
+    if (!classId || !source.receiverId || !source.senderId) {
+      throw new Error("Private message contact requires classId, receiverId, and senderId.");
+    }
+
+    const response = safeBusinessResult(
+      await this.request(session, "GET", `/gateway/bxb/priv-msg-content/class/${classId}/page-query`, {
+        params: {
+          size,
+          classId,
+          receiverId: source.receiverId,
+          senderId: source.senderId,
+          childId: source.childId || "",
+          startTime: "",
+          endTime,
+          receiverType: source.receiverType,
+          senderType: source.senderType,
+        },
+      }),
+      "priv-msg-content-page-query",
+    );
+
+    const page = ensureObject(response.data);
+    const messages = Array.isArray(page.aaData)
+      ? page.aaData.map(summarizePrivateMessage).reverse()
+      : [];
+    return {
+      contact: summarizePrivateContact(source),
+      messages,
+      page: {
+        totalPages: page.totalPages ?? null,
+        number: page.number ?? null,
+        size: page.size ?? size,
+        hasContent: page.hasContent ?? messages.length > 0,
+        totalRecords: page.iTotalRecords ?? messages.length,
+      },
+    };
+  }
+
+  async sendPrivateMessageText(contact, content) {
+    const session = await this.requireSession();
+    const source = ensureObject(contact?.raw || contact);
+    const normalizedContent = String(content || "").trim();
+    if (!normalizedContent) {
+      throw new Error("Private message content cannot be empty.");
+    }
+
+    const classId = normalizeId(source.classId);
+    if (!classId || !source.receiverId || !source.senderId) {
+      throw new Error("Private message contact requires classId, receiverId, and senderId.");
+    }
+
+    const selfIsReceiver = source.receiverType === "S";
+    const body = {
+      kinship: selfIsReceiver ? "" : source.kinship || "",
+      childId: selfIsReceiver ? "" : source.childId || "",
+      receiverType: selfIsReceiver ? source.senderType : source.receiverType,
+      receiverId: selfIsReceiver ? source.senderId : source.receiverId,
+      senderId: selfIsReceiver ? source.receiverId : source.senderId,
+      senderType: "S",
+      classId,
+      content: normalizedContent,
+      contentType: "T",
+    };
+
+    let response;
+    try {
+      response = await this.request(session, "POST", "/gateway/bxb/priv-msg-content/send", {
+        body,
+      });
+    } catch (error) {
+      const status = Number(String(error?.message || "").match(/^HTTP (\d{3})\b/)?.[1] || 0);
+      error.deliveryOutcomeUnknown = !status || status >= 500;
+      throw error;
+    }
+
+    try {
+      response = safeBusinessResult(response, "priv-msg-content-send");
+    } catch (error) {
+      error.deliveryOutcomeUnknown = false;
+      throw error;
+    }
+
+    return {
+      sent: true,
+      message: response.data ? summarizePrivateMessage(response.data) : null,
+    };
+  }
+
+  async getTaskDetail(taskId, { includeOtherSubmissions = false } = {}) {
+    const session = await this.requireSession();
+    await this.refreshContext(session);
+
+    const { userInfo, curSubject } = session.context;
+    if (!userInfo?.id) {
+      throw new Error("Current session does not have enough context to query task detail.");
+    }
+
+    const detailResponse = safeBusinessResult(
+      await this.request(
+        session,
+        "GET",
+        `/gateway/bxb/student/${userInfo.id}/activity/${taskId}/detail`,
+      ),
+      "activity-detail",
+    );
+    const task = ensureObject(detailResponse.data);
+    const taskClassId = task.classId || curSubject?.classId;
+    if (!taskClassId) {
+      throw new Error("Current task detail does not include classId.");
+    }
+
+    const requestList = [
+      this.request(
+        session,
+        "GET",
+        `/gateway/bxb/student/activity/${taskId}/activity-work-correct/list`,
+        {
+          params: { studentId: userInfo.id },
+        },
+      ).catch(() => ({ data: [] })),
+      includeOtherSubmissions
+        ? this.request(
+            session,
+            "GET",
+            `/gateway/bxb/activityWork/homework/${taskId}/submitted/list`,
+            {
+              params: { classId: taskClassId },
+            },
+          ).catch(() => ({ data: [] }))
+        : Promise.resolve({ data: [] }),
+      this.request(
+        session,
+        "GET",
+        `/gateway/bxb/activityWork/homework/${taskId}/student/${userInfo.id}/last-score`,
+        {
+          params: { classId: taskClassId },
+        },
+      ).catch(() => ({ data: null })),
+    ];
+
+    const [mySubmissionResponse, submittedResponse, lastScoreResponse] = await Promise.all(requestList);
+
+    const mySubmissionList = toArray(mySubmissionResponse.data);
+    const submittedList = toArray(submittedResponse.data);
+    const lastScore = lastScoreResponse?.data ?? null;
+    const taskAttachments = collectAttachments(task.fileList, "task");
+    const referenceAttachments = collectAttachments(task.activityTask?.fileList, "reference");
+    const mySubmissionAttachments = mySubmissionList.flatMap((item) =>
+      collectAttachments(item.fileList, "my-submission"),
+    );
+    const peerSubmissionAttachments = submittedList.flatMap((item) =>
+      collectAttachments(item.fileList, "submitted"),
+    );
+
+    return {
+      context: this.summarizeSession(session),
+      taskId: normalizeId(taskId),
+      taskClassId: normalizeId(taskClassId),
+      taskSummary: summarizeTask(task),
+      task,
+      contentText: stripHtml(task.activityContent || task.activityTask?.content || ""),
+      answerText: stripHtml(task.activityTask?.answer || ""),
+      attachments: [...taskAttachments, ...referenceAttachments],
+      includeOtherSubmissions,
+      mySubmissionList,
+      mySubmissionAttachments,
+      submittedList: includeOtherSubmissions ? submittedList : [],
+      peerSubmissionAttachments: includeOtherSubmissions ? peerSubmissionAttachments : [],
+      otherSubmissionCount: submittedList.length,
+      lastScore,
+    };
+  }
+
+  async readTaskContent(taskId, maxChars = 4000) {
+    const detail = await this.getTaskDetail(taskId);
+    const contentPreview = buildTextPreview(detail.contentText, maxChars);
+    const answerPreview = buildTextPreview(detail.answerText, maxChars);
+
+    return {
+      context: detail.context,
+      taskId: detail.taskId,
+      taskSummary: detail.taskSummary,
+      attachments: detail.attachments,
+      content: contentPreview.text,
+      contentTruncated: contentPreview.truncated,
+      contentLength: contentPreview.totalChars,
+      answer: answerPreview.text,
+      answerTruncated: answerPreview.truncated,
+      answerLength: answerPreview.totalChars,
+    };
+  }
+
+  async downloadFile(fileId, { directory, fileName } = {}) {
+    const session = await this.requireSession();
+    const downloadDir = directory || (await this.ensureWorkspaceDir());
+    const accessToken = session.auth?.access_token;
+    if (!accessToken) {
+      throw new Error("The current session does not contain an access token.");
+    }
+
+    await mkdir(downloadDir, { recursive: true });
+
+    const url = new URL(
+      `/gateway/filesystem/file/download/${fileId}`,
+      session.baseUrl || BASE_URL,
+    );
+    url.searchParams.set("access_token", accessToken);
+
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        Accept: "*/*",
+        VERSION: "CLOUDRISE",
+        deviceType: "web",
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+
+    if (!response.ok) {
+      const contentType = response.headers.get("content-type") || "";
+      const payload = contentType.includes("application/json")
+        ? await response.json()
+        : await response.text();
+      throw new Error(`HTTP ${response.status} file-download: ${JSON.stringify(payload)}`);
+    }
+
+    const responseFileName =
+      fileName || parseDispositionFilename(response.headers.get("content-disposition"));
+    const resolvedFileName = sanitizeFileName(
+      responseFileName || `${fileId}${path.extname(responseFileName || "")}`,
+      String(fileId),
+    );
+    const targetPath = path.join(downloadDir, resolvedFileName);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    let output;
+    try {
+      output = await open(targetPath, "wx");
+      await output.writeFile(buffer);
+      await output.close();
+      output = null;
+    } catch (error) {
+      if (output) {
+        await output.close().catch(() => {});
+        await unlink(targetPath).catch(() => {});
+      }
+      throw error;
+    }
+
+    return {
+      fileId: normalizeId(fileId),
+      fileName: resolvedFileName,
+      path: targetPath,
+      contentType: response.headers.get("content-type") || null,
+      sizeBytes: buffer.byteLength,
+    };
+  }
+
+  async downloadTaskAttachment({ taskId, fileId, directory } = {}) {
+    let attachment = null;
+
+    if (taskId) {
+      const detail = await this.getTaskDetail(taskId);
+      attachment = [
+        ...detail.attachments,
+        ...detail.mySubmissionAttachments,
+        ...detail.peerSubmissionAttachments,
+      ].find((item) => normalizeId(item.fileId) === normalizeId(fileId));
+
+      if (!attachment) {
+        throw new Error(`Attachment ${fileId} was not found on task ${taskId}.`);
+      }
+    }
+
+    return this.downloadFile(fileId, {
+      directory,
+      fileName: attachment?.fileName || attachment?.name,
+    });
+  }
+
+  async readLocalAttachment(filePath, maxChars = 4000, { buffer: verifiedBuffer } = {}) {
+    const resolvedPath = path.resolve(filePath);
+    const buffer = verifiedBuffer ?? await readFile(resolvedPath);
+    const extension = path.extname(resolvedPath).toLowerCase();
+    let text = "";
+    let readable = true;
+    let reader = "plain-text";
+
+    if (TEXT_FILE_EXTENSIONS.has(extension)) {
+      text = parseTextBuffer(buffer, extension);
+    } else if (extension === ".pdf") {
+      const pdfParseModule = await import("pdf-parse");
+      const PDFParse = pdfParseModule.PDFParse || pdfParseModule.default?.PDFParse;
+
+      if (typeof PDFParse !== "function") {
+        throw new Error("pdf-parse did not expose a PDFParse constructor");
+      }
+
+      const parser = new PDFParse({ data: buffer });
+
+      try {
+        const parsed = await parser.getText();
+        text = parsed.text || "";
+      } finally {
+        await parser.destroy();
+      }
+
+      reader = "pdf-parse";
+    } else if (extension === ".docx") {
+      const mammothModule = await import("mammoth");
+      const mammoth = mammothModule.default || mammothModule;
+      const result = await mammoth.extractRawText({ buffer });
+      text = result.value || "";
+      reader = "mammoth";
+    } else {
+      readable = false;
+    }
+
+    const preview = buildTextPreview(text, maxChars);
+
+    return {
+      path: resolvedPath,
+      fileName: path.basename(resolvedPath),
+      extension,
+      readable,
+      reader,
+      text: preview.text,
+      truncated: preview.truncated,
+      totalChars: preview.totalChars,
+      note: readable ? null : "This attachment type is not supported for text extraction yet.",
+    };
+  }
+
+  async readTaskAttachment({ taskId, fileId, maxChars = 4000, directory } = {}) {
+    const downloaded = await this.downloadTaskAttachment({ taskId, fileId, directory });
+    const parsed = await this.readLocalAttachment(downloaded.path, maxChars);
+
+    return {
+      taskId: taskId ? normalizeId(taskId) : null,
+      fileId: normalizeId(fileId),
+      download: downloaded,
+      read: parsed,
+    };
+  }
+
+  async collectTaskSubmissionContext(taskId, { maxChars = 4000, maxAttachments = 6 } = {}) {
+    const detail = await this.getTaskDetail(taskId, { includeOtherSubmissions: false });
+    const attachments = [...detail.attachments];
+    const attachmentContexts = [];
+
+    for (const attachment of attachments.slice(0, Math.max(1, maxAttachments))) {
+      try {
+        const result = await this.readTaskAttachment({
+          taskId,
+          fileId: attachment.fileId,
+          maxChars,
+        });
+        attachmentContexts.push({
+          fileId: attachment.fileId,
+          fileName: attachment.fileName || attachment.name || null,
+          category: attachment.category || null,
+          readable: Boolean(result.read?.readable),
+          text: result.read?.text || "",
+          truncated: Boolean(result.read?.truncated),
+          totalChars: result.read?.totalChars ?? 0,
+          note: result.read?.note || null,
+          error: null,
+        });
+      } catch (error) {
+        attachmentContexts.push({
+          fileId: attachment.fileId,
+          fileName: attachment.fileName || attachment.name || null,
+          category: attachment.category || null,
+          readable: false,
+          text: "",
+          truncated: false,
+          totalChars: 0,
+          note: null,
+          error: error.message,
+        });
+      }
+    }
+
+    const contentPreview = buildTextPreview(detail.contentText || "", maxChars);
+    const answerPreview = buildTextPreview(detail.answerText || "", maxChars);
+    const readableAttachmentCount = attachmentContexts.filter((item) => item.readable && item.text).length;
+    const missingInfo = [];
+
+    if (!contentPreview.text && !answerPreview.text && readableAttachmentCount === 0) {
+      missingInfo.push("任务正文和附件都没有可读文本，无法可靠生成提交草稿。");
+    }
+    if (attachments.length > maxAttachments) {
+      missingInfo.push(`附件较多，本次只读取了前 ${maxAttachments} 个附件。`);
+    }
+
+    return {
+      context: detail.context,
+      collectedAt: new Date().toISOString(),
+      taskId: detail.taskId,
+      taskSummary: detail.taskSummary,
+      subjectName: detail.context?.currentSubject?.name || null,
+      contentText: contentPreview.text,
+      contentTruncated: contentPreview.truncated,
+      answerText: answerPreview.text,
+      answerTruncated: answerPreview.truncated,
+      attachments,
+      attachmentContexts,
+      mySubmissionAttachments: detail.mySubmissionAttachments || [],
+      requirementsSummary: buildTextPreview(
+        [detail.taskSummary?.activityName, detail.contentText, detail.answerText]
+          .filter(Boolean)
+          .join("\n\n"),
+        1500,
+      ).text,
+      missingInfo,
+      isSufficient: missingInfo.length === 0,
+    };
+  }
+
+  async snapshotDraftAttachments(draftId, entries, existing = []) {
+    if (!Array.isArray(entries) || entries.length > MAX_DRAFT_ATTACHMENTS) throw new Error(`每份草稿最多绑定 ${MAX_DRAFT_ATTACHMENTS} 个附件。`);
+    const store = new DraftAttachmentStore(this.draftStore.draftDir);
+    const attachments = [];
+    const seen = new Set();
+    try {
+      for (const entry of entries) {
+        if (entry?.attachment_id && !entry.file) {
+          const attachment = existing.find(item => item.id === entry.attachment_id);
+          if (!attachment || seen.has(attachment.id)) throw new Error("草稿附件不存在或重复。");
+          await store.read(draftId, attachment);
+          seen.add(attachment.id);
+          attachments.push(attachment);
+        } else if (entry?.file && !entry.attachment_id) {
+          const file = await this.resolveWorkspaceEntry(entry.file);
+          if (!file.fileStat.isFile()) throw new Error("只能绑定工作区内的普通文件。");
+          if (seen.has(file.path)) throw new Error("不能重复绑定同一个工作区文件。");
+          seen.add(file.path);
+          attachments.push(await store.snapshot(draftId, file.path, {
+            kind: entry.kind, relativePath: path.relative(await this.workspaceRoot(), file.path).replaceAll("\\", "/"),
+          }));
+        } else throw new Error("每个附件必须指定工作区 file 或已有 attachment_id。");
+      }
+      return attachments;
+    } catch (error) {
+      await Promise.allSettled(attachments.filter(item => !existing.some(old => old.id === item.id))
+        .map(item => store.remove(draftId, item.id)));
+      throw error;
+    }
+  }
+
+  async selectedDraftAttachments(draft, attachmentIds = [], { includeBuffer = false } = {}) {
+    if (!Array.isArray(attachmentIds)) throw new Error("所选附件列表无效。");
+    const ids = new Set(attachmentIds.map(String));
+    const attachments = toArray(draft.attachments).filter(item => ids.has(item.id));
+    if (attachments.length !== ids.size) throw new Error("所选附件不属于当前草稿，请重新审核。");
+    const store = new DraftAttachmentStore(this.draftStore.draftDir);
+    const files = [];
+    for (const item of attachments) {
+      const file = await store.read(draft.draftId, item);
+      if (!includeBuffer) delete file.buffer;
+      files.push(file);
+    }
+    return files;
+  }
+
+  async previewDraftAttachment(draftId, attachmentId) {
+    const draft = await this.draftStore.get(draftId);
+    if (!draft) throw draftNotFoundError(draftId);
+    const [attachment] = await this.selectedDraftAttachments(draft, [attachmentId], { includeBuffer: true });
+    const { buffer, ...metadata } = attachment;
+    if ([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".avif"].includes(path.extname(attachment.fileName).toLowerCase())) {
+      const { normalizeModelImage } = await import("./model-image.js");
+      const normalized = await normalizeModelImage(buffer);
+      return { ...metadata, previewType: "image", dataUrl: `data:${normalized.mimeType};base64,${normalized.buffer.toString("base64")}` };
+    }
+    if (attachment.kind === "source") {
+      const text = buffer.toString("utf8");
+      return { ...metadata, previewType: "text", text: text.slice(0, 200000), truncated: text.length > 200000 };
+    }
+    const content = await this.readLocalAttachment(attachment.path, 200000, { buffer });
+    return { ...metadata, previewType: content.readable ? "text" : "file", text: content.text, truncated: content.truncated };
+  }
+
+  async draftTaskSubmission({
+    taskId,
+    subjectName = null,
+    taskTitle = null,
+    draftText,
+    summary = "",
+    evidence = [],
+    warnings = [],
+    missingInfo = [],
+    needsUserInput = false,
+    preferredTarget = "task",
+    intendedTargets = ["task"],
+    teacherMessageHint = "",
+    attachments = [],
+  } = {}) {
+    const normalizedDraftText = String(draftText || "").trim();
+    if (!normalizedDraftText && !attachments.length) {
+      throw new Error("draft_text is required and cannot be empty.");
+    }
+
+    const session = await this.getSession();
+    const sessionSummary = this.summarizeSession(session);
+    const now = new Date().toISOString();
+    const draftId = `draft_${Date.now()}_${randomUUID().slice(0, 8)}`;
+    let savedAttachments;
+    try { savedAttachments = await this.snapshotDraftAttachments(draftId, attachments); }
+    catch (error) { await new DraftAttachmentStore(this.draftStore.draftDir).clear(draftId); throw error; }
+    const deliveryTarget = normalizeDeliveryTarget(preferredTarget, "task");
+    const draft = {
+      draftId,
+      status: "pending_review",
+      createdAt: now,
+      updatedAt: now,
+      reviewedAt: null,
+      rejectedAt: null,
+      reviewNote: null,
+      taskId: normalizeId(taskId),
+      subjectName: subjectName || sessionSummary.currentSubject?.name || null,
+      taskTitle: taskTitle || null,
+      draftText: normalizedDraftText,
+      attachments: savedAttachments,
+      summary: String(summary || "").trim(),
+      evidence: Array.isArray(evidence) ? evidence : [],
+      warnings: Array.isArray(warnings) ? warnings : [],
+      missingInfo: Array.isArray(missingInfo) ? missingInfo : [],
+      needsUserInput: Boolean(needsUserInput),
+      preferredTarget: deliveryTarget,
+      intendedTargets: normalizeDeliveryTargets(intendedTargets, [deliveryTarget]),
+      teacherMessageHint: String(teacherMessageHint || "").trim(),
+      deliveryTarget,
+      deliveryHistory: [],
+      sourceSession: sessionSummary,
+    };
+
+    try { await this.draftStore.save(draft); }
+    catch (error) {
+      await new DraftAttachmentStore(this.draftStore.draftDir).clear(draftId).catch(() => {});
+      throw error;
+    }
+
+    return {
+      saved: true,
+      draftId,
+      status: draft.status,
+      taskId: draft.taskId,
+      subjectName: draft.subjectName,
+      taskTitle: draft.taskTitle,
+      reviewPath: path.join(this.draftStore.draftDir, `${draftId}.json`),
+      attachmentCount: savedAttachments.length,
+      draft,
+    };
+  }
+
+  async listSubmissionDrafts({ status } = {}) {
+    const drafts = await this.draftStore.list();
+    const normalizedStatus = status ? String(status).trim() : null;
+    const statusFilter = normalizedStatus && normalizedStatus !== "all" ? normalizedStatus : null;
+    const filtered = normalizedStatus
+      ? drafts.filter((item) => !statusFilter || String(item.status || "") === statusFilter)
+      : drafts;
+
+    return {
+      draftDirectory: this.draftStore.draftDir,
+      count: filtered.length,
+      drafts: filtered.map((draft) => ({
+        draftId: draft.draftId,
+        status: draft.status,
+        taskId: draft.taskId,
+        subjectName: draft.subjectName,
+        taskTitle: draft.taskTitle,
+        createdAt: draft.createdAt,
+        updatedAt: draft.updatedAt,
+        reviewedAt: draft.reviewedAt,
+        rejectedAt: draft.rejectedAt,
+        submittedAt: draft.submittedAt,
+        sentToTeacherAt: draft.sentToTeacherAt,
+        deliveryTarget: draft.deliveryTarget || draft.preferredTarget || "task",
+        deliveryAttemptStatus: draft.deliveryAttempt?.status || null,
+        teacherMessageAttemptStatus: draft.teacherMessageAttempt?.status || null,
+        teacherMessageConfirmedCount: toArray(draft.teacherMessageAttempt?.confirmedMessages).length,
+        deliveryHistoryCount: Array.isArray(draft.deliveryHistory) ? draft.deliveryHistory.length : 0,
+        needsUserInput: Boolean(draft.needsUserInput),
+        missingInfoCount: Array.isArray(draft.missingInfo) ? draft.missingInfo.length : 0,
+        warningCount: Array.isArray(draft.warnings) ? draft.warnings.length : 0,
+      })),
+    };
+  }
+
+  async getSubmissionDraft(draftId) {
+    const draft = await this.draftStore.get(draftId);
+    if (!draft) {
+      throw draftNotFoundError(draftId);
+    }
+
+    return {
+      draftDirectory: this.draftStore.draftDir,
+      draft,
+    };
+  }
+
+  async updateSubmissionDraft(draftId, { draftText, summary, attachments, appendAttachments } = {}) {
+    let removedAttachments = [];
+    const updated = await this.draftStore.update(draftId, async (draft) => {
+      if (isFinalDraftStatus(draft.status)) {
+        throw new Error("已交付的草稿不能再修改。请新建草稿后重新审核。");
+      }
+      assertDraftDeliverySettled(draft);
+
+      const normalizedDraftText = String(draftText === undefined ? draft.draftText || "" : draftText).trim();
+      const entries = appendAttachments === undefined ? attachments
+        : [...toArray(draft.attachments).map(item => ({ attachment_id: item.id })), ...appendAttachments];
+      const savedAttachments = entries === undefined ? toArray(draft.attachments)
+        : await this.snapshotDraftAttachments(draftId, entries, toArray(draft.attachments));
+      if (!normalizedDraftText && !savedAttachments.length) throw new Error("草稿正文和附件不能都为空。");
+      removedAttachments = toArray(draft.attachments).filter(item => !savedAttachments.some(saved => saved.id === item.id));
+      return {
+        ...draft,
+        draftText: normalizedDraftText,
+        attachments: savedAttachments,
+        summary: summary === undefined ? draft.summary : String(summary || "").trim(),
+        status: "pending_review",
+        reviewedAt: null,
+        rejectedAt: null,
+        reviewNote: null,
+        updatedAt: new Date().toISOString(),
+      };
+    });
+
+    if (!updated) {
+      throw draftNotFoundError(draftId);
+    }
+
+    const attachmentStore = new DraftAttachmentStore(this.draftStore.draftDir);
+    await Promise.allSettled(removedAttachments.map(item => attachmentStore.remove(draftId, item.id)));
+
+    return {
+      draftId: updated.draftId,
+      status: updated.status,
+      updatedAt: updated.updatedAt,
+      attachmentCount: toArray(updated.attachments).length,
+      draft: updated,
+    };
+  }
+
+  async approveSubmissionDraft(draftId, { reviewNote = "" } = {}) {
+    const updated = await this.draftStore.update(draftId, async (draft) => {
+      if (isFinalDraftStatus(draft.status)) {
+        throw new Error("已交付的草稿不能再次审核。请新建草稿后重新审核。");
+      }
+      assertDraftDeliverySettled(draft);
+
+      const reviewedAt = new Date().toISOString();
+      await this.selectedDraftAttachments(draft, toArray(draft.attachments).map(item => item.id));
+      return {
+        ...draft,
+        status: "approved",
+        reviewedAt,
+        rejectedAt: null,
+        updatedAt: reviewedAt,
+        reviewNote: String(reviewNote || "").trim() || null,
+      };
+    });
+
+    if (!updated) {
+      throw draftNotFoundError(draftId);
+    }
+
+    return {
+      draftId: updated.draftId,
+      status: updated.status,
+      reviewedAt: updated.reviewedAt,
+      reviewNote: updated.reviewNote,
+      draft: updated,
+    };
+  }
+
+  async rejectSubmissionDraft(draftId, { reviewNote = "" } = {}) {
+    const updated = await this.draftStore.update(draftId, async (draft) => {
+      if (isFinalDraftStatus(draft.status)) {
+        throw new Error("已交付的草稿不能再次审核。请新建草稿后重新审核。");
+      }
+      assertDraftDeliverySettled(draft);
+
+      const rejectedAt = new Date().toISOString();
+      return {
+        ...draft,
+        status: "rejected",
+        reviewedAt: rejectedAt,
+        rejectedAt,
+        updatedAt: rejectedAt,
+        reviewNote: String(reviewNote || "").trim() || "Rejected in UI review.",
+      };
+    });
+
+    if (!updated) {
+      throw draftNotFoundError(draftId);
+    }
+
+    return {
+      draftId: updated.draftId,
+      status: updated.status,
+      reviewedAt: updated.reviewedAt,
+      rejectedAt: updated.rejectedAt,
+      reviewNote: updated.reviewNote,
+      draft: updated,
+    };
+  }
+
+  async deleteSubmissionDraft(draftId) {
+    const draft = await this.draftStore.get(draftId);
+    if (!draft) {
+      throw draftNotFoundError(draftId);
+    }
+
+    assertDraftDeliverySettled(draft);
+
+    await this.draftStore.clear(draftId, { beforeDelete: assertDraftDeliverySettled });
+
+    return {
+      deleted: true,
+      draftId: draft.draftId,
+      taskId: draft.taskId,
+      taskTitle: draft.taskTitle,
+    };
+  }
+
+  async prepareDraftSubmission(draftId, { attachmentIds = [] } = {}) {
+    const draft = await this.draftStore.get(draftId);
+    if (!draft) {
+      throw draftNotFoundError(draftId);
+    }
+    if (draft.status !== "approved") {
+      throw new Error("只有已通过的草稿可以提交。");
+    }
+    if (!draft.taskId) {
+      throw new Error("草稿没有对应的 task ID，无法提交。");
+    }
+    const selectedFiles = await this.selectedDraftAttachments(draft, attachmentIds);
+    const selectedAttachments = selectedFiles.map(({ buffer, path: filePath, ...metadata }) => metadata);
+
+    const detail = await this.getTaskDetail(draft.taskId, { includeOtherSubmissions: false });
+    const task = ensureObject(detail.task);
+    const taskSummary = ensureObject(detail.taskSummary);
+    const submissions = toArray(detail.mySubmissionList);
+    const lastAwcId = normalizeId(taskSummary.lastAwcId || task.lastAwcId);
+    const existingSubmission =
+      submissions.find((item) => submissionRecordId(item) === lastAwcId) ||
+      [...submissions].reverse().find((item) => submissionRecordId(item)) ||
+      null;
+    const submissionId = lastAwcId || submissionRecordId(existingSubmission);
+    const hasExistingSubmission =
+      Boolean(existingSubmission || submissionId) || isParticipatedHomework(taskSummary) || isParticipatedHomework(task);
+    const sameTaskDrafts = (await this.draftStore.list()).filter((item) =>
+      normalizeId(item.taskId) === normalizeId(draft.taskId),
+    );
+    const unresolvedTaskAttempt = sameTaskDrafts.find((item) =>
+      String(item.draftId) !== String(draft.draftId) &&
+      draftHasUnresolvedTaskSubmission(item),
+    );
+    const unresolvedTeacherMessage = sameTaskDrafts.find(draftHasUnresolvedTeacherMessage);
+    const unresolvedAttempt =
+      ["in_flight", "unknown"].includes(draft.deliveryAttempt?.status) || Boolean(unresolvedTaskAttempt);
+    const isCorrection =
+      isEnabledFlag(taskSummary.correction) ||
+      isEnabledFlag(task.correction) ||
+      isEnabledFlag(existingSubmission?.isCorrectWork);
+    const ended = taskHasEnded(taskSummary) || taskHasEnded(task);
+
+    let mode = "submit";
+    let modeLabel = "提交";
+    let isCorrectWork = 0;
+    if (hasExistingSubmission) {
+      mode = isCorrection ? "correction" : "resubmit";
+      modeLabel = isCorrection ? "订正并重新提交" : "重新提交";
+      isCorrectWork = isCorrection ? 1 : Number(existingSubmission?.isCorrectWork || 0);
+    } else if (ended) {
+      mode = "supplement";
+      modeLabel = "补交";
+    }
+
+    const emptyContent = !String(draft.draftText || "").trim() && !selectedAttachments.length && !toArray(detail.mySubmissionAttachments).length;
+    const canSubmit = !emptyContent && (!hasExistingSubmission || Boolean(submissionId)) && !unresolvedAttempt && !unresolvedTeacherMessage;
+    const reason = unresolvedAttempt
+      ? "上次提交的结果尚未确认。请先在伴学邦核对 task 状态；系统已阻止重复提交。"
+      : unresolvedTeacherMessage
+        ? "同一 task 的老师私信仍有未核对或部分送达记录，请先处理该记录再提交作业。"
+        : emptyContent ? "正文和所选附件不能都为空，请选择附件后重新预览。" : canSubmit
+          ? null
+          : "检测到该 task 已有提交记录，但无法确定原提交记录 ID。为避免产生重复提交，当前不能自动提交。";
+    const retainedAttachments = toArray(detail.mySubmissionAttachments).map((attachment) => ({
+      fileId: attachment.fileId,
+      fileName: attachment.fileName || attachment.name || null,
+      fileSize: attachment.fileSize || null,
+    }));
+
+    const preview = {
+      draftId: draft.draftId,
+      taskId: detail.taskId || draft.taskId,
+      taskTitle: taskSummary.activityName || draft.taskTitle || null,
+      subjectName: taskSummary.courseName || draft.subjectName || null,
+      classId: normalizeId(detail.taskClassId || task.classId || taskSummary.classId),
+      destination: "伴学邦作业提交",
+      draftText: String(draft.draftText || ""),
+      mode,
+      modeLabel,
+      submissionId,
+      isCorrectWork,
+      hasExistingSubmission,
+      retainedAttachments,
+      selectedAttachments,
+      attachmentCount: toArray(draft.attachments).length,
+      canSubmit,
+      reason,
+      note:
+        mode === "supplement"
+          ? "该 task 已超过截止时间，将尝试补交；最终是否允许补交由伴学邦返回结果决定。"
+          : null,
+    };
+    return {
+      ...preview,
+      confirmationToken: draftSubmissionConfirmationToken(preview),
+    };
+  }
+
+  async submitApprovedDraft(draftId, { confirmationToken, attachmentIds = [] } = {}) {
+    if (!confirmationToken) {
+      throw new Error("缺少提交确认令牌，请返回草稿并重新核对提交内容。");
+    }
+
+    const normalizedDraftId = String(draftId || "");
+    if (this.submittingDraftIds.has(normalizedDraftId)) {
+      throw new Error("这个草稿正在提交，请等待当前提交完成。");
+    }
+    this.submittingDraftIds.add(normalizedDraftId);
+    let lockedTaskId = null;
+    let didLockTask = false;
+
+    try {
+      const currentDraft = await this.draftStore.get(draftId);
+      if (!currentDraft) {
+        throw draftNotFoundError(draftId);
+      }
+      if (currentDraft.status !== "approved") {
+        throw new Error("只有已通过审核的草稿可以提交。");
+      }
+      lockedTaskId = normalizeId(currentDraft.taskId);
+      if (lockedTaskId && this.submittingTaskIds.has(lockedTaskId)) {
+        throw new Error("该 task 正在提交另一份草稿，请等待当前提交结果。");
+      }
+      if (lockedTaskId) {
+        this.submittingTaskIds.add(lockedTaskId);
+        didLockTask = true;
+      }
+      if (["in_flight", "unknown"].includes(currentDraft.deliveryAttempt?.status)) {
+        const error = new Error("上次提交的结果尚未确认，请先核对伴学邦 task 状态；系统已阻止重复提交。");
+        error.code = "delivery_unknown";
+        throw error;
+      }
+
+      const preview = await this.prepareDraftSubmission(draftId, { attachmentIds });
+      if (!preview.canSubmit) {
+        throw new Error(preview.reason || "当前草稿无法提交。");
+      }
+      if (preview.confirmationToken !== confirmationToken) {
+        throw new Error("草稿正文或 task 状态在确认后发生了变化，请返回草稿并重新核对提交内容。");
+      }
+
+      const startedAt = new Date().toISOString();
+      const attemptId = randomUUID();
+      let selectedFiles;
+      const startedDraft = await this.draftStore.update(draftId, async (draft) => {
+        if (draft.status !== "approved") {
+          throw new Error("只有已通过审核的草稿可以提交。");
+        }
+        const currentFiles = await this.selectedDraftAttachments(draft, attachmentIds);
+        const currentPreview = { ...preview, draftText: String(draft.draftText || ""),
+          selectedAttachments: currentFiles };
+        if (draftSubmissionConfirmationToken(currentPreview) !== draftSubmissionConfirmationToken(preview)) {
+          throw new Error("草稿正文或所选附件已发生变化，请重新核对提交内容。");
+        }
+        selectedFiles = currentFiles;
+        if (["in_flight", "unknown"].includes(draft.deliveryAttempt?.status)) {
+          const error = new Error("上次提交的结果尚未确认，请先核对伴学邦 task 状态。");
+          error.code = "delivery_unknown";
+          throw error;
+        }
+        return {
+          ...draft,
+          deliveryAttempt: {
+            id: attemptId,
+            target: "task",
+            status: "in_flight",
+            attachments: selectedFiles.map(({ id, fileName, sha256, sizeBytes }) => ({ id, fileName, sha256, sizeBytes })),
+            taskId: preview.taskId,
+            mode: preview.mode,
+            startedAt,
+          },
+          updatedAt: startedAt,
+        };
+      });
+      if (!startedDraft) {
+        throw draftNotFoundError(draftId);
+      }
+
+      let submission;
+      try {
+        submission = await this.submitTaskResult({
+          taskId: preview.taskId,
+          remark: preview.draftText,
+          filePaths: selectedFiles.map(file => file.path),
+          fileChecksums: Object.fromEntries(selectedFiles.map(file => [file.path, file.sha256])),
+          isCorrectWork: preview.isCorrectWork,
+          submissionId: preview.submissionId,
+          classId: preview.classId,
+        });
+      } catch (error) {
+        const finishedAt = new Date().toISOString();
+        const outcomeUnknown = Boolean(error?.deliveryOutcomeUnknown);
+        const attemptStatus = outcomeUnknown ? "unknown" : "failed";
+        let localRecordError = null;
+        try {
+          await this.draftStore.update(draftId, async (draft) => ({
+            ...draft,
+            deliveryAttempt: {
+              ...draft.deliveryAttempt,
+              status: attemptStatus,
+              completedAt: finishedAt,
+              error: error.message,
+            },
+            updatedAt: finishedAt,
+            deliveryHistory: [
+              ...toArray(draft.deliveryHistory),
+              {
+                type: "task",
+                status: attemptStatus,
+                attemptId,
+                taskId: preview.taskId,
+                mode: preview.mode,
+                modeLabel: preview.modeLabel,
+                startedAt,
+                completedAt: finishedAt,
+                error: error.message,
+              },
+            ],
+          }));
+        } catch (recordError) {
+          localRecordError = `本地交付状态无法保存：${recordError.message}`;
+        }
+        const message = outcomeUnknown
+          ? `提交结果未知，请先核对伴学邦中的作业状态。系统已阻止重试。${localRecordError ? ` ${localRecordError}` : ""}`
+          : `无法提交到伴学邦：${error.message}${localRecordError ? ` ${localRecordError}` : ""}`;
+        const wrapped = new Error(message, { cause: error });
+        if (outcomeUnknown) wrapped.code = "delivery_unknown";
+        throw wrapped;
+      }
+
+      const submittedAt = new Date().toISOString();
+      let updated = null;
+      let localRecordError = null;
+      try {
+        updated = await this.draftStore.update(draftId, async (draft) => ({
+          ...draft,
+          status: "submitted",
+          deliveryTarget: "task",
+          submittedAt,
+          updatedAt: submittedAt,
+          submission: {
+            attachments: preview.selectedAttachments,
+            mode: preview.mode,
+            modeLabel: preview.modeLabel,
+            taskId: preview.taskId,
+            submissionId: submission.submissionId || preview.submissionId || null,
+            submittedAt,
+            result: submission.result ?? null,
+          },
+          deliveryAttempt: {
+            id: attemptId,
+            target: "task",
+            status: "success",
+            attachments: preview.selectedAttachments,
+            taskId: preview.taskId,
+            mode: preview.mode,
+            startedAt,
+            completedAt: submittedAt,
+            submissionId: submission.submissionId || preview.submissionId || null,
+          },
+          deliveryHistory: [
+            ...toArray(draft.deliveryHistory),
+            {
+              type: "task",
+              status: "success",
+              attachments: preview.selectedAttachments,
+              attemptId,
+              taskId: preview.taskId,
+              mode: preview.mode,
+              modeLabel: preview.modeLabel,
+              submissionId: submission.submissionId || preview.submissionId || null,
+              submittedAt,
+              result: submission.result ?? null,
+            },
+          ],
+        }));
+        if (!updated) {
+          localRecordError = "本地草稿记录不存在，无法标记为已提交。";
+        }
+      } catch (error) {
+        localRecordError = `无法更新本地草稿记录：${error.message}`;
+      }
+
+      return {
+        submitted: true,
+        submittedAt,
+        localRecordUpdated: Boolean(updated),
+        localRecordError,
+        preview,
+        submission,
+        draft: updated,
+      };
+    } finally {
+      this.submittingDraftIds.delete(normalizedDraftId);
+      if (didLockTask) this.submittingTaskIds.delete(lockedTaskId);
+    }
+  }
+
+  async prepareDraftPrivateMessage(draftId, { contact } = {}) {
+    const draft = await this.draftStore.get(draftId);
+    if (!draft) {
+      throw draftNotFoundError(draftId);
+    }
+    if (draft.status !== "approved") {
+      throw new Error("只有已通过的草稿可以准备私信老师。");
+    }
+    if (!draft.taskId) {
+      throw new Error("草稿没有对应的 task ID，无法生成私信预览。");
+    }
+    if (!String(draft.draftText || "").trim()) {
+      throw new Error("草稿正文为空，无法生成私信预览。");
+    }
+
+    let detail = null;
+    let detailWarning = null;
+    try {
+      detail = await this.getTaskDetail(draft.taskId, { includeOtherSubmissions: false });
+    } catch (error) {
+      detailWarning = `无法读取 task 详情，私信预览将使用本地草稿信息：${error.message}`;
+    }
+
+    const contactsResult = await this.listPrivateMessageContacts();
+    const signals = buildDraftPrivateMessageSignals(draft, detail);
+    const contacts = toArray(contactsResult.contacts)
+      .map((item) => {
+        const contactSummary = item?.peerName || item?.peerId ? item : summarizePrivateContact(item.raw || item);
+        const deliveryContact = draftPrivateMessageContactSummary(contactSummary);
+        return {
+          ...deliveryContact,
+          contactKey: draftPrivateMessageContactKey(deliveryContact),
+          ...scoreDraftPrivateContact(contactSummary, signals),
+        };
+      })
+      .sort((left, right) => {
+        if (right.matchScore !== left.matchScore) {
+          return right.matchScore - left.matchScore;
+        }
+        return String(left.peerName || "").localeCompare(String(right.peerName || ""), "zh-Hans-CN");
+      });
+
+    let selectedContact = null;
+    if (contact) {
+      const requestedKey = draftPrivateMessageContactKey(contact);
+      selectedContact = contacts.find((item) => item.contactKey === requestedKey) || null;
+      if (!selectedContact) {
+        throw new Error("所选私信联系人不在当前伴学邦联系人列表中。");
+      }
+    }
+
+    const messageText = buildDraftTeacherMessageText({ draft, detail });
+    const chunks = splitPrivateMessageText(messageText);
+    const preview = {
+      draftId: draft.draftId,
+      taskId: normalizeId(detail?.taskId || draft.taskId),
+      taskTitle: detail?.taskSummary?.activityName || draft.taskTitle || null,
+      subjectName: detail?.taskSummary?.courseName || draft.subjectName || null,
+      destination: "伴学邦私信老师",
+      deliveryTarget: "teacher_private_message",
+      selectedContact,
+      contacts,
+      recommendedContactCount: contacts.filter((item) => item.recommended).length,
+      signals,
+      messageText,
+      chunks,
+      chunkCount: chunks.length,
+      canSend: Boolean(selectedContact && chunks.length),
+      reason: selectedContact
+        ? chunks.length
+          ? null
+          : "私信正文为空，无法发送。"
+        : "请选择一个已有私信联系人后再确认发送。",
+      note: detailWarning,
+    };
+
+    const confirmationToken = draftPrivateMessageConfirmationToken(preview);
+    const attempt = ensureObject(draft.teacherMessageAttempt);
+    const attemptStatus = String(attempt.status || "");
+    const confirmedMessages = toArray(attempt.confirmedMessages);
+    const sameTaskDrafts = (await this.draftStore.list()).filter((item) =>
+      normalizeId(item.taskId) === normalizeId(draft.taskId),
+    );
+    const matchingAttempt = attempt.contentFingerprint === confirmationToken;
+    let nextChunkIndex = matchingAttempt ? Math.max(0, Number(attempt.nextChunkIndex) || 0) : 0;
+    let blockedReason = sameTaskDrafts.some(draftHasUnresolvedTaskSubmission)
+      ? "同一 task 的作业提交结果尚未确认；请先核对作业状态，再决定是否发送私信。"
+      : null;
+
+    if (!blockedReason && ["in_flight", "unknown"].includes(attemptStatus)) {
+      blockedReason = "上次私信发送结果尚未确认。请先在伴学邦核对会话记录；系统已阻止重复发送。";
+    } else if (!blockedReason && attemptStatus === "success") {
+      blockedReason = "这份草稿的私信已完成发送。";
+    } else if (!blockedReason && ["ready", "failed"].includes(attemptStatus) && confirmedMessages.length > 0 && !matchingAttempt) {
+      blockedReason = "已有部分私信发送成功；继续前不能更换联系人或修改正文，请使用原联系人和原正文继续。";
+    } else if (!blockedReason && matchingAttempt && ["ready", "failed"].includes(attemptStatus)) {
+      nextChunkIndex = Math.min(nextChunkIndex, chunks.length);
+    }
+
+    const otherDraftAttempt = selectedContact
+      ? sameTaskDrafts.find((item) => {
+          if (String(item.draftId) === String(draft.draftId) || normalizeId(item.taskId) !== normalizeId(draft.taskId)) {
+            return false;
+          }
+          const otherAttempt = ensureObject(item.teacherMessageAttempt);
+          const sameContact = otherAttempt.contactKey === selectedContact.contactKey;
+          const hasProgress = toArray(otherAttempt.confirmedMessages).length > 0;
+          return sameContact && (
+            ["in_flight", "unknown", "ready"].includes(otherAttempt.status) ||
+            (otherAttempt.status === "failed" && hasProgress)
+          );
+        })
+      : null;
+    if (!blockedReason && otherDraftAttempt) {
+      blockedReason = "同一 task 和联系人已有一份私信正在处理或需要续发；请先回到那份草稿核对发送状态。";
+    }
+
+    const canSend = Boolean(selectedContact && chunks.length && !blockedReason && nextChunkIndex < chunks.length);
+
+    return {
+      ...preview,
+      canSend,
+      nextChunkIndex,
+      confirmedChunkCount: matchingAttempt ? confirmedMessages.length : 0,
+      attemptStatus: matchingAttempt ? attemptStatus || null : null,
+      reason: blockedReason || (selectedContact
+        ? nextChunkIndex < chunks.length
+          ? null
+          : "所有私信分段均已确认发送。"
+        : "请选择一个已有私信联系人后再确认发送。"),
+      confirmationToken,
+    };
+  }
+
+  async sendApprovedDraftPrivateMessage(draftId, { contact, confirmationToken } = {}) {
+    if (!confirmationToken) {
+      throw new Error("缺少私信确认令牌，请返回草稿并重新核对私信内容。");
+    }
+    if (!contact) {
+      throw new Error("缺少私信联系人。");
+    }
+
+    const normalizedDraftId = String(draftId || "");
+    if (this.sendingDraftMessageIds.has(normalizedDraftId)) {
+      throw new Error("这个草稿正在发送私信，请等待当前发送完成。");
+    }
+    this.sendingDraftMessageIds.add(normalizedDraftId);
+    let lockedTaskContactKey = null;
+    let lockedTaskId = null;
+    let didLockTask = false;
+
+    try {
+      const beforePreviewDraft = await this.draftStore.get(draftId);
+      if (!beforePreviewDraft) {
+        throw draftNotFoundError(draftId);
+      }
+      if (beforePreviewDraft.status !== "approved") {
+        throw new Error("只有已通过的草稿可以发送私信。");
+      }
+      const preview = await this.prepareDraftPrivateMessage(draftId, { contact });
+      if (!preview.canSend) {
+        throw new Error(preview.reason || "当前草稿无法私信老师。");
+      }
+      if (preview.confirmationToken !== confirmationToken) {
+        throw new Error("草稿正文、task 或私信联系人在确认后发生了变化，请返回草稿并重新核对私信内容。");
+      }
+      const currentDraft = await this.draftStore.get(draftId);
+      if (!currentDraft || currentDraft.status !== "approved" || currentDraft.draftText !== beforePreviewDraft.draftText) {
+        throw new Error("草稿在准备私信后发生了变化，请返回草稿并重新核对内容。");
+      }
+
+      lockedTaskId = normalizeId(preview.taskId);
+      if (lockedTaskId && this.submittingTaskIds.has(lockedTaskId)) {
+        throw new Error("该 task 正在执行另一项交付，请等待当前结果后再发送私信。");
+      }
+      if (lockedTaskId) {
+        this.submittingTaskIds.add(lockedTaskId);
+        didLockTask = true;
+      }
+
+      lockedTaskContactKey = `${normalizeId(preview.taskId)}|${preview.selectedContact.contactKey}`;
+      if (this.sendingTaskContactKeys.has(lockedTaskContactKey)) {
+        throw new Error("同一 task 和联系人正在发送另一份私信，请等待当前发送结果。");
+      }
+      this.sendingTaskContactKeys.add(lockedTaskContactKey);
+
+      const existingAttempt = ensureObject(currentDraft.teacherMessageAttempt);
+      const canResume =
+        existingAttempt.contentFingerprint === preview.confirmationToken &&
+        ["ready", "failed"].includes(existingAttempt.status);
+      const attemptId = canResume ? existingAttempt.id : randomUUID();
+      const confirmedMessages = canResume ? toArray(existingAttempt.confirmedMessages) : [];
+      const nextChunkIndex = canResume ? preview.nextChunkIndex : 0;
+      const startedAt = canResume ? existingAttempt.startedAt : new Date().toISOString();
+
+      for (let chunkOffset = nextChunkIndex; chunkOffset < preview.chunks.length; chunkOffset += 1) {
+        const chunk = preview.chunks[chunkOffset];
+        const sendingAt = new Date().toISOString();
+        let remoteAccepted = false;
+        const startedAttempt = await this.draftStore.update(draftId, async (draft) => {
+          if (draft.status !== "approved" || draft.draftText !== currentDraft.draftText) {
+            throw new Error("草稿在发送前发生了变化，已取消私信发送。");
+          }
+          const latestAttempt = ensureObject(draft.teacherMessageAttempt);
+          if (canResume && latestAttempt.id !== attemptId) {
+            throw new Error("私信发送记录已变化，请重新读取草稿后再试。");
+          }
+          if (latestAttempt.contentFingerprint && latestAttempt.contentFingerprint !== preview.confirmationToken && toArray(latestAttempt.confirmedMessages).length > 0) {
+            throw new Error("已有部分私信发送成功；继续前不能更换联系人或修改正文。");
+          }
+          return {
+            ...draft,
+            teacherMessageAttempt: {
+              id: attemptId,
+              target: "teacher_private_message",
+              status: "in_flight",
+              taskId: preview.taskId,
+              contactKey: preview.selectedContact.contactKey,
+              contact: preview.selectedContact,
+              contentFingerprint: preview.confirmationToken,
+              chunkCount: preview.chunkCount,
+              nextChunkIndex: chunkOffset,
+              inFlightChunkIndex: chunk.index,
+              confirmedMessages,
+              startedAt,
+              updatedAt: sendingAt,
+            },
+            updatedAt: sendingAt,
+          };
+        });
+        if (!startedAttempt) {
+          throw draftNotFoundError(draftId);
+        }
+
+        try {
+          const result = await this.sendPrivateMessageText(preview.selectedContact, chunk.text);
+          remoteAccepted = true;
+          const sentMessage = {
+            index: chunk.index,
+            length: chunk.length,
+            messageId: normalizeId(result.message?.id) || null,
+            sentAt: new Date().toISOString(),
+          };
+          confirmedMessages.push(sentMessage);
+          const isFinalChunk = chunkOffset === preview.chunks.length - 1;
+          const confirmedAt = new Date().toISOString();
+          const updated = await this.draftStore.update(draftId, async (draft) => {
+            if (draft.status !== "approved" || draft.draftText !== currentDraft.draftText) {
+              throw new Error("私信已发送，但草稿状态在保存发送记录前发生了变化。");
+            }
+            const latestAttempt = ensureObject(draft.teacherMessageAttempt);
+            if (latestAttempt.id !== attemptId || latestAttempt.status !== "in_flight") {
+              throw new Error("私信已发送，但本地发送记录与当前尝试不匹配。");
+            }
+            const attempt = {
+              ...latestAttempt,
+              status: isFinalChunk ? "success" : "ready",
+              nextChunkIndex: chunkOffset + 1,
+              inFlightChunkIndex: null,
+              confirmedMessages: [...confirmedMessages],
+              updatedAt: confirmedAt,
+              ...(isFinalChunk ? { completedAt: confirmedAt } : {}),
+            };
+            const deliveryHistory = isFinalChunk
+              ? [
+                  ...toArray(draft.deliveryHistory),
+                  {
+                    type: "teacher_private_message",
+                    status: "success",
+                    attemptId,
+                    contact: preview.selectedContact,
+                    chunkCount: preview.chunkCount,
+                    sentCount: confirmedMessages.length,
+                    sentAt: confirmedAt,
+                    messages: [...confirmedMessages],
+                  },
+                ]
+              : toArray(draft.deliveryHistory);
+            return {
+              ...draft,
+              ...(isFinalChunk
+                ? {
+                    status: "sent_to_teacher",
+                    deliveryTarget: "teacher_private_message",
+                    sentToTeacherAt: confirmedAt,
+                    teacherPrivateMessage: {
+                      contact: preview.selectedContact,
+                      chunkCount: preview.chunkCount,
+                      sentAt: confirmedAt,
+                    },
+                  }
+                : {}),
+              teacherMessageAttempt: attempt,
+              deliveryHistory,
+              updatedAt: confirmedAt,
+            };
+          });
+          if (!updated) {
+            throw new Error("私信已发送，但本地草稿记录不存在。");
+          }
+        } catch (error) {
+          const outcomeUnknown = remoteAccepted || error?.deliveryOutcomeUnknown === true;
+          const failedAt = new Date().toISOString();
+          const failureMessage = error.message || "私信发送中断，无法确定该分段是否已送达。";
+          let recorded = false;
+          try {
+            await this.draftStore.update(draftId, async (draft) => {
+              const latestAttempt = ensureObject(draft.teacherMessageAttempt);
+              if (latestAttempt.id !== attemptId) {
+                throw new Error("本地私信尝试记录已变化。");
+              }
+              const status = outcomeUnknown ? "unknown" : "failed";
+              const attempt = {
+                ...latestAttempt,
+                status,
+                nextChunkIndex: remoteAccepted ? chunkOffset + 1 : chunkOffset,
+                inFlightChunkIndex: null,
+                uncertainChunkIndex: !remoteAccepted && outcomeUnknown ? chunk.index : null,
+                confirmedMessages: [...confirmedMessages],
+                completedAt: failedAt,
+                updatedAt: failedAt,
+                error: failureMessage,
+              };
+              return {
+                ...draft,
+                status: "approved",
+                deliveryTarget: "teacher_private_message",
+                teacherMessageAttempt: attempt,
+                updatedAt: failedAt,
+                deliveryHistory: [
+                  ...toArray(draft.deliveryHistory),
+                  {
+                    type: "teacher_private_message",
+                    status,
+                    attemptId,
+                    contact: preview.selectedContact,
+                    chunkCount: preview.chunkCount,
+                    sentCount: confirmedMessages.length,
+                    failedChunkIndex: remoteAccepted ? null : chunk.index,
+                    uncertainChunkIndex: !remoteAccepted && outcomeUnknown ? chunk.index : null,
+                    failedAt,
+                    error: failureMessage,
+                    messages: [...confirmedMessages],
+                  },
+                ],
+              };
+            });
+            recorded = true;
+          } catch {
+            // The pre-send in_flight record remains the durable duplicate-send guard.
+          }
+          return {
+            sent: false,
+            partial: confirmedMessages.length > 0,
+            sentCount: confirmedMessages.length,
+            failedChunkIndex: remoteAccepted ? null : chunk.index,
+            outcomeUnknown: outcomeUnknown || !recorded,
+            remoteAccepted,
+            error: failureMessage,
+            preview,
+            draft: await this.draftStore.get(draftId),
+          };
+        }
+      }
+      const updated = await this.draftStore.get(draftId);
+      return {
+        sent: true,
+        sentAt: updated?.sentToTeacherAt || new Date().toISOString(),
+        chunkCount: preview.chunkCount,
+        localRecordUpdated: updated?.status === "sent_to_teacher",
+        localRecordError: updated?.status === "sent_to_teacher" ? null : "私信已发送，但本地草稿状态仍待核对。",
+        preview,
+        draft: updated,
+      };
+    } finally {
+      this.sendingDraftMessageIds.delete(normalizedDraftId);
+      if (lockedTaskContactKey) this.sendingTaskContactKeys.delete(lockedTaskContactKey);
+      if (didLockTask) this.submittingTaskIds.delete(lockedTaskId);
+    }
+  }
+
+  async uploadSubmissionFile(localPath, { expectedSha256 } = {}) {
+    const session = await this.requireSession();
+    await this.refreshContext(session);
+
+    const { userInfo } = session.context;
+    if (!userInfo?.id) {
+      throw new Error("Current session does not have enough context to upload a file.");
+    }
+
+    const resolvedPath = path.resolve(localPath);
+    const fileBuffer = await readFile(resolvedPath);
+    if (expectedSha256 && createHash("sha256").update(fileBuffer).digest("hex") !== expectedSha256) {
+      throw new Error(`附件“${path.basename(resolvedPath)}”在确认后发生变化，请重新审核。`);
+    }
+    const uploadUrl = new URL(
+      `/gateway/filesystem/file/simpleupload/${userInfo.id}`,
+      session.baseUrl || BASE_URL,
+    );
+    const form = new FormData();
+    form.append("file", new Blob([fileBuffer]), path.basename(resolvedPath));
+
+    const response = await fetch(uploadUrl, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        VERSION: "CLOUDRISE",
+        deviceType: "web",
+        Authorization: `Bearer ${session.auth.access_token}`,
+      },
+      body: form,
+    });
+    const payload = await response.json();
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status} file-upload: ${JSON.stringify(payload)}`);
+    }
+
+    const uploadResult = payload?.result || payload?.data || payload;
+    if (!uploadResult?.id || uploadResult === "上传失败") {
+      throw new Error(`Unexpected upload result: ${JSON.stringify(payload)}`);
+    }
+
+    await this.request(session, "GET", `/gateway/filesystem/file/update/${uploadResult.id}`, {
+      params: { access_token: session.auth.access_token },
+    });
+
+    const submissionFile = {
+      fileId: uploadResult.id,
+      category: guessAttachmentCategory(uploadResult),
+      name: uploadResult.filename || path.basename(resolvedPath),
+      fileName: uploadResult.filename || path.basename(resolvedPath),
+      fileExt: getFileExtension(uploadResult.filename, uploadResult.ext),
+      fileType: uploadResult.contenttype || null,
+      fileLength: uploadResult.timelength || null,
+      fileSize: uploadResult.filesize || fileBuffer.byteLength,
+      creatorId: uploadResult.userid || userInfo.id,
+      createTime: uploadResult.uploaddate || new Date().toISOString(),
+      srcUrl: `/gateway/filesystem/skipView/thumbnail/v2/${uploadResult.id}?access_token=${session.auth.access_token}`,
+    };
+
+    return {
+      context: this.summarizeSession(session),
+      localPath: resolvedPath,
+      uploadResult,
+      submissionFile,
+    };
+  }
+
+  async submitTaskResult({
+    taskId,
+    remark = "",
+    fileIds = [],
+    filePaths = [],
+    fileChecksums = {},
+    isCorrectWork = 0,
+    submissionId = null,
+    classId = null,
+  } = {}) {
+    const session = await this.requireSession();
+    await this.refreshContext(session);
+
+    const { userInfo, curSubject } = session.context;
+    const targetClassId = normalizeId(classId || curSubject?.classId);
+    if (!userInfo?.id || !targetClassId) {
+      throw new Error("Current session does not have enough context to submit task results.");
+    }
+
+    const uploadedFiles = [];
+    for (const filePath of filePaths) {
+      const upload = await this.uploadSubmissionFile(filePath, { expectedSha256: fileChecksums[filePath] });
+      uploadedFiles.push(upload.submissionFile);
+    }
+
+    let payload;
+    if (submissionId) {
+      const editResponse = safeBusinessResult(
+        await this.request(
+          session,
+          "GET",
+          `/gateway/bxb/student/activity-work-correct/${submissionId}`,
+        ),
+        "activity-work-correct",
+      );
+      payload = ensureObject(editResponse.data);
+    } else {
+      payload = {
+        activityId: taskId,
+        childrenId: userInfo.id,
+        classId: targetClassId,
+        remark: "",
+        id: null,
+        isCorrectWork: 0,
+        fileList: [],
+      };
+    }
+
+    payload.activityId = payload.activityId || taskId;
+    payload.childrenId = payload.childrenId || userInfo.id;
+    payload.classId = targetClassId;
+    payload.isCorrectWork = isCorrectWork;
+    payload.remark = remark;
+    payload.fileList = [
+      ...toArray(payload.fileList),
+      ...fileIds.map((fileId) => ({ fileId: normalizeId(fileId) })),
+      ...uploadedFiles,
+    ];
+
+    if (!String(payload.remark || "").trim() && payload.fileList.length === 0) {
+      throw new Error("内容和附件不能都为空");
+    }
+
+    let response;
+    try {
+      response = await this.request(session, "PUT", "/gateway/bxb/activityUser/receipt", {
+        body: payload,
+      });
+    } catch (error) {
+      const status = Number(String(error?.message || "").match(/^HTTP (\d{3})\b/)?.[1] || 0);
+      if (!status || status >= 500) {
+        const uncertain = new Error(error?.message || "提交请求中断，无法确认伴学邦是否已接收。", { cause: error });
+        uncertain.deliveryOutcomeUnknown = true;
+        throw uncertain;
+      }
+      throw error;
+    }
+    const result = safeBusinessResult(response, "activityUser/receipt");
+
+    await this.refreshContext(session);
+
+    return {
+      context: this.summarizeSession(session),
+      taskId: normalizeId(taskId),
+      submissionId: normalizeId(payload.id || submissionId),
+      uploadedCount: uploadedFiles.length,
+      fileCount: payload.fileList.length,
+      remarkLength: String(payload.remark || "").length,
+      result: result.data ?? result,
+    };
+  }
+
+  async browserCaptureAchievementPage({
+    headless = true,
+    screenshotPath = path.join(process.cwd(), "artifacts", "achievement-page.png"),
+  } = {}) {
+    const session = await this.requireSession();
+    let browser;
+    browser = await launchBrowser(headless);
+
+    try {
+      await mkdir(path.dirname(screenshotPath), { recursive: true });
+      const context = await browser.newContext();
+
+      await context.addInitScript((storage) => {
+        for (const [key, value] of Object.entries(storage)) {
+          if (typeof value === "string") {
+            localStorage.setItem(key, value);
+          }
+        }
+      }, session.storage);
+
+      const page = await context.newPage();
+      await page.goto(`${session.baseUrl || BASE_URL}/achievement_list`, {
+        waitUntil: "networkidle",
+        timeout: 60000,
+      });
+      await page.screenshot({ path: screenshotPath, fullPage: true });
+
+      const bodyText = await page.locator("body").innerText();
+
+      return {
+        url: page.url(),
+        title: await page.title(),
+        screenshotPath,
+        redirectedToLogin: page.url().includes("/login"),
+        textPreview: bodyText.slice(0, 1200),
+      };
+    } finally {
+      await browser?.close();
+    }
+  }
+
+  async webSearch({ query, maxResults = 5, engine = "bing", timeoutMs = 20000 } = {}) {
+    const normalizedQuery = String(query || "").trim();
+    if (!normalizedQuery) {
+      throw new Error("Search query cannot be empty.");
+    }
+
+    const normalizedEngine = normalizeSearchEngine(engine);
+    const limit = clampInt(maxResults, 5, { min: 1, max: 10 });
+    const timeout = clampInt(timeoutMs, 20000, { min: 5000, max: 45000 });
+
+    const rssUrl = new URL("https://www.bing.com/search");
+    rssUrl.searchParams.set("q", normalizedQuery);
+    rssUrl.searchParams.set("format", "rss");
+    rssUrl.searchParams.set("setlang", "zh-CN");
+    rssUrl.searchParams.set("cc", "CN");
+
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeout);
+      const response = await fetch(rssUrl, {
+        signal: controller.signal,
+        headers: {
+          Accept: "application/rss+xml,text/xml,*/*",
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36",
+        },
+      });
+      const xml = await response.text();
+      clearTimeout(timer);
+
+      if (response.ok) {
+        const results = parseBingRssResults(xml, limit);
+        if (results.length > 0) {
+          return {
+            query: normalizedQuery,
+            engine: normalizedEngine,
+            mode: "bing-rss",
+            url: rssUrl.toString(),
+            count: results.length,
+            results,
+            note:
+              "Results were collected from Bing's RSS search endpoint. Use read_web_page for a selected result when more detail is needed.",
+          };
+        }
+      }
+    } catch {
+      // Fall through to browser-based search below.
+    }
+
+    const searchUrl = new URL("https://www.bing.com/search");
+    searchUrl.searchParams.set("q", normalizedQuery);
+    searchUrl.searchParams.set("setlang", "zh-CN");
+    searchUrl.searchParams.set("cc", "CN");
+
+    let browser;
+    browser = await launchBrowser(true);
+
+    try {
+      const context = await browser.newContext({
+        locale: "zh-CN",
+        userAgent:
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36",
+      });
+      const page = await context.newPage();
+      await page.goto(searchUrl.toString(), {
+        waitUntil: "domcontentloaded",
+        timeout,
+      });
+      await page.waitForLoadState("networkidle", { timeout: Math.min(timeout, 10000) }).catch(() => {});
+
+      const results = await page.evaluate((maxItems) => {
+        const cleanText = (value) => String(value || "").replace(/\s+/g, " ").trim();
+        const rows = Array.from(document.querySelectorAll("li.b_algo"));
+        return rows
+          .map((row) => {
+            const link = row.querySelector("h2 a");
+            const href = link?.href || "";
+            const title = cleanText(link?.textContent);
+            const snippet =
+              cleanText(row.querySelector(".b_caption p")?.textContent) ||
+              cleanText(row.querySelector("p")?.textContent) ||
+              cleanText(row.querySelector(".b_snippet")?.textContent);
+
+            return { title, url: href, snippet };
+          })
+          .filter((item) => item.title && /^https?:\/\//i.test(item.url))
+          .slice(0, maxItems);
+      }, limit);
+
+      return {
+        query: normalizedQuery,
+        engine: normalizedEngine,
+        url: page.url(),
+        count: results.length,
+        results,
+        note:
+          results.length > 0
+            ? "Results were collected through the local browser. Use read_web_page for a selected result when more detail is needed."
+            : "No search results were parsed. Bing may have changed its page layout, blocked automation, or returned an interstitial page.",
+      };
+    } finally {
+      await browser?.close();
+    }
+  }
+
+  async readWebPage({ url, maxChars = 8000, timeoutMs = 20000 } = {}) {
+    const targetUrl = normalizeHttpUrl(url);
+    const limit = clampInt(maxChars, 8000, { min: 500, max: 30000 });
+    const timeout = clampInt(timeoutMs, 20000, { min: 5000, max: 45000 });
+
+    let browser;
+    browser = await launchBrowser(true);
+
+    try {
+      const context = await browser.newContext({
+        locale: "zh-CN",
+        userAgent:
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36",
+      });
+      const page = await context.newPage();
+      await page.goto(targetUrl, {
+        waitUntil: "domcontentloaded",
+        timeout,
+      });
+      await page.waitForLoadState("networkidle", { timeout: Math.min(timeout, 10000) }).catch(() => {});
+
+      const pageText = await page.evaluate(() => document.body?.innerText || "");
+      const preview = buildTextPreview(pageText, limit);
+      return {
+        url: targetUrl,
+        finalUrl: page.url(),
+        title: await page.title(),
+        text: preview.text,
+        truncated: preview.truncated,
+        totalChars: preview.totalChars,
+      };
+    } finally {
+      await browser?.close();
+    }
+  }
+}

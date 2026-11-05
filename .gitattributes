@@ -1,0 +1,4 @@
+# Keep the portable skill snapshot and its recorded hashes identical across hosts.
+skills/banxuebang/** text eol=lf
+release/scripts/sync-agent-skill.mjs text eol=lf
+release/scripts/package-agent-skill.py text eol=lf
